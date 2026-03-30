@@ -1,0 +1,26 @@
+[build-system]
+requires = ['setuptools>=69', 'wheel']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'echoframe'
+version = '0.1.0'
+description = 'Store hidden states, attention tensors, and codebooks on disk.'
+readme = 'README.md'
+requires-python = '>=3.10'
+license = {file = 'LICENSE'}
+authors = [
+    {name = 'Martijn Bentum'},
+]
+classifiers = [
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3 :: Only',
+]
+
+[project.urls]
+Homepage = 'https://github.com/martijnbentum/echoframe'
+Repository = 'https://github.com/martijnbentum/echoframe'
+
+[tool.setuptools.packages.find]
+include = ['echoframe*']

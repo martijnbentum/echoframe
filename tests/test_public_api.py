@@ -8,6 +8,7 @@ import unittest
 
 import echoframe
 from echoframe.index import LmdbIndex
+from echoframe.metadata import Metadata
 from echoframe.output_storage import Hdf5ShardStore
 from echoframe.store import Store
 
@@ -106,6 +107,7 @@ class FakeH5File:
         path: Path) -> None:
         self.files = files
         self.path = str(path)
+        path.touch(exist_ok=True)
         self.groups = self.files.setdefault(self.path, {})
 
     def __enter__(self) -> 'FakeH5File':
@@ -140,10 +142,11 @@ class FakeH5Module:
 
 class EchoFrameTests(unittest.TestCase):
     def test_public_exports(self) -> None:
-        self.assertEqual(echoframe.__version__, '0.1.0')
         self.assertIn('Store', echoframe.__all__)
         self.assertIn('Metadata', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
+        self.assertNotIn('__version__', echoframe.__all__)
+        self.assertFalse(hasattr(echoframe, '__version__'))
 
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -299,6 +302,47 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(calls, ['compute'])
 
+    def test_find_or_compute_can_add_tags_on_hit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
+            storage = Hdf5ShardStore(
+                Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module(),
+            )
+            store = Store(
+                tmpdir,
+                index=index,
+                storage=storage,
+            )
+
+            def compute() -> list[int]:
+                return [1, 2, 3]
+
+            metadata, created = store.find_or_compute(
+                phraser_key='phone-2',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+                tags=['exp-a'],
+            )
+            again, created_again = store.find_or_compute(
+                phraser_key='phone-2',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+                tags=['exp-b'],
+                add_tags_on_hit=True,
+            )
+
+            self.assertTrue(created)
+            self.assertFalse(created_again)
+            self.assertEqual(metadata.entry_id, again.entry_id)
+            self.assertEqual(again.tags, ['exp-a', 'exp-b'])
+
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
@@ -336,3 +380,134 @@ class EchoFrameTests(unittest.TestCase):
             updated = store.remove_tags(metadata.entry_id, ['exp-a'])
             self.assertEqual(updated.tags, ['review', 'subset-1'])
             self.assertEqual(store.find_by_tag('exp-a'), [])
+
+    def test_tag_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
+            storage = Hdf5ShardStore(
+                Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module(),
+            )
+            store = Store(
+                tmpdir,
+                index=index,
+                storage=storage,
+            )
+
+            store.put(
+                phraser_key='phrase-10',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=5,
+                data=[[1.0]],
+                tags=['exp-a', 'subset-1'],
+            )
+            store.put(
+                phraser_key='phrase-11',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=5,
+                data=[[2.0]],
+                tags=['exp-a', 'subset-2'],
+            )
+
+            self.assertEqual(store.tag_counts(), {
+                'exp-a': 2,
+                'subset-1': 1,
+                'subset-2': 1,
+            })
+
+    def test_invalid_tags_raise_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            Metadata(
+                phraser_key='phrase-1',
+                collar=10,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                tags=['bad:tag'],
+            )
+        with self.assertRaises(ValueError):
+            Metadata(
+                phraser_key='phrase-1',
+                collar=10,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                tags=['   '],
+            )
+        with self.assertRaises(ValueError):
+            Metadata(
+                phraser_key='phrase-1',
+                collar=10,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                tags=[123],
+            )
+
+    def test_compact_shards_removes_deleted_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
+            h5_module = FakeH5Module()
+            storage = Hdf5ShardStore(
+                Path(tmpdir) / 'shards',
+                h5_module=h5_module,
+            )
+            store = Store(
+                tmpdir,
+                index=index,
+                storage=storage,
+            )
+
+            one = store.put(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0]],
+            )
+            two = store.put(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[2.0]],
+            )
+
+            old_shard = one.shard_id
+            self.assertEqual(old_shard, two.shard_id)
+
+            store.delete(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            compacted = store.compact_shards()
+            self.assertEqual(compacted, [old_shard])
+
+            live = store.find_one(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            self.assertNotEqual(live.shard_id, old_shard)
+            self.assertEqual(
+                store.load(
+                    phraser_key='phrase-a',
+                    collar=100,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=3,
+                ),
+                [[1.0]],
+            )
+            self.assertEqual(store.index.entries_for_shard(old_shard), [])

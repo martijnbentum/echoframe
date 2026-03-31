@@ -47,6 +47,7 @@ class LmdbIndex:
                 txn.put(shard_key, entry_id.encode('utf-8'),
                     db=self.by_shard_db)
             if previous is not None:
+                self._delete_shard_keys(txn, previous, metadata)
                 self._delete_tag_keys(txn, previous)
             self._put_tag_keys(txn, metadata)
         return metadata
@@ -124,6 +125,25 @@ class LmdbIndex:
             return items
         return [item for item in items if item.storage_status == 'live']
 
+    def list_shards(self):
+        '''List shard identifiers present in the shard index.'''
+        shard_ids = []
+        seen = set()
+        with self.env.begin() as txn:
+            cursor = txn.cursor(db=self.by_shard_db)
+            if not cursor.set_range(b'shard:'):
+                return shard_ids
+            for key, _ in cursor:
+                if not key.startswith(b'shard:'):
+                    break
+                parts = key.decode('utf-8').split(':', 2)
+                shard_id = parts[1]
+                if shard_id in seen:
+                    continue
+                seen.add(shard_id)
+                shard_ids.append(shard_id)
+        return shard_ids
+
     def find_by_tag(self, tag, include_deleted=False):
         '''List entries for one tag.'''
         prefix = self._tag_key(tag, '')
@@ -133,6 +153,29 @@ class LmdbIndex:
         if include_deleted:
             return items
         return [item for item in items if item.storage_status == 'live']
+
+    def tag_counts(self, include_deleted=False):
+        '''Count entries per tag.'''
+        counts = {}
+        with self.env.begin() as txn:
+            cursor = txn.cursor(db=self.by_tag_db)
+            if not cursor.set_range(b'tag:'):
+                return counts
+            for key, value in cursor:
+                if not key.startswith(b'tag:'):
+                    break
+                parts = key.decode('utf-8').split(':', 2)
+                tag = parts[1]
+                if include_deleted:
+                    counts[tag] = counts.get(tag, 0) + 1
+                    continue
+                metadata = self.get(value.decode('utf-8'))
+                if metadata is None:
+                    continue
+                if metadata.storage_status != 'live':
+                    continue
+                counts[tag] = counts.get(tag, 0) + 1
+        return counts
 
     def add_tags(self, entry_id, tags):
         '''Add tags to one metadata record.'''
@@ -152,6 +195,13 @@ class LmdbIndex:
         next_tags = [tag for tag in metadata.tags if tag not in blocked]
         metadata = metadata.with_tags(next_tags)
         return self.upsert(metadata)
+
+    def remove_shard_entries(self, shard_id, entry_ids):
+        '''Remove shard index entries for one shard.'''
+        with self.env.begin(write=True) as txn:
+            for entry_id in entry_ids:
+                txn.delete(self._shard_key(shard_id, entry_id),
+                    db=self.by_shard_db)
 
     def _scan_prefix(self, db, prefix):
         entry_ids = []
@@ -181,3 +231,11 @@ class LmdbIndex:
         for tag in metadata.tags:
             txn.delete(self._tag_key(tag, metadata.entry_id),
                 db=self.by_tag_db)
+
+    def _delete_shard_keys(self, txn, previous, metadata):
+        if previous.shard_id is None:
+            return
+        if previous.shard_id == metadata.shard_id:
+            return
+        txn.delete(self._shard_key(previous.shard_id, previous.entry_id),
+            db=self.by_shard_db)

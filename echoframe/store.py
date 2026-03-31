@@ -128,6 +128,12 @@ class Store:
         return self.index.find_by_tag(tag,
             include_deleted=include_deleted)
 
+    def tag_counts(self, include_deleted=False):
+        '''Count metadata records per tag.
+        include_deleted:   include tombstoned entries
+        '''
+        return self.index.tag_counts(include_deleted=include_deleted)
+
     def add_tags(self, entry_id, tags):
         '''Add tags to one metadata record.
         entry_id:    metadata identifier
@@ -144,7 +150,7 @@ class Store:
 
     def find_or_compute(self, phraser_key, collar, model_name,
         output_type, layer, compute, match='exact',
-        tags=None, to_vector_version=None):
+        tags=None, add_tags_on_hit=False, to_vector_version=None):
         '''Load metadata if present, otherwise compute and store a payload.
         phraser_key:          unique phraser object key
         collar:               requested collar in milliseconds
@@ -154,12 +160,15 @@ class Store:
         compute:              callback that returns the payload
         match:                exact, min, max, or nearest
         tags:                 optional grouping labels
+        add_tags_on_hit:      add tags to an existing matching entry
         to_vector_version:    optional debug-only version marker
         '''
         metadata = self.find_one(phraser_key=phraser_key,
             collar=collar, model_name=model_name,
             output_type=output_type, layer=layer, match=match)
         if metadata is not None:
+            if tags and add_tags_on_hit:
+                metadata = self.add_tags(metadata.entry_id, tags)
             return metadata, False
         data = compute()
         metadata = self.put(phraser_key=phraser_key,
@@ -167,3 +176,28 @@ class Store:
             output_type=output_type, layer=layer, data=data, tags=tags,
             to_vector_version=to_vector_version)
         return metadata, True
+
+    def compact_shards(self, shard_ids=None):
+        '''Compact shard files by removing deleted payloads.
+        shard_ids:    optional shard identifiers to compact
+        '''
+        if shard_ids is None:
+            shard_ids = self.index.list_shards()
+
+        compacted = []
+        for shard_id in shard_ids:
+            all_entries = self.index.entries_for_shard(shard_id,
+                include_deleted=True)
+            live_entries = [entry for entry in all_entries
+                if entry.storage_status == 'live']
+            if len(live_entries) == len(all_entries):
+                continue
+
+            updated = self.storage.compact_shard(shard_id, live_entries)
+            for metadata in updated:
+                self.index.upsert(metadata)
+            deleted_ids = [entry.entry_id for entry in all_entries
+                if entry.storage_status != 'live']
+            self.index.remove_shard_entries(shard_id, deleted_ids)
+            compacted.append(shard_id)
+        return compacted

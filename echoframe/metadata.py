@@ -15,6 +15,24 @@ def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def normalize_tags(tags):
+    '''Validate and normalize tag values.'''
+    if tags is None:
+        return []
+
+    values = []
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError('tags must contain only strings')
+        value = tag.strip()
+        if not value:
+            raise ValueError('tags must not be empty')
+        if ':' in value:
+            raise ValueError("tags must not contain ':'")
+        values.append(value)
+    return sorted(set(values))
+
+
 class Metadata:
     '''EchoFrame metadata.
     phraser_key:          unique phraser object key
@@ -66,8 +84,7 @@ class Metadata:
             self.deleted_at = utc_now()
         if self.shape is not None:
             self.shape = tuple(self.shape)
-        if self.tags is None: self.tags = []
-        self.tags = sorted(set(self.tags))
+        self.tags = normalize_tags(self.tags)
 
     @property
     def entry_id(self):

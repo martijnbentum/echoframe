@@ -1,7 +1,5 @@
 '''LMDB-backed index for echoframe metadata.'''
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -11,8 +9,7 @@ from .metadata import Metadata
 class LmdbIndex:
     '''Store and query echoframe metadata in LMDB.'''
 
-    def __init__(self, path: str | Path, map_size: int=1 << 30,
-        env: object | None=None) -> None:
+    def __init__(self, path, map_size=1 << 30, env=None):
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.env = env or self._open_env(map_size=map_size)
@@ -21,7 +18,7 @@ class LmdbIndex:
         self.live_by_object_db = self.env.open_db(b'live_by_object')
         self.by_shard_db = self.env.open_db(b'by_shard')
 
-    def _open_env(self, map_size: int) -> object:
+    def _open_env(self, map_size):
         try:
             import lmdb
         except ImportError as exc:
@@ -29,7 +26,7 @@ class LmdbIndex:
         return lmdb.open(str(self.path), create=True, max_dbs=8,
             map_size=map_size, subdir=True)
 
-    def upsert(self, metadata: Metadata) -> Metadata:
+    def upsert(self, metadata):
         '''Insert or replace one metadata record.'''
         entry_id = metadata.entry_id
         payload = json.dumps(metadata.to_dict(), sort_keys=True).encode('utf-8')
@@ -48,7 +45,7 @@ class LmdbIndex:
                 txn.put(shard_key, b'', db=self.by_shard_db)
         return metadata
 
-    def get(self, entry_id: str) -> Metadata | None:
+    def get(self, entry_id):
         '''Load one metadata record by entry id.'''
         with self.env.begin() as txn:
             payload = txn.get(entry_id.encode('utf-8'), db=self.entries_db)
@@ -56,9 +53,8 @@ class LmdbIndex:
             return None
         return Metadata.from_dict(json.loads(payload.decode('utf-8')))
 
-    def find(self, phraser_key: str, model_name: str | None=None,
-        output_type: str | None=None, layer: int | None=None,
-        include_deleted: bool=False) -> list[Metadata]:
+    def find(self, phraser_key, model_name=None, output_type=None,
+        layer=None, include_deleted=False):
         '''Find metadata records for one phraser key.'''
         prefix = f'obj:{phraser_key}:'.encode('utf-8')
         db = self.by_object_db if include_deleted else self.live_by_object_db
@@ -76,9 +72,8 @@ class LmdbIndex:
         records.sort(key=lambda entry: entry.collar_ms)
         return records
 
-    def find_one(self, phraser_key: str, model_name: str,
-        output_type: str, layer: int, collar_ms: int,
-        match: str='exact') -> Metadata | None:
+    def find_one(self, phraser_key, model_name, output_type, layer,
+        collar_ms, match='exact'):
         '''Find one record using collar matching rules.'''
         if match not in {'exact', 'min', 'max', 'nearest'}:
             message = (
@@ -108,13 +103,12 @@ class LmdbIndex:
         return min(records, key=lambda entry:
             abs(entry.collar_ms - collar_ms))
 
-    def delete(self, metadata: Metadata) -> Metadata:
+    def delete(self, metadata):
         '''Tombstone a metadata record and remove it from live indexes.'''
         deleted = metadata.mark_deleted()
         return self.upsert(deleted)
 
-    def entries_for_shard(self, shard_id: str,
-        include_deleted: bool=False) -> list[Metadata]:
+    def entries_for_shard(self, shard_id, include_deleted=False):
         '''List entries that point to one shard.'''
         prefix = self._shard_key(shard_id, '')
         entry_ids = self._scan_prefix(self.by_shard_db, prefix)
@@ -124,8 +118,8 @@ class LmdbIndex:
             return items
         return [item for item in items if item.storage_status == 'live']
 
-    def _scan_prefix(self, db: object, prefix: bytes) -> list[str]:
-        entry_ids: list[str] = []
+    def _scan_prefix(self, db, prefix):
+        entry_ids = []
         with self.env.begin() as txn:
             cursor = txn.cursor(db=db)
             if not cursor.set_range(prefix):
@@ -136,5 +130,5 @@ class LmdbIndex:
                 entry_ids.append(value.decode('utf-8'))
         return entry_ids
 
-    def _shard_key(self, shard_id: str, entry_id: str) -> bytes:
+    def _shard_key(self, shard_id, entry_id):
         return f'shard:{shard_id}:{entry_id}'.encode('utf-8')

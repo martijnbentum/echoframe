@@ -1,14 +1,12 @@
 '''HDF5 shard storage for model output payloads.'''
 
-from __future__ import annotations
-
 import re
 from pathlib import Path
 
 from .metadata import Metadata
 
 
-def sanitize_name(value: str) -> str:
+def sanitize_name(value):
     '''Convert a user-facing value into a shard-safe name.'''
     return re.sub(r'[^a-zA-Z0-9_.-]+', '_', value).strip('_') or 'unknown'
 
@@ -16,22 +14,21 @@ def sanitize_name(value: str) -> str:
 class Hdf5ShardStore:
     '''Store payloads in rolling HDF5 shard files.'''
 
-    def __init__(self, root: str | Path,
-        max_shard_size_bytes: int=1_000_000_000,
-        h5_module: object | None=None) -> None:
+    def __init__(self, root, max_shard_size_bytes=1_000_000_000,
+        h5_module=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_shard_size_bytes = max_shard_size_bytes
         self.h5 = h5_module or self._import_h5()
 
-    def _import_h5(self) -> object:
+    def _import_h5(self):
         try:
             import h5py
         except ImportError as exc:
             raise ImportError('h5py is required to use Store') from exc
         return h5py
 
-    def store(self, metadata: Metadata, data: object) -> Metadata:
+    def store(self, metadata, data):
         '''Store payload data and return updated metadata.'''
         shard_id = self._active_shard_id(model_name=metadata.model_name,
             output_type=metadata.output_type)
@@ -57,7 +54,7 @@ class Hdf5ShardStore:
             deleted_at=metadata.deleted_at,
             to_vector_version=metadata.to_vector_version)
 
-    def load(self, metadata: Metadata) -> object:
+    def load(self, metadata):
         '''Load stored payload data.'''
         if metadata.shard_id is None or metadata.dataset_path is None:
             raise ValueError('metadata does not point to a stored payload')
@@ -65,7 +62,7 @@ class Hdf5ShardStore:
         with self.h5.File(file_path, 'r') as handle:
             return handle[metadata.dataset_path][()]
 
-    def delete(self, metadata: Metadata) -> None:
+    def delete(self, metadata):
         '''Best-effort payload deletion.
 
         HDF5 files are not compacted here. Compaction should be a later,
@@ -80,7 +77,7 @@ class Hdf5ShardStore:
             if metadata.dataset_path in handle:
                 del handle[metadata.dataset_path]
 
-    def _active_shard_id(self, model_name: str, output_type: str) -> str:
+    def _active_shard_id(self, model_name, output_type):
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'
         index = 1
         while True:
@@ -92,8 +89,8 @@ class Hdf5ShardStore:
                 return shard_id
             index += 1
 
-    def _dataset_path(self, metadata: Metadata) -> str:
+    def _dataset_path(self, metadata):
         return f'/layer_{metadata.layer:04d}/{metadata.entry_id}'
 
-    def _file_size(self, file_path: Path) -> int:
+    def _file_size(self, file_path):
         return file_path.stat().st_size

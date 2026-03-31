@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 from .metadata import Metadata
 
@@ -16,12 +16,9 @@ def sanitize_name(value: str) -> str:
 class Hdf5ShardStore:
     '''Store payloads in rolling HDF5 shard files.'''
 
-    def __init__(
-        self,
-        root: str | Path,
-        max_shard_size_bytes: int = 1_000_000_000,
-        h5_module: object | None = None,
-    ) -> None:
+    def __init__(self, root: str | Path,
+        max_shard_size_bytes: int=1_000_000_000,
+        h5_module: object | None=None) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_shard_size_bytes = max_shard_size_bytes
@@ -34,16 +31,10 @@ class Hdf5ShardStore:
             raise ImportError('h5py is required to use Store') from exc
         return h5py
 
-    def store(
-        self,
-        metadata: Metadata,
-        data: object,
-    ) -> Metadata:
+    def store(self, metadata: Metadata, data: object) -> Metadata:
         '''Store payload data and return updated metadata.'''
-        shard_id = self._active_shard_id(
-            model_name=metadata.model_name,
-            output_type=metadata.output_type,
-        )
+        shard_id = self._active_shard_id(model_name=metadata.model_name,
+            output_type=metadata.output_type)
         dataset_path = self._dataset_path(metadata)
         file_path = self.root / f'{shard_id}.h5'
 
@@ -57,21 +48,14 @@ class Hdf5ShardStore:
             if dtype is None: dtype = getattr(data, 'dtype', 'unknown')
             dtype = str(dtype)
 
-        return Metadata(
-            phraser_key=metadata.phraser_key,
-            collar_ms=metadata.collar_ms,
-            model_name=metadata.model_name,
-            output_type=metadata.output_type,
-            layer=metadata.layer,
-            storage_status=metadata.storage_status,
-            shard_id=shard_id,
-            dataset_path=dataset_path,
-            shape=shape,
-            dtype=dtype,
+        return Metadata(phraser_key=metadata.phraser_key,
+            collar_ms=metadata.collar_ms, model_name=metadata.model_name,
+            output_type=metadata.output_type, layer=metadata.layer,
+            storage_status=metadata.storage_status, shard_id=shard_id,
+            dataset_path=dataset_path, shape=shape, dtype=dtype,
             created_at=metadata.created_at,
             deleted_at=metadata.deleted_at,
-            to_vector_version=metadata.to_vector_version,
-        )
+            to_vector_version=metadata.to_vector_version)
 
     def load(self, metadata: Metadata) -> object:
         '''Load stored payload data.'''
@@ -96,11 +80,7 @@ class Hdf5ShardStore:
             if metadata.dataset_path in handle:
                 del handle[metadata.dataset_path]
 
-    def _active_shard_id(
-        self,
-        model_name: str,
-        output_type: str,
-    ) -> str:
+    def _active_shard_id(self, model_name: str, output_type: str) -> str:
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'
         index = 1
         while True:

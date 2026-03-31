@@ -48,14 +48,13 @@ class Metadata:
         if not self.model_name:
             raise ValueError('model_name must not be empty')
         if self.output_type not in OUTPUT_TYPES:
-            raise ValueError(
-                'output_type must be one of '
-                f'{sorted(OUTPUT_TYPES)}'
-            )
+            message = f'output_type must be one of {sorted(OUTPUT_TYPES)}'
+            raise ValueError(message)
         if self.layer < 0:
             raise ValueError('layer must be >= 0')
         if self.storage_status not in {'live', 'deleted'}:
-            raise ValueError("storage_status must be 'live' or 'deleted'")
+            message = "storage_status must be 'live' or 'deleted'"
+            raise ValueError(message)
         if self.created_at is None:
             object.__setattr__(self, 'created_at', utc_now())
         if self.storage_status == 'deleted' and self.deleted_at is None:
@@ -72,43 +71,27 @@ class Metadata:
     @property
     def identity_key(self) -> str:
         '''Canonical identity for a stored output.'''
-        return ':'.join([
-            self.phraser_key,
-            self.model_name,
-            self.output_type,
-            f'{self.layer:04d}',
-            f'{self.collar_ms:09d}',
-        ])
+        return ':'.join([self.phraser_key, self.model_name,
+            self.output_type, f'{self.layer:04d}',
+            f'{self.collar_ms:09d}'])
 
     @property
     def object_key(self) -> str:
         '''Sortable object index key.'''
-        return ':'.join([
-            'obj',
-            self.phraser_key,
-            self.model_name,
-            self.output_type,
-            f'{self.layer:04d}',
-            f'{self.collar_ms:09d}',
-        ])
+        return ':'.join(['obj', self.phraser_key, self.model_name,
+            self.output_type, f'{self.layer:04d}',
+            f'{self.collar_ms:09d}'])
 
     def mark_deleted(self) -> 'Metadata':
         '''Return a tombstoned copy.'''
-        return Metadata(
-            phraser_key=self.phraser_key,
-            collar_ms=self.collar_ms,
-            model_name=self.model_name,
-            output_type=self.output_type,
-            layer=self.layer,
-            storage_status='deleted',
-            shard_id=self.shard_id,
-            dataset_path=self.dataset_path,
-            shape=self.shape,
-            dtype=self.dtype,
-            created_at=self.created_at,
+        return Metadata(phraser_key=self.phraser_key,
+            collar_ms=self.collar_ms, model_name=self.model_name,
+            output_type=self.output_type, layer=self.layer,
+            storage_status='deleted', shard_id=self.shard_id,
+            dataset_path=self.dataset_path, shape=self.shape,
+            dtype=self.dtype, created_at=self.created_at,
             deleted_at=utc_now(),
-            to_vector_version=self.to_vector_version,
-        )
+            to_vector_version=self.to_vector_version)
 
     def to_dict(self) -> dict[str, object]:
         '''Serialize to a JSON-friendly dictionary.'''

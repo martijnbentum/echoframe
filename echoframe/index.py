@@ -11,12 +11,8 @@ from .metadata import Metadata
 class LmdbIndex:
     '''Store and query echoframe metadata in LMDB.'''
 
-    def __init__(
-        self,
-        path: str | Path,
-        map_size: int = 1 << 30,
-        env: object | None = None,
-    ) -> None:
+    def __init__(self, path: str | Path, map_size: int=1 << 30,
+        env: object | None=None) -> None:
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.env = env or self._open_env(map_size=map_size)
@@ -30,13 +26,8 @@ class LmdbIndex:
             import lmdb
         except ImportError as exc:
             raise ImportError('lmdb is required to use Store') from exc
-        return lmdb.open(
-            str(self.path),
-            create=True,
-            max_dbs=8,
-            map_size=map_size,
-            subdir=True,
-        )
+        return lmdb.open(str(self.path), create=True, max_dbs=8,
+            map_size=map_size, subdir=True)
 
     def upsert(self, metadata: Metadata) -> Metadata:
         '''Insert or replace one metadata record.'''
@@ -48,11 +39,8 @@ class LmdbIndex:
             txn.put(entry_id.encode('utf-8'), payload, db=self.entries_db)
             txn.put(object_key, entry_id.encode('utf-8'), db=self.by_object_db)
             if metadata.storage_status == 'live':
-                txn.put(
-                    object_key,
-                    entry_id.encode('utf-8'),
-                    db=self.live_by_object_db,
-                )
+                txn.put(object_key, entry_id.encode('utf-8'),
+                    db=self.live_by_object_db)
             else:
                 txn.delete(object_key, db=self.live_by_object_db)
             if metadata.shard_id:
@@ -68,14 +56,9 @@ class LmdbIndex:
             return None
         return Metadata.from_dict(json.loads(payload.decode('utf-8')))
 
-    def find(
-        self,
-        phraser_key: str,
-        model_name: str | None = None,
-        output_type: str | None = None,
-        layer: int | None = None,
-        include_deleted: bool = False,
-    ) -> list[Metadata]:
+    def find(self, phraser_key: str, model_name: str | None=None,
+        output_type: str | None=None, layer: int | None=None,
+        include_deleted: bool=False) -> list[Metadata]:
         '''Find metadata records for one phraser key.'''
         prefix = f'obj:{phraser_key}:'.encode('utf-8')
         db = self.by_object_db if include_deleted else self.live_by_object_db
@@ -83,27 +66,19 @@ class LmdbIndex:
         entries = [self.get(entry_id) for entry_id in entry_ids]
         records = [entry for entry in entries if entry is not None]
         if model_name is not None:
-            records = [
-                entry for entry in records if entry.model_name == model_name
-            ]
+            records = [entry for entry in records
+                if entry.model_name == model_name]
         if output_type is not None:
-            records = [
-                entry for entry in records if entry.output_type == output_type
-            ]
+            records = [entry for entry in records
+                if entry.output_type == output_type]
         if layer is not None:
             records = [entry for entry in records if entry.layer == layer]
         records.sort(key=lambda entry: entry.collar_ms)
         return records
 
-    def find_one(
-        self,
-        phraser_key: str,
-        model_name: str,
-        output_type: str,
-        layer: int,
-        collar_ms: int,
-        match: str = 'exact',
-    ) -> Metadata | None:
+    def find_one(self, phraser_key: str, model_name: str,
+        output_type: str, layer: int, collar_ms: int,
+        match: str='exact') -> Metadata | None:
         '''Find one record using collar matching rules.'''
         if match not in {'exact', 'min', 'max', 'nearest'}:
             message = (
@@ -111,12 +86,8 @@ class LmdbIndex:
             )
             raise ValueError(message)
 
-        records = self.find(
-            phraser_key=phraser_key,
-            model_name=model_name,
-            output_type=output_type,
-            layer=layer,
-        )
+        records = self.find(phraser_key=phraser_key,
+            model_name=model_name, output_type=output_type, layer=layer)
         if not records:
             return None
         if match == 'exact':
@@ -134,18 +105,16 @@ class LmdbIndex:
                 if entry.collar_ms <= collar_ms:
                     return entry
             return None
-        return min(records, key=lambda entry: abs(entry.collar_ms - collar_ms))
+        return min(records, key=lambda entry:
+            abs(entry.collar_ms - collar_ms))
 
     def delete(self, metadata: Metadata) -> Metadata:
         '''Tombstone a metadata record and remove it from live indexes.'''
         deleted = metadata.mark_deleted()
         return self.upsert(deleted)
 
-    def entries_for_shard(
-        self,
-        shard_id: str,
-        include_deleted: bool = False,
-    ) -> list[Metadata]:
+    def entries_for_shard(self, shard_id: str,
+        include_deleted: bool=False) -> list[Metadata]:
         '''List entries that point to one shard.'''
         prefix = self._shard_key(shard_id, '')
         entry_ids = self._scan_prefix(self.by_shard_db, prefix)

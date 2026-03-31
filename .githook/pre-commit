@@ -1,0 +1,30 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+file='pyproject.toml'
+
+if [[ ! -f "$file" ]]; then
+    exit 0
+fi
+
+current_version=$(sed -n "s/^version = '\([0-9][0-9]*\.[0-9][0-9]*\.\([0-9][0-9]*\)\)'$/\1/p" "$file")
+
+if [[ -z "$current_version" ]]; then
+    echo 'pre-commit: could not find version in pyproject.toml' >&2
+    exit 1
+fi
+
+major=${current_version%%.*}
+rest=${current_version#*.}
+minor=${rest%%.*}
+patch=${current_version##*.}
+next_patch=$((patch + 1))
+next_version="${major}.${minor}.${next_patch}"
+
+tmp_file="${file}.tmp"
+sed "s/^version = '${current_version}'$/version = '${next_version}'/" \
+    "$file" > "$tmp_file"
+mv "$tmp_file" "$file"
+
+git add "$file"

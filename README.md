@@ -42,11 +42,12 @@ store = Store('cache')
 
 metadata = store.put(
     phraser_key='phrase-123',
-    collar_ms=150,
+    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
     data=[[0.1, 0.2], [0.3, 0.4]],
+    tags=['exp-a', 'speaker-01'],
     to_vector_version='debug-only-version',
 )
 
@@ -59,7 +60,7 @@ Check whether output is already available:
 ```python
 exists = store.exists(
     phraser_key='phrase-123',
-    collar_ms=150,
+    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
@@ -73,7 +74,7 @@ Load a stored output:
 ```python
 payload = store.load(
     phraser_key='phrase-123',
-    collar_ms=150,
+    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
@@ -89,7 +90,7 @@ entries = store.find(
 )
 
 for metadata in entries:
-    print(metadata.output_type, metadata.layer, metadata.collar_ms)
+    print(metadata.output_type, metadata.layer, metadata.collar)
 ```
 
 Use collar matching when an exact collar is not available:
@@ -97,7 +98,7 @@ Use collar matching when an exact collar is not available:
 ```python
 metadata = store.find_one(
     phraser_key='phrase-123',
-    collar_ms=160,
+    collar=160,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
@@ -114,7 +115,7 @@ def compute_hidden_state():
 
 metadata, created = store.find_or_compute(
     phraser_key='phrase-123',
-    collar_ms=150,
+    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
@@ -129,13 +130,22 @@ Delete one stored output:
 ```python
 deleted = store.delete(
     phraser_key='phrase-123',
-    collar_ms=150,
+    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
 )
 
 print(deleted.storage_status if deleted else None)
+```
+
+List all outputs for one tag:
+
+```python
+entries = store.find_by_tag('exp-a')
+
+for metadata in entries:
+    print(metadata.phraser_key, metadata.layer, metadata.tags)
 ```
 
 ## Docs

@@ -46,11 +46,11 @@ class Hdf5ShardStore:
             dtype = str(dtype)
 
         return Metadata(phraser_key=metadata.phraser_key,
-            collar_ms=metadata.collar_ms, model_name=metadata.model_name,
+            collar=metadata.collar, model_name=metadata.model_name,
             output_type=metadata.output_type, layer=metadata.layer,
             storage_status=metadata.storage_status, shard_id=shard_id,
             dataset_path=dataset_path, shape=shape, dtype=dtype,
-            created_at=metadata.created_at,
+            tags=metadata.tags, created_at=metadata.created_at,
             deleted_at=metadata.deleted_at,
             to_vector_version=metadata.to_vector_version)
 

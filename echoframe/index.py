@@ -17,6 +17,7 @@ class LmdbIndex:
         self.by_object_db = self.env.open_db(b'by_object')
         self.live_by_object_db = self.env.open_db(b'live_by_object')
         self.by_shard_db = self.env.open_db(b'by_shard')
+        self.by_tag_db = self.env.open_db(b'by_tag')
 
     def _open_env(self, map_size):
         try:
@@ -31,6 +32,7 @@ class LmdbIndex:
         entry_id = metadata.entry_id
         payload = json.dumps(metadata.to_dict(), sort_keys=True).encode('utf-8')
         object_key = metadata.object_key.encode('utf-8')
+        previous = self.get(entry_id)
 
         with self.env.begin(write=True) as txn:
             txn.put(entry_id.encode('utf-8'), payload, db=self.entries_db)
@@ -42,7 +44,11 @@ class LmdbIndex:
                 txn.delete(object_key, db=self.live_by_object_db)
             if metadata.shard_id:
                 shard_key = self._shard_key(metadata.shard_id, entry_id)
-                txn.put(shard_key, b'', db=self.by_shard_db)
+                txn.put(shard_key, entry_id.encode('utf-8'),
+                    db=self.by_shard_db)
+            if previous is not None:
+                self._delete_tag_keys(txn, previous)
+            self._put_tag_keys(txn, metadata)
         return metadata
 
     def get(self, entry_id):
@@ -69,11 +75,11 @@ class LmdbIndex:
                 if entry.output_type == output_type]
         if layer is not None:
             records = [entry for entry in records if entry.layer == layer]
-        records.sort(key=lambda entry: entry.collar_ms)
+        records.sort(key=lambda entry: entry.collar)
         return records
 
     def find_one(self, phraser_key, model_name, output_type, layer,
-        collar_ms, match='exact'):
+        collar, match='exact'):
         '''Find one record using collar matching rules.'''
         if match not in {'exact', 'min', 'max', 'nearest'}:
             message = (
@@ -87,21 +93,21 @@ class LmdbIndex:
             return None
         if match == 'exact':
             for entry in records:
-                if entry.collar_ms == collar_ms:
+                if entry.collar == collar:
                     return entry
             return None
         if match == 'min':
             for entry in records:
-                if entry.collar_ms >= collar_ms:
+                if entry.collar >= collar:
                     return entry
             return None
         if match == 'max':
             for entry in reversed(records):
-                if entry.collar_ms <= collar_ms:
+                if entry.collar <= collar:
                     return entry
             return None
         return min(records, key=lambda entry:
-            abs(entry.collar_ms - collar_ms))
+            abs(entry.collar - collar))
 
     def delete(self, metadata):
         '''Tombstone a metadata record and remove it from live indexes.'''
@@ -118,6 +124,35 @@ class LmdbIndex:
             return items
         return [item for item in items if item.storage_status == 'live']
 
+    def find_by_tag(self, tag, include_deleted=False):
+        '''List entries for one tag.'''
+        prefix = self._tag_key(tag, '')
+        entry_ids = self._scan_prefix(self.by_tag_db, prefix)
+        records = [self.get(entry_id) for entry_id in entry_ids]
+        items = [record for record in records if record is not None]
+        if include_deleted:
+            return items
+        return [item for item in items if item.storage_status == 'live']
+
+    def add_tags(self, entry_id, tags):
+        '''Add tags to one metadata record.'''
+        metadata = self.get(entry_id)
+        if metadata is None:
+            return None
+        next_tags = list(metadata.tags) + list(tags)
+        metadata = metadata.with_tags(next_tags)
+        return self.upsert(metadata)
+
+    def remove_tags(self, entry_id, tags):
+        '''Remove tags from one metadata record.'''
+        metadata = self.get(entry_id)
+        if metadata is None:
+            return None
+        blocked = set(tags)
+        next_tags = [tag for tag in metadata.tags if tag not in blocked]
+        metadata = metadata.with_tags(next_tags)
+        return self.upsert(metadata)
+
     def _scan_prefix(self, db, prefix):
         entry_ids = []
         with self.env.begin() as txn:
@@ -132,3 +167,17 @@ class LmdbIndex:
 
     def _shard_key(self, shard_id, entry_id):
         return f'shard:{shard_id}:{entry_id}'.encode('utf-8')
+
+    def _tag_key(self, tag, entry_id):
+        return f'tag:{tag}:{entry_id}'.encode('utf-8')
+
+    def _put_tag_keys(self, txn, metadata):
+        for tag in metadata.tags:
+            txn.put(self._tag_key(tag, metadata.entry_id),
+                metadata.entry_id.encode('utf-8'),
+                db=self.by_tag_db)
+
+    def _delete_tag_keys(self, txn, metadata):
+        for tag in metadata.tags:
+            txn.delete(self._tag_key(tag, metadata.entry_id),
+                db=self.by_tag_db)

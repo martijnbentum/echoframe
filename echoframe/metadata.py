@@ -18,18 +18,19 @@ def utc_now():
 class Metadata:
     '''EchoFrame metadata.
     phraser_key:          unique phraser object key
-    collar_ms:            collar in milliseconds
+    collar:               collar in milliseconds
     model_name:           model identifier
     output_type:          hidden_state, attention, or codebook_indices
     layer:                model layer index
+    tags:                 optional grouping labels
     '''
 
-    def __init__(self, phraser_key, collar_ms, model_name, output_type, layer,
+    def __init__(self, phraser_key, collar, model_name, output_type, layer,
         storage_status='live', shard_id=None, dataset_path=None, shape=None,
-        dtype=None, created_at=None, deleted_at=None,
+        dtype=None, tags=None, created_at=None, deleted_at=None,
         to_vector_version=None):
         self.phraser_key = phraser_key
-        self.collar_ms = collar_ms
+        self.collar = collar
         self.model_name = model_name
         self.output_type = output_type
         self.layer = layer
@@ -38,6 +39,7 @@ class Metadata:
         self.dataset_path = dataset_path
         self.shape = shape
         self.dtype = dtype
+        self.tags = tags
         self.created_at = created_at
         self.deleted_at = deleted_at
         self.to_vector_version = to_vector_version
@@ -46,8 +48,8 @@ class Metadata:
     def _validate(self):
         if not self.phraser_key:
             raise ValueError('phraser_key must not be empty')
-        if self.collar_ms < 0:
-            raise ValueError('collar_ms must be >= 0')
+        if self.collar < 0:
+            raise ValueError('collar must be >= 0')
         if not self.model_name:
             raise ValueError('model_name must not be empty')
         if self.output_type not in OUTPUT_TYPES:
@@ -64,6 +66,8 @@ class Metadata:
             self.deleted_at = utc_now()
         if self.shape is not None:
             self.shape = tuple(self.shape)
+        if self.tags is None: self.tags = []
+        self.tags = sorted(set(self.tags))
 
     @property
     def entry_id(self):
@@ -76,31 +80,42 @@ class Metadata:
         '''Canonical identity for a stored output.'''
         return ':'.join([self.phraser_key, self.model_name,
             self.output_type, f'{self.layer:04d}',
-            f'{self.collar_ms:09d}'])
+            f'{self.collar:09d}'])
 
     @property
     def object_key(self):
         '''Sortable object index key.'''
         return ':'.join(['obj', self.phraser_key, self.model_name,
             self.output_type, f'{self.layer:04d}',
-            f'{self.collar_ms:09d}'])
+            f'{self.collar:09d}'])
 
     def mark_deleted(self):
         '''Return a tombstoned copy.'''
         return Metadata(phraser_key=self.phraser_key,
-            collar_ms=self.collar_ms, model_name=self.model_name,
+            collar=self.collar, model_name=self.model_name,
             output_type=self.output_type, layer=self.layer,
             storage_status='deleted', shard_id=self.shard_id,
             dataset_path=self.dataset_path, shape=self.shape,
-            dtype=self.dtype, created_at=self.created_at,
+            dtype=self.dtype, tags=self.tags, created_at=self.created_at,
             deleted_at=utc_now(),
+            to_vector_version=self.to_vector_version)
+
+    def with_tags(self, tags):
+        '''Return a copy with updated tags.'''
+        return Metadata(phraser_key=self.phraser_key,
+            collar=self.collar, model_name=self.model_name,
+            output_type=self.output_type, layer=self.layer,
+            storage_status=self.storage_status, shard_id=self.shard_id,
+            dataset_path=self.dataset_path, shape=self.shape,
+            dtype=self.dtype, tags=tags, created_at=self.created_at,
+            deleted_at=self.deleted_at,
             to_vector_version=self.to_vector_version)
 
     def to_dict(self):
         '''Serialize to a JSON-friendly dictionary.'''
         return {
             'phraser_key': self.phraser_key,
-            'collar_ms': self.collar_ms,
+            'collar': self.collar,
             'model_name': self.model_name,
             'output_type': self.output_type,
             'layer': self.layer,
@@ -109,6 +124,7 @@ class Metadata:
             'dataset_path': self.dataset_path,
             'shape': self.shape,
             'dtype': self.dtype,
+            'tags': self.tags,
             'created_at': self.created_at,
             'deleted_at': self.deleted_at,
             'to_vector_version': self.to_vector_version,

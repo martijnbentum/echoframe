@@ -160,20 +160,22 @@ class EchoFrameTests(unittest.TestCase):
 
             metadata = store.put(
                 phraser_key='phrase-1',
-                collar_ms=120,
+                collar=120,
                 model_name='wav2vec2',
                 output_type='hidden_state',
                 layer=7,
                 data=[[1.0, 2.0], [3.0, 4.0]],
+                tags=['exp-a'],
                 to_vector_version='abc123',
             )
 
             self.assertEqual(metadata.phraser_key, 'phrase-1')
             self.assertEqual(metadata.layer, 7)
             self.assertEqual(metadata.shard_id, 'wav2vec2_hidden_state_0001')
+            self.assertEqual(metadata.tags, ['exp-a'])
             self.assertTrue(store.exists(
                 phraser_key='phrase-1',
-                collar_ms=120,
+                collar=120,
                 model_name='wav2vec2',
                 output_type='hidden_state',
                 layer=7,
@@ -181,7 +183,7 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(
                 store.load(
                     phraser_key='phrase-1',
-                    collar_ms=120,
+                    collar=120,
                     model_name='wav2vec2',
                     output_type='hidden_state',
                     layer=7,
@@ -205,7 +207,7 @@ class EchoFrameTests(unittest.TestCase):
             for collar in (100, 200, 350):
                 store.put(
                     phraser_key='word-1',
-                    collar_ms=collar,
+                    collar=collar,
                     model_name='hubert',
                     output_type='attention',
                     layer=3,
@@ -214,7 +216,7 @@ class EchoFrameTests(unittest.TestCase):
 
             minimum = store.find_one(
                 phraser_key='word-1',
-                collar_ms=150,
+                collar=150,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
@@ -222,7 +224,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             maximum = store.find_one(
                 phraser_key='word-1',
-                collar_ms=150,
+                collar=150,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
@@ -230,20 +232,20 @@ class EchoFrameTests(unittest.TestCase):
             )
             nearest = store.find_one(
                 phraser_key='word-1',
-                collar_ms=180,
+                collar=180,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
                 match='nearest',
             )
 
-            self.assertEqual(minimum.collar_ms, 200)
-            self.assertEqual(maximum.collar_ms, 100)
-            self.assertEqual(nearest.collar_ms, 200)
+            self.assertEqual(minimum.collar, 200)
+            self.assertEqual(maximum.collar, 100)
+            self.assertEqual(nearest.collar, 200)
 
             deleted = store.delete(
                 phraser_key='word-1',
-                collar_ms=200,
+                collar=200,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
@@ -251,7 +253,7 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(deleted.storage_status, 'deleted')
             self.assertFalse(store.exists(
                 phraser_key='word-1',
-                collar_ms=200,
+                collar=200,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
@@ -277,7 +279,7 @@ class EchoFrameTests(unittest.TestCase):
 
             metadata, created = store.find_or_compute(
                 phraser_key='phone-1',
-                collar_ms=50,
+                collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
                 layer=1,
@@ -285,7 +287,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             again, created_again = store.find_or_compute(
                 phraser_key='phone-1',
-                collar_ms=50,
+                collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
                 layer=1,
@@ -296,3 +298,41 @@ class EchoFrameTests(unittest.TestCase):
             self.assertFalse(created_again)
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(calls, ['compute'])
+
+    def test_tag_queries_and_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
+            storage = Hdf5ShardStore(
+                Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module(),
+            )
+            store = Store(
+                tmpdir,
+                index=index,
+                storage=storage,
+            )
+
+            metadata = store.put(
+                phraser_key='phrase-2',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=5,
+                data=[[1.0]],
+                tags=['exp-a', 'subset-1'],
+            )
+
+            entries = store.find_by_tag('exp-a')
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].entry_id, metadata.entry_id)
+
+            updated = store.add_tags(metadata.entry_id, ['review'])
+            self.assertEqual(updated.tags, ['exp-a', 'review', 'subset-1'])
+
+            entries = store.find_by_tag('review')
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0].entry_id, metadata.entry_id)
+
+            updated = store.remove_tags(metadata.entry_id, ['exp-a'])
+            self.assertEqual(updated.tags, ['review', 'subset-1'])
+            self.assertEqual(store.find_by_tag('exp-a'), [])

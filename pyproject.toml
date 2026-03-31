@@ -9,6 +9,10 @@ description = 'Store hidden states, attention tensors, and codebooks on disk.'
 readme = 'README.md'
 requires-python = '>=3.10'
 license = {file = 'LICENSE'}
+dependencies = [
+    'h5py>=3.0',
+    'lmdb>=1.4',
+]
 authors = [
     {name = 'Martijn Bentum'},
 ]

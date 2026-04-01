@@ -22,8 +22,8 @@ import echoframe
 
 ## API
 
-The first implementation exposes `echoframe.Store` and
-`echoframe.Metadata`.
+The public package exports `echoframe.Store`, `echoframe.Metadata`, and
+`echoframe.STABLE_METADATA_FIELDS`.
 
 ```python
 from echoframe import Store
@@ -147,6 +147,71 @@ entries = store.find_by_tag('exp-a')
 for metadata in entries:
     print(metadata.phraser_key, metadata.layer, metadata.tags)
 ```
+
+Find records by multiple tags:
+
+```python
+entries = store.find_by_tags(['exp-a', 'speaker-01'], match='all')
+tags = store.list_tags()
+```
+
+Store and query in batches:
+
+```python
+created = store.put_many([
+    {
+        'phraser_key': 'phrase-123',
+        'collar': 150,
+        'model_name': 'wav2vec2',
+        'output_type': 'hidden_state',
+        'layer': 7,
+        'data': [[0.1, 0.2]],
+        'tags': ['exp-a'],
+    },
+])
+
+results = store.find_many([
+    {
+        'phraser_key': 'phrase-123',
+        'collar': 150,
+        'model_name': 'wav2vec2',
+        'output_type': 'hidden_state',
+        'layer': 7,
+    },
+])
+```
+
+Run maintenance checks:
+
+```python
+report = store.verify_integrity()
+plans = store.compact_shards(dry_run=True)
+journal = store.compaction_journal()
+stats = store.shard_stats()
+```
+
+## Metadata Contract
+
+`Metadata` contains internal and operational fields, but the stable public
+contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
+
+- `phraser_key`
+- `collar`
+- `model_name`
+- `output_type`
+- `layer`
+- `storage_status`
+- `shard_id`
+- `dataset_path`
+- `shape`
+- `dtype`
+- `tags`
+- `created_at`
+- `deleted_at`
+
+`to_vector_version` is intentionally treated as a debug/provenance field rather
+than a stable contract field. It may be present on `Metadata`, but downstream
+code should not rely on it as part of the long-term API surface.
 
 ## Docs
 

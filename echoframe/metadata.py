@@ -9,6 +9,22 @@ OUTPUT_TYPES = {
     'hidden_state',
 }
 
+STABLE_METADATA_FIELDS = (
+    'phraser_key',
+    'collar',
+    'model_name',
+    'output_type',
+    'layer',
+    'storage_status',
+    'shard_id',
+    'dataset_path',
+    'shape',
+    'dtype',
+    'tags',
+    'created_at',
+    'deleted_at',
+)
+
 
 def utc_now():
     '''Return an ISO-8601 UTC timestamp.'''

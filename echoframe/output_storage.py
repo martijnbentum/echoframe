@@ -32,6 +32,17 @@ class Hdf5ShardStore:
         '''Store payload data and return updated metadata.'''
         shard_id = self._active_shard_id(model_name=metadata.model_name,
             output_type=metadata.output_type)
+        return self.store_with_shard(metadata, data=data, shard_id=shard_id)
+
+    def store_many(self, items):
+        '''Store multiple payloads and return updated metadata records.'''
+        stored = []
+        for item in items:
+            stored.append(self.store(item['metadata'], data=item['data']))
+        return stored
+
+    def store_with_shard(self, metadata, data, shard_id):
+        '''Store payload data in a specific shard.'''
         dataset_path = self._dataset_path(metadata)
         file_path = self.root / f'{shard_id}.h5'
 
@@ -79,13 +90,20 @@ class Hdf5ShardStore:
 
     def compact_shard(self, shard_id, entries):
         '''Rewrite live datasets from one shard into a new shard.'''
+        next_shard_id = self._replacement_shard_id(shard_id)
+        return self.compact_shard_to(shard_id, entries,
+            target_shard_id=next_shard_id)
+
+    def compact_shard_to(self, shard_id, entries, target_shard_id,
+        delete_source=True):
+        '''Rewrite live datasets from one shard into a target shard.'''
         if not entries:
-            self._delete_file(shard_id)
+            if delete_source:
+                self._delete_file(shard_id)
             return []
 
-        next_shard_id = self._replacement_shard_id(shard_id)
         old_file_path = self.root / f'{shard_id}.h5'
-        new_file_path = self.root / f'{next_shard_id}.h5'
+        new_file_path = self.root / f'{target_shard_id}.h5'
         updated = []
 
         with self.h5.File(old_file_path, 'r') as source:
@@ -104,7 +122,7 @@ class Hdf5ShardStore:
                         output_type=metadata.output_type,
                         layer=metadata.layer,
                         storage_status=metadata.storage_status,
-                        shard_id=next_shard_id,
+                        shard_id=target_shard_id,
                         dataset_path=self._dataset_path(metadata),
                         shape=tuple(getattr(created, 'shape', ()) or ()),
                         dtype=str(getattr(created, 'dtype', 'unknown')),
@@ -114,8 +132,24 @@ class Hdf5ShardStore:
                         to_vector_version=metadata.to_vector_version,
                     ))
 
-        self._delete_file(shard_id)
+        if delete_source:
+            self._delete_file(shard_id)
         return updated
+
+    def dataset_exists(self, shard_id, dataset_path):
+        '''Return whether a dataset exists in a shard.'''
+        file_path = self.root / f'{shard_id}.h5'
+        if not file_path.exists():
+            return False
+        with self.h5.File(file_path, 'r') as handle:
+            return dataset_path in handle
+
+    def shard_size(self, shard_id):
+        '''Return shard file size in bytes.'''
+        file_path = self.root / f'{shard_id}.h5'
+        if not file_path.exists():
+            return 0
+        return self._file_size(file_path)
 
     def _active_shard_id(self, model_name, output_type):
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'

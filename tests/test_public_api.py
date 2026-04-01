@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import echoframe
 from echoframe.index import LmdbIndex
 from echoframe.metadata import Metadata
-from echoframe.output_storage import Hdf5ShardStore
+from echoframe.output_storage import Hdf5ShardStore, sanitize_name
 from echoframe.store import Store
 
 
@@ -140,26 +143,40 @@ class FakeH5Module:
         return FakeH5File(self.files, path)
 
 
+class FailingCompactStorage(Hdf5ShardStore):
+    def compact_shard_to(self, shard_id, entries, target_shard_id,
+        delete_source=True):
+        super().compact_shard_to(shard_id, entries,
+            target_shard_id=target_shard_id,
+            delete_source=delete_source)
+        raise RuntimeError('compaction exploded')
+
+
 class EchoFrameTests(unittest.TestCase):
+    def _make_fake_store(self, tmpdir: str) -> Store:
+        index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
+            shards_root=Path(tmpdir) / 'shards')
+        storage = Hdf5ShardStore(
+            Path(tmpdir) / 'shards',
+            h5_module=FakeH5Module(),
+        )
+        return Store(
+            tmpdir,
+            index=index,
+            storage=storage,
+        )
+
     def test_public_exports(self) -> None:
         self.assertIn('Store', echoframe.__all__)
         self.assertIn('Metadata', echoframe.__all__)
+        self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)
         self.assertFalse(hasattr(echoframe, '__version__'))
 
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             metadata = store.put(
                 phraser_key='phrase-1',
@@ -196,16 +213,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_collar_matching_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             for collar in (100, 200, 350):
                 store.put(
@@ -264,16 +272,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_find_or_compute(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
             calls: list[str] = []
 
             def compute() -> list[int]:
@@ -304,16 +303,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_find_or_compute_can_add_tags_on_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             def compute() -> list[int]:
                 return [1, 2, 3]
@@ -345,16 +335,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             metadata = store.put(
                 phraser_key='phrase-2',
@@ -383,16 +364,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_tag_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=FakeH5Module(),
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             store.put(
                 phraser_key='phrase-10',
@@ -450,17 +422,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_compact_shards_removes_deleted_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv())
-            h5_module = FakeH5Module()
-            storage = Hdf5ShardStore(
-                Path(tmpdir) / 'shards',
-                h5_module=h5_module,
-            )
-            store = Store(
-                tmpdir,
-                index=index,
-                storage=storage,
-            )
+            store = self._make_fake_store(tmpdir)
 
             one = store.put(
                 phraser_key='phrase-a',
@@ -511,3 +473,680 @@ class EchoFrameTests(unittest.TestCase):
                 [[1.0]],
             )
             self.assertEqual(store.index.entries_for_shard(old_shard), [])
+
+    def test_empty_and_missing_store_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+
+            self.assertEqual(store.find_many([]), [])
+            self.assertEqual(store.put_many([]), [])
+            self.assertEqual(store.add_tags_many([], ['exp-a']), [])
+            self.assertEqual(store.remove_tags_many([], ['exp-a']), [])
+            self.assertIsNone(store.delete(
+                phraser_key='missing',
+                collar=10,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+            ))
+            with self.assertRaisesRegex(ValueError,
+                'no stored output matched'):
+                store.load(
+                    phraser_key='missing',
+                    collar=10,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=1,
+                )
+
+    def test_include_deleted_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            live = store.put(
+                phraser_key='phrase-live',
+                collar=80,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=2,
+                data=[[1.0]],
+                tags=['exp-a', 'shared'],
+            )
+            deleted = store.put(
+                phraser_key='phrase-deleted',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=2,
+                data=[[2.0]],
+                tags=['exp-b', 'shared'],
+            )
+            store.delete(
+                phraser_key='phrase-deleted',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=2,
+            )
+
+            self.assertEqual(
+                [item.entry_id for item in store.find(
+                    'phrase-deleted',
+                    include_deleted=True,
+                )],
+                [deleted.entry_id],
+            )
+            self.assertEqual(store.find('phrase-deleted'), [])
+            self.assertEqual(
+                [item.entry_id for item in store.find_by_tag(
+                    'exp-b',
+                    include_deleted=True,
+                )],
+                [deleted.entry_id],
+            )
+            self.assertEqual(store.find_by_tag('exp-b'), [])
+            self.assertEqual(sorted(item.entry_id for item in
+                store.find_by_tags(['shared'], include_deleted=True)), [
+                deleted.entry_id,
+                live.entry_id,
+            ])
+            self.assertEqual([item.entry_id for item in
+                store.find_by_tags(['shared'])], [live.entry_id])
+            self.assertEqual(store.list_tags(), ['exp-a', 'shared'])
+            self.assertEqual(sorted(store.list_tags(include_deleted=True)), [
+                'exp-a',
+                'exp-b',
+                'shared',
+            ])
+
+    def test_index_validation_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+                tags=['exp-a'],
+            )
+
+            with self.assertRaisesRegex(ValueError, 'match must be one of'):
+                store.find_one(
+                    phraser_key='phrase-1',
+                    collar=100,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=1,
+                    match='bad',
+                )
+            with self.assertRaisesRegex(ValueError, 'match must be one of'):
+                store.find_many([
+                    {
+                        'phraser_key': 'phrase-1',
+                        'collar': 100,
+                        'model_name': 'wav2vec2',
+                        'output_type': 'hidden_state',
+                        'layer': 1,
+                        'match': 'bad',
+                    },
+                ])
+            with self.assertRaisesRegex(ValueError, "match must be 'all'"):
+                store.find_by_tags(['exp-a'], match='bad')
+            with self.assertRaisesRegex(ValueError, "mode must be 'add'"):
+                store.index._update_tags_many(['missing-entry'],
+                    tags=['exp-a'],
+                    mode='bad')
+
+    def test_get_shard_metadata_directly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            metadata = store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+
+            shard_stats = store.index.get_shard_metadata(metadata.shard_id)
+            self.assertIsNotNone(shard_stats)
+            self.assertEqual(shard_stats['live_entry_count'], 1)
+            self.assertEqual(shard_stats['deleted_entry_count'], 0)
+            self.assertGreaterEqual(shard_stats['byte_size'], 0)
+            self.assertIsNone(store.index.get_shard_metadata('missing_0001'))
+
+    def test_metadata_helpers(self) -> None:
+        metadata = Metadata(
+            phraser_key='phrase-1',
+            collar=120,
+            model_name='wav2vec2',
+            output_type='hidden_state',
+            layer=7,
+            shard_id='wav2vec2_hidden_state_0001',
+            dataset_path='/layer_0007/entry',
+            shape=[2, 3],
+            dtype='float32',
+            tags=[' b ', 'a', 'a'],
+            to_vector_version='abc123',
+        )
+
+        self.assertEqual(metadata.identity_key,
+            'phrase-1:wav2vec2:hidden_state:0007:000000120')
+        self.assertEqual(metadata.object_key,
+            'obj:phrase-1:wav2vec2:hidden_state:0007:000000120')
+        self.assertEqual(metadata.tags, ['a', 'b'])
+        self.assertEqual(metadata.shape, (2, 3))
+        self.assertIsNotNone(metadata.created_at)
+        self.assertIsNone(metadata.deleted_at)
+
+        restored = Metadata.from_dict(metadata.to_dict())
+        self.assertEqual(restored.to_dict(), metadata.to_dict())
+
+        updated = metadata.with_tags(['z', 'a'])
+        self.assertEqual(updated.tags, ['a', 'z'])
+        self.assertEqual(updated.created_at, metadata.created_at)
+        self.assertEqual(updated.deleted_at, metadata.deleted_at)
+
+        deleted = metadata.mark_deleted()
+        self.assertEqual(deleted.storage_status, 'deleted')
+        self.assertEqual(deleted.created_at, metadata.created_at)
+        self.assertIsNotNone(deleted.deleted_at)
+
+    def test_output_storage_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            metadata = Metadata(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='model name',
+                output_type='hidden_state',
+                layer=2,
+                created_at='2024-01-01T00:00:00+00:00',
+            )
+
+            stored = storage.store_with_shard(metadata, data=[[1, 2]],
+                shard_id='manual_0001')
+            self.assertEqual(stored.shard_id, 'manual_0001')
+            self.assertEqual(stored.dataset_path,
+                f'/layer_0002/{metadata.entry_id}')
+            self.assertEqual(storage.shard_size('manual_0001'),
+                (Path(tmpdir) / 'manual_0001.h5').stat().st_size)
+
+            replaced = storage.compact_shard('manual_0001', [stored])
+            self.assertEqual(len(replaced), 1)
+            self.assertEqual(replaced[0].shard_id, 'manual_0002')
+            self.assertFalse((Path(tmpdir) / 'manual_0001.h5').exists())
+
+            copied = storage.compact_shard_to('manual_0002', replaced,
+                target_shard_id='manual_0003', delete_source=False)
+            self.assertEqual([item.shard_id for item in copied],
+                ['manual_0003'])
+            self.assertTrue((Path(tmpdir) / 'manual_0002.h5').exists())
+            self.assertTrue((Path(tmpdir) / 'manual_0003.h5').exists())
+
+            with self.assertRaisesRegex(ValueError, 'invalid shard_id'):
+                storage._replacement_shard_id('bad-shard')
+
+            self.assertEqual(sanitize_name(' model/name :: v1 '),
+                'model_name_v1')
+            self.assertEqual(sanitize_name('***'), 'unknown')
+
+    def test_compaction_no_op_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            live = store.put(
+                phraser_key='phrase-live',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+            deleted = store.put(
+                phraser_key='phrase-deleted',
+                collar=100,
+                model_name='hubert',
+                output_type='attention',
+                layer=2,
+                data=[[[1, 2]]],
+            )
+            store.delete(
+                phraser_key='phrase-deleted',
+                collar=100,
+                model_name='hubert',
+                output_type='attention',
+                layer=2,
+            )
+
+            self.assertEqual(store.compact_shards(
+                shard_ids=[live.shard_id]), [])
+            dry_run = store.compact_shards(shard_ids=[deleted.shard_id],
+                dry_run=True)
+            self.assertEqual([plan['shard_id'] for plan in dry_run],
+                [deleted.shard_id])
+
+            compacted = store.compact_shards(shard_ids=[deleted.shard_id])
+            self.assertEqual(compacted, [deleted.shard_id])
+            self.assertEqual(store.index.entries_for_shard(
+                deleted.shard_id, include_deleted=True), [])
+            self.assertFalse((Path(tmpdir) / 'shards' /
+                f'{deleted.shard_id}.h5').exists())
+
+    def test_compaction_marks_failed_journal_on_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
+                shards_root=Path(tmpdir) / 'shards')
+            storage = FailingCompactStorage(
+                Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module(),
+            )
+            store = Store(tmpdir, index=index, storage=storage)
+
+            one = store.put(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, 'compaction exploded'):
+                store.compact_shards()
+
+            records = store.compaction_journal(status='failed')
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['shard_id'], one.shard_id)
+            self.assertEqual(records[0]['status'], 'failed')
+            self.assertEqual(records[0]['error'], 'compaction exploded')
+            self.assertIsNotNone(records[0]['finished_at'])
+
+    def test_resume_pending_runs_before_new_compaction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            one = store.put(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            plan = store.compact_shards(dry_run=True)[0]
+            journal = store.index.create_compaction_journal(
+                plan['shard_id'],
+                source_entry_ids=plan['source_entry_ids'],
+                live_entry_ids=plan['live_entry_ids'],
+                target_shard_id=plan['target_shard_id'],
+            )
+
+            compacted = store.compact_shards(
+                shard_ids=[one.shard_id],
+                resume_pending=True,
+            )
+            self.assertEqual(compacted, [])
+            records = store.compaction_journal()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['journal_id'], journal['journal_id'])
+            self.assertEqual(records[0]['status'], 'completed')
+
+    def test_resume_compaction_removes_stale_source_shard_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            one = store.put(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            plan = store.compact_shards(dry_run=True)[0]
+            journal = store.index.create_compaction_journal(
+                plan['shard_id'],
+                source_entry_ids=plan['source_entry_ids'],
+                live_entry_ids=plan['live_entry_ids'],
+                target_shard_id=plan['target_shard_id'],
+            )
+
+            live_entries = [store.index.get(entry_id)
+                for entry_id in journal['live_entry_ids']]
+            updated = store.storage.compact_shard_to(
+                journal['shard_id'],
+                [entry for entry in live_entries if entry is not None],
+                target_shard_id=journal['target_shard_id'],
+                delete_source=False,
+            )
+            store.index.upsert_many(updated)
+
+            self.assertIn(one.shard_id, store.index.list_shards())
+            self.assertEqual(store.resume_compactions(), [one.shard_id])
+            self.assertNotIn(one.shard_id, store.index.list_shards())
+            self.assertEqual(store.index.entries_for_shard(one.shard_id,
+                include_deleted=True), [])
+            self.assertEqual(store.compaction_journal()[0]['status'],
+                'completed')
+
+    def test_compaction_journal_ids_are_unique_with_same_second(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+
+            with mock.patch('echoframe.index.utc_now',
+                return_value='2026-04-01T12:00:00+00:00'):
+                first = store.index.create_compaction_journal(
+                    'wav2vec2_hidden_state_0001',
+                    source_entry_ids=['a'],
+                    live_entry_ids=['a'],
+                    target_shard_id='wav2vec2_hidden_state_0002',
+                )
+                second = store.index.create_compaction_journal(
+                    'wav2vec2_hidden_state_0001',
+                    source_entry_ids=['a'],
+                    live_entry_ids=['a'],
+                    target_shard_id='wav2vec2_hidden_state_0002',
+                )
+
+            self.assertNotEqual(first['journal_id'], second['journal_id'])
+            self.assertEqual(len(store.compaction_journal()), 2)
+
+    def test_missing_optional_dependencies_raise_helpful_import_errors(self
+        ) -> None:
+        with mock.patch.dict(sys.modules, {'lmdb': None}):
+            with self.assertRaisesRegex(ImportError,
+                'lmdb is required to use Store'):
+                LmdbIndex(Path('unused-index'))
+
+        with mock.patch.dict(sys.modules, {'h5py': None}):
+            with self.assertRaisesRegex(ImportError,
+                'h5py is required to use Store'):
+                Hdf5ShardStore(Path('unused-shards'))
+
+
+@unittest.skipUnless(importlib.util.find_spec('lmdb'),
+    'lmdb is not installed')
+@unittest.skipUnless(importlib.util.find_spec('h5py'),
+    'h5py is not installed')
+class EchoFrameIntegrationTests(unittest.TestCase):
+    def _make_store(self) -> tuple[tempfile.TemporaryDirectory[str], Store]:
+        tmpdir = tempfile.TemporaryDirectory()
+        store = Store(tmpdir.name, max_shard_size_bytes=1024 * 1024)
+        return tmpdir, store
+
+    def _payload_to_list(self, payload):
+        return payload.tolist() if hasattr(payload, 'tolist') else payload
+
+    def test_real_put_delete_compact_and_tag_flow(self) -> None:
+        tmpdir, store = self._make_store()
+        with tmpdir:
+            records = store.put_many([
+                {
+                    'phraser_key': 'phrase-1',
+                    'collar': 100,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 3,
+                    'data': [[1.0]],
+                    'tags': ['exp-a', 'speaker-1'],
+                },
+                {
+                    'phraser_key': 'phrase-2',
+                    'collar': 100,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 3,
+                    'data': [[2.0]],
+                    'tags': ['exp-a', 'speaker-2'],
+                },
+            ])
+
+            self.assertEqual(len(records), 2)
+            loaded = store.load(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            self.assertEqual(self._payload_to_list(loaded), [[1.0]])
+
+            updated = store.add_tags_many([record.entry_id for record in records],
+                ['batch'])
+            self.assertEqual(len(updated), 2)
+            self.assertEqual(sorted(store.list_tags()), [
+                'batch', 'exp-a', 'speaker-1', 'speaker-2'])
+            self.assertEqual(len(store.find_by_tags(['exp-a', 'batch'])), 2)
+            self.assertEqual(len(store.find_by_tags(['speaker-1', 'speaker-2'],
+                match='any')), 2)
+
+            deleted = store.delete(
+                phraser_key='phrase-2',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            self.assertEqual(deleted.storage_status, 'deleted')
+
+            shard_id = records[0].shard_id
+            dry_run = store.compact_shards(dry_run=True)
+            self.assertEqual(len(dry_run), 1)
+            self.assertEqual(dry_run[0]['shard_id'], shard_id)
+            self.assertEqual(dry_run[0]['deleted_entry_count'], 1)
+
+            compacted = store.compact_shards()
+            self.assertEqual(compacted, [shard_id])
+            live = store.find_one(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            self.assertNotEqual(live.shard_id, shard_id)
+            self.assertEqual(self._payload_to_list(store.load(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )), [[1.0]])
+
+    def test_real_integrity_checks_and_shard_stats(self) -> None:
+        tmpdir, store = self._make_store()
+        with tmpdir:
+            metadata = store.put(
+                phraser_key='phrase-3',
+                collar=120,
+                model_name='hubert',
+                output_type='attention',
+                layer=2,
+                data=[[[1, 2], [3, 4]]],
+                tags=['exp-b'],
+            )
+            store.put(
+                phraser_key='phrase-4',
+                collar=120,
+                model_name='hubert',
+                output_type='attention',
+                layer=2,
+                data=[[[5, 6], [7, 8]]],
+                tags=['exp-b', 'subset-1'],
+            )
+            store.delete(
+                phraser_key='phrase-4',
+                collar=120,
+                model_name='hubert',
+                output_type='attention',
+                layer=2,
+            )
+
+            stats = store.shard_stats()
+            self.assertEqual(len(stats), 1)
+            self.assertEqual(stats[0]['live_entry_count'], 1)
+            self.assertEqual(stats[0]['deleted_entry_count'], 1)
+            self.assertGreater(stats[0]['byte_size'], 0)
+
+            store.storage.delete(metadata)
+            report = store.verify_integrity()
+            self.assertFalse(report['ok'])
+            self.assertEqual(report['checked_entries'], 1)
+            self.assertEqual(len(report['broken_references']), 1)
+            self.assertEqual(report['broken_references'][0]['entry_id'],
+                metadata.entry_id)
+
+    def test_real_find_many_and_tag_queries(self) -> None:
+        tmpdir, store = self._make_store()
+        with tmpdir:
+            store.put_many([
+                {
+                    'phraser_key': 'phrase-10',
+                    'collar': 80,
+                    'model_name': 'encodec',
+                    'output_type': 'codebook_indices',
+                    'layer': 1,
+                    'data': [1, 2, 3],
+                    'tags': ['exp-a', 'run-1'],
+                },
+                {
+                    'phraser_key': 'phrase-11',
+                    'collar': 90,
+                    'model_name': 'encodec',
+                    'output_type': 'codebook_indices',
+                    'layer': 1,
+                    'data': [4, 5, 6],
+                    'tags': ['exp-a', 'run-2'],
+                },
+                {
+                    'phraser_key': 'phrase-12',
+                    'collar': 90,
+                    'model_name': 'encodec',
+                    'output_type': 'codebook_indices',
+                    'layer': 1,
+                    'data': [7, 8, 9],
+                    'tags': ['exp-b', 'run-2'],
+                },
+            ])
+
+            results = store.find_many([
+                {
+                    'phraser_key': 'phrase-10',
+                    'collar': 80,
+                    'model_name': 'encodec',
+                    'output_type': 'codebook_indices',
+                    'layer': 1,
+                },
+                {
+                    'phraser_key': 'phrase-11',
+                    'collar': 95,
+                    'model_name': 'encodec',
+                    'output_type': 'codebook_indices',
+                    'layer': 1,
+                    'match': 'max',
+                },
+            ])
+
+            self.assertEqual([result.phraser_key for result in results], [
+                'phrase-10',
+                'phrase-11',
+            ])
+            self.assertEqual(sorted(store.list_tags()), [
+                'exp-a', 'exp-b', 'run-1', 'run-2'])
+            all_match = store.find_by_tags(['exp-a', 'run-2'], match='all')
+            any_match = store.find_by_tags(['exp-b', 'run-1'], match='any')
+            self.assertEqual([item.phraser_key for item in all_match],
+                ['phrase-11'])
+            self.assertEqual(sorted(item.phraser_key for item in any_match), [
+                'phrase-10',
+                'phrase-12',
+            ])
+
+    def test_resume_compaction_from_journal(self) -> None:
+        tmpdir, store = self._make_store()
+        with tmpdir:
+            one = store.put(
+                phraser_key='phrase-a',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-b',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )
+            plan = store.compact_shards(dry_run=True)[0]
+            journal = store.index.create_compaction_journal(
+                plan['shard_id'],
+                source_entry_ids=plan['source_entry_ids'],
+                live_entry_ids=plan['live_entry_ids'],
+                target_shard_id=plan['target_shard_id'],
+            )
+
+            resumed = store.resume_compactions()
+            self.assertEqual(resumed, [one.shard_id])
+            records = store.compaction_journal()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['journal_id'], journal['journal_id'])
+            self.assertEqual(records[0]['status'], 'completed')

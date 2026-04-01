@@ -81,6 +81,31 @@ payload = store.load(
 )
 ```
 
+Load hidden-state frames for one object and layer:
+
+```python
+payload = store.load_object_frames(
+    phraser_key='phrase-123',
+    model_name='wav2vec2',
+    layer=7,
+    collar=500,
+)
+
+all_payloads = store.load_object_frames(
+    phraser_key='phrase-123',
+    model_name='wav2vec2',
+    layer=7,
+    collar=None,
+)
+
+for metadata, payload in store.iter_object_frames(
+    phraser_key='phrase-123',
+    model_name='wav2vec2',
+    layer=7,
+):
+    print(metadata.collar, payload)
+```
+
 List everything stored for one `phraser_key`:
 
 ```python
@@ -179,6 +204,16 @@ results = store.find_many([
         'layer': 7,
     },
 ])
+
+payloads = store.load_many([
+    {
+        'phraser_key': 'phrase-123',
+        'collar': 150,
+        'model_name': 'wav2vec2',
+        'output_type': 'hidden_state',
+        'layer': 7,
+    },
+], strict=False)
 ```
 
 Run maintenance checks:

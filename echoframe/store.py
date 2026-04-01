@@ -128,6 +128,68 @@ class Store:
             raise ValueError('no stored output matched the requested criteria')
         return self.storage.load(metadata)
 
+    def load_many(self, queries, strict=False):
+        '''Load multiple stored output payloads.
+        queries:    iterable of find_one-like keyword mappings
+        strict:     raise when any query does not match
+        '''
+        metadata_list = self.find_many(queries)
+        if not strict:
+            return [None if metadata is None else self.storage.load(metadata)
+                for metadata in metadata_list]
+
+        payloads = []
+        for metadata in metadata_list:
+            if metadata is None:
+                raise ValueError(
+                    'no stored output matched one of the requested queries'
+                )
+            payloads.append(self.storage.load(metadata))
+        return payloads
+
+    def load_object_frames(self, phraser_key, model_name, layer, collar=500,
+        output_type='hidden_state', match='exact'):
+        '''Load frame outputs for one object.
+        phraser_key:    unique phraser object key
+        model_name:     model identifier
+        layer:          layer to match
+        collar:         exact collar or None for all collars
+        output_type:    output type to match
+        match:          exact, min, max, or nearest
+        '''
+        if collar is None:
+            entries = self.find(phraser_key=phraser_key,
+                model_name=model_name, output_type=output_type, layer=layer)
+            return {metadata.collar: self.storage.load(metadata)
+                for metadata in entries}
+        return self.load(phraser_key=phraser_key, collar=collar,
+            model_name=model_name, output_type=output_type, layer=layer,
+            match=match)
+
+    def iter_object_frames(self, phraser_key, model_name, layer,
+        collar=None, output_type='hidden_state', match='exact'):
+        '''Iterate lazily over frame outputs for one object.
+        phraser_key:    unique phraser object key
+        model_name:     model identifier
+        layer:          layer to match
+        collar:         exact collar, matched collar, or None for all
+        output_type:    output type to match
+        match:          exact, min, max, or nearest
+        '''
+        if collar is None:
+            entries = self.find(phraser_key=phraser_key,
+                model_name=model_name, output_type=output_type, layer=layer)
+            for metadata in entries:
+                yield metadata, self.storage.load(metadata)
+            return
+
+        metadata = self.find_one(phraser_key=phraser_key, collar=collar,
+            model_name=model_name, output_type=output_type, layer=layer,
+            match=match)
+        if metadata is None:
+            raise ValueError('no stored output matched the requested criteria')
+        yield metadata, self.storage.load(metadata)
+
     def delete(self, phraser_key, collar, model_name, output_type, layer,
         match='exact'):
         '''Delete one stored output from live indexes.

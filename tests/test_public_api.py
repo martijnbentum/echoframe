@@ -211,6 +211,142 @@ class EchoFrameTests(unittest.TestCase):
                 [[1.0, 2.0], [3.0, 4.0]],
             )
 
+    def test_load_many_returns_payloads_in_query_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            store.put(
+                phraser_key='phrase-1',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-2',
+                collar=130,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[2.0]],
+            )
+
+            payloads = store.load_many([
+                {
+                    'phraser_key': 'phrase-2',
+                    'collar': 130,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 7,
+                },
+                {
+                    'phraser_key': 'phrase-1',
+                    'collar': 120,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 7,
+                },
+            ])
+
+            self.assertEqual(payloads, [[[2.0]], [[1.0]]])
+
+    def test_load_object_frames_single_and_all_collars(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            store.put(
+                phraser_key='phrase-1',
+                collar=500,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0, 2.0]],
+            )
+            store.put(
+                phraser_key='phrase-1',
+                collar=750,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[3.0, 4.0]],
+            )
+
+            exact = store.load_object_frames(
+                phraser_key='phrase-1',
+                collar=500,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+            )
+            nearest = store.load_object_frames(
+                phraser_key='phrase-1',
+                collar=700,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                match='nearest',
+            )
+            all_collars = store.load_object_frames(
+                phraser_key='phrase-1',
+                collar=None,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+            )
+
+            self.assertEqual(exact, [[1.0, 2.0]])
+            self.assertEqual(nearest, [[3.0, 4.0]])
+            self.assertEqual(list(all_collars.keys()), [500, 750])
+            self.assertEqual(all_collars, {
+                500: [[1.0, 2.0]],
+                750: [[3.0, 4.0]],
+            })
+
+    def test_iter_object_frames_yields_metadata_and_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            first = store.put(
+                phraser_key='phrase-1',
+                collar=500,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0, 2.0]],
+            )
+            second = store.put(
+                phraser_key='phrase-1',
+                collar=750,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[3.0, 4.0]],
+            )
+
+            rows = list(store.iter_object_frames(
+                phraser_key='phrase-1',
+                model_name='wav2vec2',
+                layer=7,
+            ))
+            nearest = list(store.iter_object_frames(
+                phraser_key='phrase-1',
+                model_name='wav2vec2',
+                layer=7,
+                collar=700,
+                match='nearest',
+            ))
+
+            self.assertEqual(
+                [(metadata.collar, payload) for metadata, payload in rows],
+                [
+                    (500, [[1.0, 2.0]]),
+                    (750, [[3.0, 4.0]]),
+                ],
+            )
+            self.assertEqual(rows[0][0].entry_id, first.entry_id)
+            self.assertEqual(rows[1][0].entry_id, second.entry_id)
+            self.assertEqual(len(nearest), 1)
+            self.assertEqual(nearest[0][0].collar, 750)
+            self.assertEqual(nearest[0][1], [[3.0, 4.0]])
+
     def test_collar_matching_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
@@ -479,6 +615,7 @@ class EchoFrameTests(unittest.TestCase):
             store = self._make_fake_store(tmpdir)
 
             self.assertEqual(store.find_many([]), [])
+            self.assertEqual(store.load_many([]), [])
             self.assertEqual(store.put_many([]), [])
             self.assertEqual(store.add_tags_many([], ['exp-a']), [])
             self.assertEqual(store.remove_tags_many([], ['exp-a']), [])
@@ -498,6 +635,92 @@ class EchoFrameTests(unittest.TestCase):
                     output_type='hidden_state',
                     layer=1,
                 )
+
+    def test_load_many_returns_none_for_misses_and_can_be_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+
+            payloads = store.load_many([
+                {
+                    'phraser_key': 'phrase-1',
+                    'collar': 100,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 1,
+                },
+                {
+                    'phraser_key': 'missing',
+                    'collar': 100,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 1,
+                },
+            ])
+
+            self.assertEqual(payloads, [[[1.0]], None])
+            with self.assertRaisesRegex(ValueError, 'no stored output matched'):
+                store.load_many([
+                    {
+                        'phraser_key': 'phrase-1',
+                        'collar': 100,
+                        'model_name': 'wav2vec2',
+                        'output_type': 'hidden_state',
+                        'layer': 1,
+                    },
+                    {
+                        'phraser_key': 'missing',
+                        'collar': 100,
+                        'model_name': 'wav2vec2',
+                        'output_type': 'hidden_state',
+                        'layer': 1,
+                    },
+                ], strict=True)
+
+    def test_load_object_frames_missing_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+
+            with self.assertRaisesRegex(ValueError,
+                'no stored output matched'):
+                store.load_object_frames(
+                    phraser_key='missing',
+                    collar=500,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=7,
+                )
+
+            self.assertEqual(store.load_object_frames(
+                phraser_key='missing',
+                collar=None,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+            ), {})
+            with self.assertRaisesRegex(ValueError,
+                'no stored output matched'):
+                list(store.iter_object_frames(
+                    phraser_key='missing',
+                    collar=500,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=7,
+                ))
+            self.assertEqual(list(store.iter_object_frames(
+                phraser_key='missing',
+                collar=None,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+            )), [])
 
     def test_include_deleted_filters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

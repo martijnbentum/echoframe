@@ -994,7 +994,8 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_store_does_not_create_diagnostic_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            store = self._make_fake_store(tmpdir)
+            store_root = Path(tmpdir) / 'tests' / 'data' / 'store-root'
+            store = self._make_fake_store(str(store_root))
             store.put(
                 phraser_key='phrase-1',
                 collar=100,
@@ -1004,7 +1005,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
             )
 
-            log_root = Path(tmpdir) / 'echoframe_logs'
+            log_root = Path(tmpdir) / 'tests' / 'data' / 'echoframe_logs'
             self.assertFalse(log_root.exists())
 
     def test_stat_retries_include_long_backoff_delays(self) -> None:
@@ -1590,12 +1591,12 @@ class EchoFrameTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {'lmdb': None}):
             with self.assertRaisesRegex(ImportError,
                 'lmdb is required to use Store'):
-                LmdbIndex(Path('unused-index'))
+                LmdbIndex(Path('tests/data/unused-index'))
 
         with mock.patch.dict(sys.modules, {'h5py': None}):
             with self.assertRaisesRegex(ImportError,
                 'h5py is required to use Store'):
-                Hdf5ShardStore(Path('unused-shards'))
+                Hdf5ShardStore(Path('tests/data/unused-shards'))
 
 
 @unittest.skipUnless(importlib.util.find_spec('lmdb'),

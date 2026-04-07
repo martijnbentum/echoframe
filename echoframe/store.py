@@ -139,7 +139,7 @@ class Store:
             raise ValueError('no stored output matched the requested criteria')
         return self.storage.load(metadata)
 
-    def load_metadata(self, metadata):
+    def metadata_to_payload(self, metadata):
         '''Load one stored output payload from echoframe metadata.
         metadata:    metadata record that points to a stored payload
         '''
@@ -164,7 +164,7 @@ class Store:
             payloads.append(self.storage.load(metadata))
         return payloads
 
-    def load_metadata_many(self, metadata_list, strict=False):
+    def metadatas_to_payloads(self, metadata_list, strict=False):
         '''Load payloads for multiple echoframe metadata records.
         metadata_list:   iterable of metadata records or None values
         strict:          raise when any metadata item is None
@@ -354,6 +354,11 @@ class Store:
             metadata.collar,
         ))
         return entries
+
+    @property
+    def metadata(self):
+        '''Return stored live metadata records.'''
+        return self.list_entries()
 
     def overview(self, include_deleted=False, health_event_limit=20,
         include_integrity=False):

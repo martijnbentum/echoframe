@@ -139,6 +139,12 @@ class Store:
             raise ValueError('no stored output matched the requested criteria')
         return self.storage.load(metadata)
 
+    def load_metadata(self, metadata):
+        '''Load one stored output payload from echoframe metadata.
+        metadata:    metadata record that points to a stored payload
+        '''
+        return self.storage.load(metadata)
+
     def load_many(self, queries, strict=False):
         '''Load multiple stored output payloads.
         queries:    iterable of find_one-like keyword mappings
@@ -154,6 +160,25 @@ class Store:
             if metadata is None:
                 raise ValueError(
                     'no stored output matched one of the requested queries'
+                )
+            payloads.append(self.storage.load(metadata))
+        return payloads
+
+    def load_metadata_many(self, metadata_list, strict=False):
+        '''Load payloads for multiple echoframe metadata records.
+        metadata_list:   iterable of metadata records or None values
+        strict:          raise when any metadata item is None
+        '''
+        if not strict:
+            return [None if metadata is None else self.storage.load(metadata)
+                for metadata in metadata_list]
+
+        payloads = []
+        for metadata in metadata_list:
+            if metadata is None:
+                raise ValueError(
+                    'no stored output matched one of the requested metadata '
+                    'records'
                 )
             payloads.append(self.storage.load(metadata))
         return payloads

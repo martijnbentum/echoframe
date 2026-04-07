@@ -271,6 +271,51 @@ class EchoFrameTests(unittest.TestCase):
 
             self.assertEqual(payloads, [[[2.0]], [[1.0]]])
 
+    def test_load_metadata_and_load_metadata_many(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            first = store.put(
+                phraser_key='phrase-1',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0]],
+            )
+            second = store.put(
+                phraser_key='phrase-2',
+                collar=130,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[2.0]],
+            )
+
+            payload = store.load_metadata(first)
+            payloads = store.load_metadata_many([second, first])
+
+            self.assertEqual(payload, [[1.0]])
+            self.assertEqual(payloads, [[[2.0]], [[1.0]]])
+
+    def test_load_metadata_many_returns_none_for_misses_and_can_be_strict(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            metadata = store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+
+            payloads = store.load_metadata_many([metadata, None])
+
+            self.assertEqual(payloads, [[[1.0]], None])
+            with self.assertRaisesRegex(ValueError, 'no stored output matched'):
+                store.load_metadata_many([metadata, None], strict=True)
+
     def test_load_object_frames_single_and_all_collars(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)

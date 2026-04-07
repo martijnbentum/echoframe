@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from .index import LmdbIndex
-from .metadata import Metadata
+from .metadata import Metadata, utc_now
 from .output_storage import Hdf5ShardStore
 
 
@@ -269,6 +269,50 @@ class Store:
         '''Return shard-level stats.'''
         return self.index.list_shard_metadata()
 
+    def list_entries(self, include_deleted=False):
+        '''List stored metadata records across all shards.
+        include_deleted:   include tombstoned entries
+        '''
+        entries = self.index.list_entries(
+            include_deleted=include_deleted)
+        entries.sort(key=lambda metadata: (
+            metadata.phraser_key,
+            metadata.model_name,
+            metadata.output_type,
+            metadata.layer,
+            metadata.collar,
+        ))
+        return entries
+
+    def overview(self, include_deleted=False, health_event_limit=20,
+        include_integrity=False):
+        '''Return a compact overview of store contents.
+        include_deleted:      include tombstoned entries
+        health_event_limit:   recent shard health events to include
+        include_integrity:    run a full integrity scan
+        '''
+        entries = self.list_entries(include_deleted=include_deleted)
+        return {
+            'entry_count': len(entries),
+            'entries': [{
+                'entry_id': metadata.entry_id,
+                **metadata.to_dict(),
+            } for metadata in entries],
+            'shard_count': len(self.index.list_shards()),
+            'shards': self.shard_stats(),
+            'tags': self.list_tags(include_deleted=include_deleted),
+            'integrity': (self.verify_integrity()
+                if include_integrity else None),
+            'recent_shard_health_events': self.get_shard_health_events(
+                limit=health_event_limit),
+        }
+
+    def get_shard_health_events(self, limit=None):
+        '''Return recent shard health events from storage.'''
+        if not hasattr(self.storage, 'get_shard_health_events'):
+            return []
+        return self.storage.get_shard_health_events(limit=limit)
+
     def find_or_compute(self, phraser_key, collar, model_name,
         output_type, layer, compute, match='exact',
         tags=None, add_tags_on_hit=False, to_vector_version=None):
@@ -367,6 +411,39 @@ class Store:
             'dataset_path': metadata.dataset_path,
             'reason': reason,
         }
+
+    def _build_shard_health_report(self, shard_id, error):
+        report = {
+            'created_at': utc_now(),
+            'failing_shard_id': shard_id,
+            'error': error,
+            'checked_entries': 0,
+            'lost_items': [],
+            'shards': [],
+        }
+        for current_shard_id in self.index.list_shards():
+            entries = self.index.entries_for_shard(current_shard_id)
+            shard_report = self.storage.validate_shard(current_shard_id,
+                entries=entries, read_data=True)
+            report['shards'].append(shard_report)
+            report['checked_entries'] += len(entries)
+            missing = set(shard_report['missing_entries'])
+            unreadable = {
+                item['entry_id'] for item in shard_report['unreadable_entries']
+            }
+            if shard_report['open_error'] is not None:
+                for metadata in entries:
+                    report['lost_items'].append(self._broken_reference(
+                        metadata, reason=shard_report['open_error']))
+                continue
+            for metadata in entries:
+                if metadata.entry_id in missing:
+                    report['lost_items'].append(self._broken_reference(
+                        metadata, reason='missing dataset'))
+                elif metadata.entry_id in unreadable:
+                    report['lost_items'].append(self._broken_reference(
+                        metadata, reason='unreadable dataset'))
+        return report
 
     def _compaction_plan(self, shard_id):
         all_entries = self.index.entries_for_shard(shard_id,

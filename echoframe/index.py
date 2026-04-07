@@ -123,6 +123,12 @@ class LmdbIndex:
             return self._entries_for_shard_in_txn(txn, shard_id=shard_id,
                 include_deleted=include_deleted)
 
+    def list_entries(self, include_deleted=False):
+        '''List metadata records across the full entries store.'''
+        with self.env.begin() as txn:
+            return self._list_entries_in_txn(txn,
+                include_deleted=include_deleted)
+
     def list_shards(self):
         '''List shard identifiers present in the shard index.'''
         shard_ids = []
@@ -357,6 +363,19 @@ class LmdbIndex:
             return items
         return [item for item in items if item.storage_status == 'live']
 
+    def _list_entries_in_txn(self, txn, include_deleted=False):
+        entries = []
+        cursor = txn.cursor(db=self.entries_db)
+        if not cursor.set_range(b''):
+            return entries
+        for _, value in cursor:
+            metadata = Metadata.from_dict(json.loads(value.decode('utf-8')))
+            if (not include_deleted and
+                metadata.storage_status != 'live'):
+                continue
+            entries.append(metadata)
+        return entries
+
     def _update_tags_many(self, entry_ids, tags, mode):
         if not entry_ids:
             return []
@@ -401,7 +420,7 @@ class LmdbIndex:
         payload = {
             'live_entry_count': live_count,
             'deleted_entry_count': deleted_count,
-            'byte_size': self._shard_file_size(shard_id),
+            **self._shard_file_size(txn, shard_id),
             'updated_at': utc_now(),
         }
         txn.put(shard_id.encode('utf-8'), self._dump_json(payload),
@@ -428,13 +447,39 @@ class LmdbIndex:
             return None
         return Metadata.from_dict(json.loads(payload.decode('utf-8')))
 
-    def _shard_file_size(self, shard_id):
+    def _shard_file_size(self, txn, shard_id):
         if self.shards_root is None:
-            return 0
+            return {
+                'byte_size': 0,
+                'byte_size_is_estimated': False,
+                'byte_size_error': None,
+            }
         file_path = self.shards_root / f'{shard_id}.h5'
-        if not file_path.exists():
-            return 0
-        return file_path.stat().st_size
+        try:
+            return {
+                'byte_size': file_path.stat().st_size,
+                'byte_size_is_estimated': False,
+                'byte_size_error': None,
+            }
+        except FileNotFoundError:
+            return {
+                'byte_size': 0,
+                'byte_size_is_estimated': False,
+                'byte_size_error': None,
+            }
+        except OSError as exc:
+            payload = txn.get(shard_id.encode('utf-8'), db=self.shard_meta_db)
+            fallback_size = 0
+            if payload is not None:
+                previous_size = json.loads(payload.decode('utf-8')).get(
+                    'byte_size')
+                if previous_size is not None:
+                    fallback_size = previous_size
+            return {
+                'byte_size': fallback_size,
+                'byte_size_is_estimated': True,
+                'byte_size_error': str(exc),
+            }
 
     def _dump_json(self, value):
         return json.dumps(value, sort_keys=True).encode('utf-8')

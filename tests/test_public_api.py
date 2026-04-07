@@ -107,10 +107,13 @@ class FakeGroup(dict[str, FakeDataset]):
 
 class FakeH5File:
     def __init__(self, files: dict[str, dict[str, FakeGroup]],
-        path: Path) -> None:
+        path: Path, mode: str) -> None:
         self.files = files
         self.path = str(path)
-        path.touch(exist_ok=True)
+        if 'r' in mode and not path.exists():
+            raise FileNotFoundError(path)
+        if 'r' not in mode:
+            path.touch(exist_ok=True)
         self.groups = self.files.setdefault(self.path, {})
 
     def __enter__(self) -> 'FakeH5File':
@@ -140,7 +143,7 @@ class FakeH5Module:
         self.files: dict[str, dict[str, FakeGroup]] = {}
 
     def File(self, path: Path, mode: str) -> FakeH5File:
-        return FakeH5File(self.files, path)
+        return FakeH5File(self.files, path, mode)
 
 
 class FailingCompactStorage(Hdf5ShardStore):
@@ -150,6 +153,23 @@ class FailingCompactStorage(Hdf5ShardStore):
             target_shard_id=target_shard_id,
             delete_source=delete_source)
         raise RuntimeError('compaction exploded')
+
+
+class FlakySizeStorage(Hdf5ShardStore):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.force_stat_failure = False
+
+    def _size_info_with_retries(self, shard_id, file_path, purpose):
+        if self.force_stat_failure and shard_id.endswith('_0001'):
+            return {
+                'exists': True,
+                'byte_size': None,
+                'is_estimated': False,
+                'error': 'simulated stat failure',
+            }
+        return super()._size_info_with_retries(shard_id, file_path,
+            purpose=purpose)
 
 
 class EchoFrameTests(unittest.TestCase):
@@ -840,6 +860,59 @@ class EchoFrameTests(unittest.TestCase):
             self.assertGreaterEqual(shard_stats['byte_size'], 0)
             self.assertIsNone(store.index.get_shard_metadata('missing_0001'))
 
+    def test_public_overview_and_entry_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            first = store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+                tags=['exp-a'],
+            )
+            second = store.put(
+                phraser_key='phrase-2',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[2.0]],
+                tags=['exp-b'],
+            )
+            store.delete(
+                phraser_key='phrase-2',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+            )
+
+            live_entries = store.list_entries()
+            all_entries = store.list_entries(include_deleted=True)
+            overview = store.overview(include_deleted=True,
+                health_event_limit=5)
+
+            self.assertEqual([item.entry_id for item in live_entries],
+                [first.entry_id])
+            self.assertEqual([item.entry_id for item in all_entries], [
+                first.entry_id,
+                second.entry_id,
+            ])
+            self.assertEqual(overview['entry_count'], 2)
+            self.assertEqual(overview['shard_count'], 1)
+            self.assertEqual([item['entry_id'] for item in
+                overview['entries']], [first.entry_id, second.entry_id])
+            self.assertEqual(sorted(overview['tags']), ['exp-a', 'exp-b'])
+            self.assertIsNone(overview['integrity'])
+            self.assertLessEqual(len(
+                overview['recent_shard_health_events']), 5)
+
+            overview_with_integrity = store.overview(include_deleted=True,
+                include_integrity=True)
+            self.assertIn('ok', overview_with_integrity['integrity'])
+
     def test_metadata_helpers(self) -> None:
         metadata = Metadata(
             phraser_key='phrase-1',
@@ -919,6 +992,280 @@ class EchoFrameTests(unittest.TestCase):
                 'model_name_v1')
             self.assertEqual(sanitize_name('***'), 'unknown')
 
+    def test_store_does_not_create_diagnostic_log_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+
+            log_root = Path(tmpdir) / 'echoframe_logs'
+            self.assertFalse(log_root.exists())
+
+    def test_stat_retries_include_long_backoff_delays(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            file_path = Path(tmpdir) / 'manual_0001.h5'
+            file_path.touch()
+            with mock.patch.object(Path, 'stat', autospec=True,
+                side_effect=OSError(5, 'io error')):
+                with mock.patch('echoframe.output_storage.time.sleep'
+                    ) as mocked_sleep:
+                    info = storage._size_info_with_retries('manual_0001',
+                        file_path, purpose='rollover')
+
+            self.assertIsNone(info['byte_size'])
+            self.assertEqual([call.args[0] for call in
+                mocked_sleep.call_args_list], [0.1, 0.3, 0.6, 0.9, 3.0])
+
+    def test_unreadable_active_shard_rotates_to_next_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
+                shards_root=Path(tmpdir) / 'shards')
+            storage = FlakySizeStorage(
+                Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module(),
+            )
+            store = Store(tmpdir, index=index, storage=storage)
+
+            first = store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+            storage.force_stat_failure = True
+
+            second = store.put(
+                phraser_key='phrase-2',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[2.0]],
+            )
+
+            self.assertEqual(second.shard_id, 'wav2vec2_hidden_state_0002')
+            events = store.get_shard_health_events()
+            self.assertTrue(any(event['event_type'] == 'skip_unreadable_shard'
+                for event in events))
+
+    def test_active_shard_id_rotates_past_failing_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+
+            def fake_state(shard_id, file_path, purpose):
+                if shard_id.endswith('_0001'):
+                    return {
+                        'state': 'unreadable',
+                        'byte_size': 0,
+                        'error': 'simulated shard failure',
+                    }
+                return {
+                    'state': 'missing',
+                    'byte_size': None,
+                    'error': None,
+                }
+
+            with mock.patch.object(storage, '_shard_path_state',
+                side_effect=fake_state):
+                shard_id = storage._active_shard_id('wav2vec2',
+                    'hidden_state')
+
+            self.assertEqual(shard_id, 'wav2vec2_hidden_state_0002')
+
+    def test_active_shard_id_hard_fails_when_all_probes_are_unreadable(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            storage.MAX_SCAN_SUFFIXES = 5
+
+            def always_unreadable(shard_id, file_path, purpose):
+                return {
+                    'state': 'unreadable',
+                    'byte_size': None,
+                    'error': 'simulated shard failure',
+                }
+
+            with mock.patch.object(storage, '_shard_path_state',
+                side_effect=always_unreadable):
+                with mock.patch('echoframe.output_storage.time.sleep'
+                    ) as mocked_sleep:
+                    with self.assertRaisesRegex(RuntimeError,
+                        'unable to probe shard path'):
+                        storage._active_shard_id('wav2vec2',
+                            'hidden_state')
+
+            self.assertEqual([call.args[0] for call in
+                mocked_sleep.call_args_list], [0.1, 0.3, 0.6, 0.9, 3.0])
+
+    def test_replacement_shard_id_skips_unreadable_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            candidate_path = Path(tmpdir) / 'manual_0002.h5'
+            candidate_path.touch()
+            original_stat = Path.stat
+
+            def flaky_stat(path_obj, *args, **kwargs):
+                if str(path_obj).endswith('manual_0002.h5'):
+                    raise OSError(5, 'io error')
+                return original_stat(path_obj, *args, **kwargs)
+
+            with mock.patch.object(Path, 'stat', autospec=True,
+                side_effect=flaky_stat):
+                with mock.patch('echoframe.output_storage.time.sleep'):
+                    replacement = storage._replacement_shard_id(
+                        'manual_0001')
+
+            self.assertEqual(replacement, 'manual_0003')
+            events = storage.get_shard_health_events()
+            self.assertTrue(any(event['event_type'] ==
+                'stat_failure' for event in events))
+            self.assertTrue(any(event['event_type'] ==
+                'replacement_skip_unreadable_candidates'
+                for event in events))
+
+    def test_replacement_shard_id_hard_fails_when_all_probes_are_unreadable(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            storage.MAX_SCAN_SUFFIXES = 5
+
+            def always_unreadable(shard_id, file_path, purpose):
+                return {
+                    'state': 'unreadable',
+                    'byte_size': None,
+                    'error': 'simulated shard failure',
+                }
+
+            with mock.patch.object(storage, '_shard_path_state',
+                side_effect=always_unreadable):
+                with mock.patch('echoframe.output_storage.time.sleep'
+                    ) as mocked_sleep:
+                    with self.assertRaisesRegex(RuntimeError,
+                        'unable to probe shard path'):
+                        storage._replacement_shard_id('manual_0001')
+
+            self.assertEqual([call.args[0] for call in
+                mocked_sleep.call_args_list], [0.1, 0.3, 0.6, 0.9, 3.0])
+
+    def test_replacement_shard_id_handles_more_than_100_existing_shards(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            for index in range(2, 103):
+                (Path(tmpdir) / f'manual_{index:04d}.h5').touch()
+
+            replacement = storage._replacement_shard_id('manual_0001')
+
+            self.assertEqual(replacement, 'manual_0103')
+
+    def test_replacement_shard_id_skips_unreadable_candidates_within_budget(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Hdf5ShardStore(
+                Path(tmpdir),
+                h5_module=FakeH5Module(),
+            )
+            original_stat = Path.stat
+
+            def flaky_stat(path_obj, *args, **kwargs):
+                path_str = str(path_obj)
+                if 'manual_' in path_str:
+                    shard_name = Path(path_str).stem
+                    if shard_name >= 'manual_0002' and shard_name <= (
+                        'manual_0006'):
+                        raise OSError(5, 'io error')
+                return original_stat(path_obj, *args, **kwargs)
+
+            with mock.patch.object(Path, 'stat', autospec=True,
+                side_effect=flaky_stat):
+                with mock.patch('echoframe.output_storage.time.sleep'):
+                    replacement = storage._replacement_shard_id(
+                        'manual_0001')
+
+            self.assertEqual(replacement, 'manual_0007')
+
+    def test_index_uses_zero_when_first_size_probe_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
+                shards_root=Path(tmpdir) / 'shards')
+            shards_root = Path(tmpdir) / 'shards'
+            shards_root.mkdir(parents=True, exist_ok=True)
+            file_path = shards_root / 'manual_0001.h5'
+            file_path.touch()
+            original_stat = Path.stat
+
+            def flaky_stat(path_obj, *args, **kwargs):
+                if str(path_obj).endswith('manual_0001.h5'):
+                    raise OSError(5, 'io error')
+                return original_stat(path_obj, *args, **kwargs)
+
+            with index.env.begin(write=True) as txn:
+                with mock.patch.object(Path, 'stat', autospec=True,
+                    side_effect=flaky_stat):
+                    size_info = index._shard_file_size(txn, 'manual_0001')
+
+            self.assertEqual(size_info['byte_size'], 0)
+            self.assertTrue(size_info['byte_size_is_estimated'])
+            self.assertIn('io error', size_info['byte_size_error'])
+
+    def test_index_falls_back_to_last_known_shard_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            metadata = store.put(
+                phraser_key='phrase-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+                tags=['exp-a'],
+            )
+            shard_stats = store.index.get_shard_metadata(metadata.shard_id)
+            original_size = shard_stats['byte_size']
+            original_stat = Path.stat
+
+            def flaky_stat(path_obj, *args, **kwargs):
+                if str(path_obj).endswith(f'{metadata.shard_id}.h5'):
+                    raise OSError(5, 'io error')
+                return original_stat(path_obj, *args, **kwargs)
+
+            with mock.patch.object(Path, 'stat', autospec=True,
+                side_effect=flaky_stat):
+                updated = store.add_tags(metadata.entry_id, ['exp-b'])
+
+            self.assertEqual(updated.tags, ['exp-a', 'exp-b'])
+            shard_stats = store.index.get_shard_metadata(metadata.shard_id)
+            self.assertEqual(shard_stats['byte_size'], original_size)
+            self.assertTrue(shard_stats['byte_size_is_estimated'])
+            self.assertIn('io error', shard_stats['byte_size_error'])
+
     def test_compaction_no_op_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
@@ -959,6 +1306,89 @@ class EchoFrameTests(unittest.TestCase):
                 deleted.shard_id, include_deleted=True), [])
             self.assertFalse((Path(tmpdir) / 'shards' /
                 f'{deleted.shard_id}.h5').exists())
+
+    def test_list_entries_include_deleted_keeps_tombstones_after_compaction(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            live = store.put(
+                phraser_key='phrase-live',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+            deleted = store.put(
+                phraser_key='phrase-deleted',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-deleted',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+            )
+
+            store.compact_shards()
+
+            live_entries = store.list_entries()
+            all_entries = store.list_entries(include_deleted=True)
+            overview = store.overview(include_deleted=True)
+
+            self.assertEqual([item.entry_id for item in live_entries],
+                [live.entry_id])
+            self.assertEqual([item.entry_id for item in all_entries], [
+                deleted.entry_id,
+                live.entry_id,
+            ])
+            self.assertEqual([item['entry_id'] for item in
+                overview['entries']], [deleted.entry_id, live.entry_id])
+
+    def test_list_entries_ignores_stale_shard_index_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            metadata = store.put(
+                phraser_key='phrase-live',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+
+            duplicated = Metadata(
+                phraser_key=metadata.phraser_key,
+                collar=metadata.collar,
+                model_name=metadata.model_name,
+                output_type=metadata.output_type,
+                layer=metadata.layer,
+                storage_status=metadata.storage_status,
+                shard_id='wav2vec2_hidden_state_0002',
+                dataset_path=metadata.dataset_path,
+                shape=metadata.shape,
+                dtype=metadata.dtype,
+                tags=metadata.tags,
+                created_at=metadata.created_at,
+                deleted_at=metadata.deleted_at,
+                to_vector_version=metadata.to_vector_version,
+            )
+            store.index.upsert(duplicated)
+            with store.index.env.begin(write=True) as txn:
+                txn.put(store.index._shard_key(metadata.shard_id,
+                    metadata.entry_id),
+                    metadata.entry_id.encode('utf-8'),
+                    db=store.index.by_shard_db)
+
+            entries = store.list_entries()
+
+            self.assertEqual([item.entry_id for item in entries],
+                [metadata.entry_id])
 
     def test_compaction_marks_failed_journal_on_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1003,6 +1433,39 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(records[0]['status'], 'failed')
             self.assertEqual(records[0]['error'], 'compaction exploded')
             self.assertIsNotNone(records[0]['finished_at'])
+
+    def test_shard_health_report_excludes_deleted_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            live = store.put(
+                phraser_key='phrase-live',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[1.0]],
+            )
+            store.put(
+                phraser_key='phrase-deleted',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+                data=[[2.0]],
+            )
+            store.delete(
+                phraser_key='phrase-deleted',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=1,
+            )
+
+            report = store._build_shard_health_report(
+                live.shard_id, 'simulated shard failure')
+
+            self.assertEqual(report['checked_entries'], 1)
+            self.assertEqual(report['lost_items'], [])
 
     def test_resume_pending_runs_before_new_compaction(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1332,6 +1795,119 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 'phrase-10',
                 'phrase-12',
             ])
+
+    def test_real_retrieval_helpers(self) -> None:
+        tmpdir, store = self._make_store()
+        with tmpdir:
+            store.put(
+                phraser_key='phrase-20',
+                collar=500,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0, 2.0]],
+            )
+            store.put(
+                phraser_key='phrase-20',
+                collar=750,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[3.0, 4.0]],
+            )
+            store.put(
+                phraser_key='phrase-21',
+                collar=500,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[5.0, 6.0]],
+            )
+
+            payloads = store.load_many([
+                {
+                    'phraser_key': 'phrase-21',
+                    'collar': 500,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 7,
+                },
+                {
+                    'phraser_key': 'missing',
+                    'collar': 500,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 7,
+                },
+                {
+                    'phraser_key': 'phrase-20',
+                    'collar': 500,
+                    'model_name': 'wav2vec2',
+                    'output_type': 'hidden_state',
+                    'layer': 7,
+                },
+            ])
+            exact = store.load_object_frames(
+                phraser_key='phrase-20',
+                model_name='wav2vec2',
+                layer=7,
+                collar=500,
+            )
+            nearest = store.load_object_frames(
+                phraser_key='phrase-20',
+                model_name='wav2vec2',
+                layer=7,
+                collar=700,
+                match='nearest',
+            )
+            all_collars = store.load_object_frames(
+                phraser_key='phrase-20',
+                model_name='wav2vec2',
+                layer=7,
+                collar=None,
+            )
+            rows = list(store.iter_object_frames(
+                phraser_key='phrase-20',
+                model_name='wav2vec2',
+                layer=7,
+            ))
+
+            self.assertEqual([self._payload_to_list(item)
+                if item is not None else None for item in payloads], [
+                [[5.0, 6.0]],
+                None,
+                [[1.0, 2.0]],
+            ])
+            self.assertEqual(self._payload_to_list(exact), [[1.0, 2.0]])
+            self.assertEqual(self._payload_to_list(nearest), [[3.0, 4.0]])
+            self.assertEqual(list(all_collars.keys()), [500, 750])
+            self.assertEqual({
+                collar: self._payload_to_list(payload)
+                for collar, payload in all_collars.items()
+            }, {
+                500: [[1.0, 2.0]],
+                750: [[3.0, 4.0]],
+            })
+            self.assertEqual(
+                [(metadata.collar, self._payload_to_list(payload))
+                    for metadata, payload in rows],
+                [
+                    (500, [[1.0, 2.0]]),
+                    (750, [[3.0, 4.0]]),
+                ],
+            )
+
+            with self.assertRaisesRegex(ValueError,
+                'no stored output matched'):
+                store.load_many([
+                    {
+                        'phraser_key': 'missing',
+                        'collar': 500,
+                        'model_name': 'wav2vec2',
+                        'output_type': 'hidden_state',
+                        'layer': 7,
+                    },
+                ], strict=True)
 
     def test_resume_compaction_from_journal(self) -> None:
         tmpdir, store = self._make_store()

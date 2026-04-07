@@ -2,9 +2,8 @@
 
 import json
 from pathlib import Path
-from uuid import uuid4
 
-from . import lmdb_helper
+from . import compaction, lmdb_helper
 from .metadata import Metadata, normalize_tags, utc_now
 
 
@@ -234,53 +233,19 @@ class LmdbIndex:
     def create_compaction_journal(self, shard_id, source_entry_ids,
         live_entry_ids, target_shard_id):
         '''Create a compaction journal record.'''
-        journal_id = (
-            f'{utc_now()}:{shard_id}:{target_shard_id}:{uuid4().hex}'
-        )
-        record = {
-            'journal_id': journal_id,
-            'shard_id': shard_id,
-            'target_shard_id': target_shard_id,
-            'source_entry_ids': list(source_entry_ids),
-            'live_entry_ids': list(live_entry_ids),
-            'status': 'running',
-            'started_at': utc_now(),
-            'finished_at': None,
-            'error': None,
-        }
-        with lmdb_helper.write_txn(self.env) as txn:
-            txn.put(journal_id.encode('utf-8'), self._dump_json(record),
-                db=self.compaction_db)
-        return record
+        return compaction.create_compaction_journal(self, shard_id,
+            source_entry_ids=source_entry_ids,
+            live_entry_ids=live_entry_ids,
+            target_shard_id=target_shard_id)
 
     def update_compaction_journal(self, journal_id, status, error=None):
         '''Update one compaction journal record.'''
-        with lmdb_helper.write_txn(self.env) as txn:
-            key = journal_id.encode('utf-8')
-            payload = txn.get(key, db=self.compaction_db)
-            if payload is None:
-                return None
-            record = json.loads(payload.decode('utf-8'))
-            record['status'] = status
-            record['error'] = error
-            record['finished_at'] = utc_now()
-            txn.put(key, self._dump_json(record), db=self.compaction_db)
-        return record
+        return compaction.update_compaction_journal(self, journal_id,
+            status=status, error=error)
 
     def list_compaction_journal(self, status=None):
         '''List compaction journal records.'''
-        rows = []
-        with lmdb_helper.read_txn(self.env) as txn:
-            cursor = txn.cursor(db=self.compaction_db)
-            if not cursor.set_range(b''):
-                return rows
-            for _, value in cursor:
-                record = json.loads(value.decode('utf-8'))
-                if status is not None and record['status'] != status:
-                    continue
-                rows.append(record)
-        rows.sort(key=lambda row: row['journal_id'])
-        return rows
+        return compaction.list_compaction_journal(self, status=status)
 
     def _find_in_txn(self, txn, phraser_key, model_name=None,
         output_type=None, layer=None, include_deleted=False):

@@ -1,5 +1,10 @@
 '''Compaction and shard-health helpers for Store.'''
 
+import json
+from uuid import uuid4
+
+from . import lmdb_helper
+
 from .metadata import utc_now
 
 
@@ -73,6 +78,57 @@ def build_compaction_plan(index, storage, shard_id):
     }
 
 
+def create_compaction_journal(index, shard_id, source_entry_ids,
+    live_entry_ids, target_shard_id):
+    journal_id = (
+        f'{utc_now()}:{shard_id}:{target_shard_id}:{uuid4().hex}'
+    )
+    record = {
+        'journal_id': journal_id,
+        'shard_id': shard_id,
+        'target_shard_id': target_shard_id,
+        'source_entry_ids': list(source_entry_ids),
+        'live_entry_ids': list(live_entry_ids),
+        'status': 'running',
+        'started_at': utc_now(),
+        'finished_at': None,
+        'error': None,
+    }
+    with lmdb_helper.write_txn(index.env) as txn:
+        txn.put(journal_id.encode('utf-8'), _dump_json(record),
+            db=index.compaction_db)
+    return record
+
+
+def update_compaction_journal(index, journal_id, status, error=None):
+    with lmdb_helper.write_txn(index.env) as txn:
+        key = journal_id.encode('utf-8')
+        payload = txn.get(key, db=index.compaction_db)
+        if payload is None:
+            return None
+        record = json.loads(payload.decode('utf-8'))
+        record['status'] = status
+        record['error'] = error
+        record['finished_at'] = utc_now()
+        txn.put(key, _dump_json(record), db=index.compaction_db)
+    return record
+
+
+def list_compaction_journal(index, status=None):
+    rows = []
+    with lmdb_helper.read_txn(index.env) as txn:
+        cursor = txn.cursor(db=index.compaction_db)
+        if not cursor.set_range(b''):
+            return rows
+        for _, value in cursor:
+            record = json.loads(value.decode('utf-8'))
+            if status is not None and record['status'] != status:
+                continue
+            rows.append(record)
+    rows.sort(key=lambda row: row['journal_id'])
+    return rows
+
+
 def run_compaction_plan(index, storage, plan, from_journal=False):
     shard_id = plan['shard_id']
     live_entries = []
@@ -115,3 +171,7 @@ def run_compaction_plan(index, storage, plan, from_journal=False):
         index.update_compaction_journal(journal['journal_id'],
             status='failed', error=str(exc))
         raise
+
+
+def _dump_json(value):
+    return json.dumps(value, sort_keys=True).encode('utf-8')

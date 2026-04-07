@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from . import lmdb_helper
 from .metadata import Metadata, normalize_tags, utc_now
 
 
@@ -12,24 +13,16 @@ class LmdbIndex:
 
     def __init__(self, path, map_size=1 << 30, env=None, shards_root=None):
         self.path = Path(path)
-        self.path.mkdir(parents=True, exist_ok=True)
         self.shards_root = None if shards_root is None else Path(shards_root)
-        self.env = env or self._open_env(map_size=map_size)
-        self.entries_db = self.env.open_db(b'entries')
-        self.by_object_db = self.env.open_db(b'by_object')
-        self.live_by_object_db = self.env.open_db(b'live_by_object')
-        self.by_shard_db = self.env.open_db(b'by_shard')
-        self.by_tag_db = self.env.open_db(b'by_tag')
-        self.shard_meta_db = self.env.open_db(b'shard_meta')
-        self.compaction_db = self.env.open_db(b'compaction')
-
-    def _open_env(self, map_size):
-        try:
-            import lmdb
-        except ImportError as exc:
-            raise ImportError('lmdb is required to use Store') from exc
-        return lmdb.open(str(self.path), create=True, max_dbs=12,
-            map_size=map_size, subdir=True)
+        self.env = env or lmdb_helper.open_env(self.path, map_size=map_size)
+        self.db_handles = lmdb_helper.open_databases(self.env)
+        self.entries_db = self.db_handles['entries_db']
+        self.by_object_db = self.db_handles['by_object_db']
+        self.live_by_object_db = self.db_handles['live_by_object_db']
+        self.by_shard_db = self.db_handles['by_shard_db']
+        self.by_tag_db = self.db_handles['by_tag_db']
+        self.shard_meta_db = self.db_handles['shard_meta_db']
+        self.compaction_db = self.db_handles['compaction_db']
 
     def upsert(self, metadata):
         '''Insert or replace one metadata record.'''
@@ -43,32 +36,17 @@ class LmdbIndex:
         previous_by_id = {metadata.entry_id: self.get(metadata.entry_id)
             for metadata in metadata_list}
         touched = set()
-        with self.env.begin(write=True) as txn:
+        with lmdb_helper.write_txn(self.env) as txn:
             for metadata in metadata_list:
-                entry_id = metadata.entry_id
                 payload = self._dump_json(metadata.to_dict())
-                object_key = metadata.object_key.encode('utf-8')
-                previous = previous_by_id[entry_id]
-
-                txn.put(entry_id.encode('utf-8'), payload, db=self.entries_db)
-                txn.put(object_key, entry_id.encode('utf-8'),
-                    db=self.by_object_db)
-                if metadata.storage_status == 'live':
-                    txn.put(object_key, entry_id.encode('utf-8'),
-                        db=self.live_by_object_db)
-                else:
-                    txn.delete(object_key, db=self.live_by_object_db)
-                if metadata.shard_id:
-                    shard_key = self._shard_key(metadata.shard_id, entry_id)
-                    txn.put(shard_key, entry_id.encode('utf-8'),
-                        db=self.by_shard_db)
-                    touched.add(metadata.shard_id)
+                previous = previous_by_id[metadata.entry_id]
                 if previous is not None:
                     self._delete_shard_keys(txn, previous, metadata)
                     self._delete_tag_keys(txn, previous)
                     if previous.shard_id:
                         touched.add(previous.shard_id)
-                self._put_tag_keys(txn, metadata)
+                touched.update(lmdb_helper.write_metadata(txn,
+                    self.db_handles, metadata, payload))
 
             for shard_id in sorted(touched):
                 self._refresh_shard_stats(txn, shard_id)
@@ -76,20 +54,18 @@ class LmdbIndex:
 
     def get(self, entry_id):
         '''Load one metadata record by entry id.'''
-        with self.env.begin() as txn:
-            return self._get_in_txn(txn, entry_id)
+        return lmdb_helper.get_metadata(self.env, self.entries_db,
+            Metadata, entry_id)
 
     def get_many(self, entry_ids):
         '''Load multiple metadata records by entry id.'''
-        if not entry_ids:
-            return []
-        with self.env.begin() as txn:
-            return [self._get_in_txn(txn, entry_id) for entry_id in entry_ids]
+        return lmdb_helper.get_many_metadata(self.env, self.entries_db,
+            Metadata, entry_ids)
 
     def find(self, phraser_key, model_name=None, output_type=None,
         layer=None, include_deleted=False):
         '''Find metadata records for one phraser key.'''
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             return self._find_in_txn(txn, phraser_key=phraser_key,
                 model_name=model_name, output_type=output_type, layer=layer,
                 include_deleted=include_deleted)
@@ -98,7 +74,7 @@ class LmdbIndex:
         '''Find multiple records using collar matching rules.'''
         if not queries:
             return []
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             results = []
             for query in queries:
                 results.append(self._find_one_in_txn(txn, **query))
@@ -107,7 +83,7 @@ class LmdbIndex:
     def find_one(self, phraser_key, model_name, output_type, layer,
         collar, match='exact'):
         '''Find one record using collar matching rules.'''
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             return self._find_one_in_txn(txn, phraser_key=phraser_key,
                 model_name=model_name, output_type=output_type, layer=layer,
                 collar=collar, match=match)
@@ -119,21 +95,20 @@ class LmdbIndex:
 
     def entries_for_shard(self, shard_id, include_deleted=False):
         '''List entries that point to one shard.'''
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             return self._entries_for_shard_in_txn(txn, shard_id=shard_id,
                 include_deleted=include_deleted)
 
     def list_entries(self, include_deleted=False):
         '''List metadata records across the full entries store.'''
-        with self.env.begin() as txn:
-            return self._list_entries_in_txn(txn,
-                include_deleted=include_deleted)
+        return lmdb_helper.list_metadata(self.env, self.entries_db,
+            Metadata, include_deleted=include_deleted)
 
     def list_shards(self):
         '''List shard identifiers present in the shard index.'''
         shard_ids = []
         seen = set()
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             cursor = txn.cursor(db=self.by_shard_db)
             if not cursor.set_range(b'shard:'):
                 return shard_ids
@@ -150,7 +125,7 @@ class LmdbIndex:
 
     def get_shard_metadata(self, shard_id):
         '''Return shard-level stats.'''
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             payload = txn.get(shard_id.encode('utf-8'), db=self.shard_meta_db)
         if payload is None:
             return None
@@ -159,7 +134,7 @@ class LmdbIndex:
     def list_shard_metadata(self):
         '''Return shard stats for all known shards.'''
         rows = []
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             cursor = txn.cursor(db=self.shard_meta_db)
             if not cursor.set_range(b''):
                 return rows
@@ -184,7 +159,7 @@ class LmdbIndex:
         if not tags:
             return []
 
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             groups = [set(self._scan_prefix_in_txn(txn, self.by_tag_db,
                 self._tag_key(tag, ''))) for tag in tags]
             if not groups:
@@ -206,7 +181,7 @@ class LmdbIndex:
     def tag_counts(self, include_deleted=False):
         '''Count entries per tag.'''
         counts = {}
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             cursor = txn.cursor(db=self.by_tag_db)
             if not cursor.set_range(b'tag:'):
                 return counts
@@ -250,7 +225,7 @@ class LmdbIndex:
 
     def remove_shard_entries(self, shard_id, entry_ids):
         '''Remove shard index entries for one shard.'''
-        with self.env.begin(write=True) as txn:
+        with lmdb_helper.write_txn(self.env) as txn:
             for entry_id in entry_ids:
                 txn.delete(self._shard_key(shard_id, entry_id),
                     db=self.by_shard_db)
@@ -273,14 +248,14 @@ class LmdbIndex:
             'finished_at': None,
             'error': None,
         }
-        with self.env.begin(write=True) as txn:
+        with lmdb_helper.write_txn(self.env) as txn:
             txn.put(journal_id.encode('utf-8'), self._dump_json(record),
                 db=self.compaction_db)
         return record
 
     def update_compaction_journal(self, journal_id, status, error=None):
         '''Update one compaction journal record.'''
-        with self.env.begin(write=True) as txn:
+        with lmdb_helper.write_txn(self.env) as txn:
             key = journal_id.encode('utf-8')
             payload = txn.get(key, db=self.compaction_db)
             if payload is None:
@@ -295,7 +270,7 @@ class LmdbIndex:
     def list_compaction_journal(self, status=None):
         '''List compaction journal records.'''
         rows = []
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             cursor = txn.cursor(db=self.compaction_db)
             if not cursor.set_range(b''):
                 return rows
@@ -364,17 +339,8 @@ class LmdbIndex:
         return [item for item in items if item.storage_status == 'live']
 
     def _list_entries_in_txn(self, txn, include_deleted=False):
-        entries = []
-        cursor = txn.cursor(db=self.entries_db)
-        if not cursor.set_range(b''):
-            return entries
-        for _, value in cursor:
-            metadata = Metadata.from_dict(json.loads(value.decode('utf-8')))
-            if (not include_deleted and
-                metadata.storage_status != 'live'):
-                continue
-            entries.append(metadata)
-        return entries
+        return lmdb_helper.list_metadata_in_txn(txn, self.entries_db,
+            Metadata, include_deleted=include_deleted)
 
     def _update_tags_many(self, entry_ids, tags, mode):
         if not entry_ids:
@@ -427,25 +393,15 @@ class LmdbIndex:
             db=self.shard_meta_db)
 
     def _scan_prefix(self, db, prefix):
-        with self.env.begin() as txn:
+        with lmdb_helper.read_txn(self.env) as txn:
             return self._scan_prefix_in_txn(txn, db, prefix)
 
     def _scan_prefix_in_txn(self, txn, db, prefix):
-        entry_ids = []
-        cursor = txn.cursor(db=db)
-        if not cursor.set_range(prefix):
-            return entry_ids
-        for key, value in cursor:
-            if not key.startswith(prefix):
-                break
-            entry_ids.append(value.decode('utf-8'))
-        return entry_ids
+        return lmdb_helper.scan_prefix_in_txn(txn, db, prefix)
 
     def _get_in_txn(self, txn, entry_id):
-        payload = txn.get(entry_id.encode('utf-8'), db=self.entries_db)
-        if payload is None:
-            return None
-        return Metadata.from_dict(json.loads(payload.decode('utf-8')))
+        return lmdb_helper.get_metadata_in_txn(txn, self.entries_db,
+            Metadata, entry_id)
 
     def _shard_file_size(self, txn, shard_id):
         if self.shards_root is None:
@@ -488,23 +444,11 @@ class LmdbIndex:
         return f'shard:{shard_id}:{entry_id}'.encode('utf-8')
 
     def _tag_key(self, tag, entry_id):
-        return f'tag:{tag}:{entry_id}'.encode('utf-8')
-
-    def _put_tag_keys(self, txn, metadata):
-        for tag in metadata.tags:
-            txn.put(self._tag_key(tag, metadata.entry_id),
-                metadata.entry_id.encode('utf-8'),
-                db=self.by_tag_db)
+        return lmdb_helper.tag_key(tag, entry_id)
 
     def _delete_tag_keys(self, txn, metadata):
-        for tag in metadata.tags:
-            txn.delete(self._tag_key(tag, metadata.entry_id),
-                db=self.by_tag_db)
+        lmdb_helper.delete_tag_keys(txn, self.by_tag_db, metadata)
 
     def _delete_shard_keys(self, txn, previous, metadata):
-        if previous.shard_id is None:
-            return
-        if previous.shard_id == metadata.shard_id:
-            return
-        txn.delete(self._shard_key(previous.shard_id, previous.entry_id),
-            db=self.by_shard_db)
+        lmdb_helper.delete_shard_keys(txn, self.by_shard_db, previous,
+            metadata)

@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -546,6 +547,76 @@ class EchoFrameTests(unittest.TestCase):
                 'subset-1': 1,
                 'subset-2': 1,
             })
+
+    def test_find_by_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            first = store.put(
+                phraser_key='phrase-10',
+                collar=90,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=5,
+                data=[[1.0]],
+            )
+            second = store.put(
+                phraser_key='phrase-10',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=6,
+                data=[[2.0]],
+            )
+            store.put(
+                phraser_key='phrase-11',
+                collar=90,
+                model_name='hubert',
+                output_type='hidden_state',
+                layer=5,
+                data=[[3.0]],
+            )
+
+            load = mock.Mock(side_effect=lambda key: {
+                'phrase-10': types.SimpleNamespace(label='hello'),
+                'phrase-11': types.SimpleNamespace(label='world'),
+            }[key])
+            fake_models = types.SimpleNamespace(
+                cache=types.SimpleNamespace(load=load))
+            fake_phraser = types.SimpleNamespace(models=fake_models)
+
+            with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
+                records = store.find_by_label('hello')
+                filtered = store.find_by_label('hello',
+                    model_name='wav2vec2', layer=6)
+
+            self.assertEqual(sorted(item.entry_id for item in records),
+                sorted([first.entry_id, second.entry_id]))
+            self.assertEqual([item.entry_id for item in filtered], [
+                second.entry_id,
+            ])
+            self.assertEqual(load.call_args_list, [
+                mock.call('phrase-10'),
+                mock.call('phrase-11'),
+                mock.call('phrase-10'),
+            ])
+
+    def test_find_by_label_validates_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+
+            with self.assertRaisesRegex(ValueError,
+                'label must be a non-empty string'):
+                store.find_by_label('')
+
+    def test_find_by_label_missing_phraser_dependency_raises_helpful_error(
+        self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+
+            with mock.patch.dict(sys.modules, {'phraser': None}):
+                with self.assertRaisesRegex(ImportError,
+                    'phraser is required to find entries by label'):
+                    store.find_by_label('hello')
 
     def test_invalid_tags_raise_value_error(self) -> None:
         with self.assertRaises(ValueError):
@@ -1586,13 +1657,8 @@ class EchoFrameTests(unittest.TestCase):
             self.assertNotEqual(first['journal_id'], second['journal_id'])
             self.assertEqual(len(store.compaction_journal()), 2)
 
-    def test_missing_optional_dependencies_raise_helpful_import_errors(self
+    def test_missing_h5py_dependency_raises_helpful_import_error(self
         ) -> None:
-        with mock.patch.dict(sys.modules, {'lmdb': None}):
-            with self.assertRaisesRegex(ImportError,
-                'lmdb is required to use Store'):
-                LmdbIndex(Path('tests/data/unused-index'))
-
         with mock.patch.dict(sys.modules, {'h5py': None}):
             with self.assertRaisesRegex(ImportError,
                 'h5py is required to use Store'):

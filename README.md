@@ -180,6 +180,12 @@ entries = store.find_by_tags(['exp-a', 'speaker-01'], match='all')
 tags = store.list_tags()
 ```
 
+Find records by `phraser` label:
+
+```python
+entries = store.find_by_label('hello', model_name='wav2vec2')
+```
+
 Store and query in batches:
 
 ```python

@@ -84,8 +84,8 @@ payload = store.load(
 Load a payload directly from `echoframe` metadata:
 
 ```python
-payload = store.load_metadata(metadata)
-payloads = store.load_metadata_many([metadata], strict=True)
+payload = store.metadata_to_payload(metadata)
+payloads = store.metadatas_to_payloads([metadata], strict=True)
 ```
 
 Load hidden-state frames for one object and layer:

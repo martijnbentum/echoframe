@@ -37,6 +37,14 @@ class Store:
         self.storage = storage or Hdf5ShardStore(shards_root,
             max_shard_size_bytes=max_shard_size_bytes)
 
+    def _bind_metadata(self, metadata):
+        if metadata is None:
+            return None
+        return metadata.bind_store(self)
+
+    def _bind_metadatas(self, metadata_list):
+        return [self._bind_metadata(metadata) for metadata in metadata_list]
+
     def put(self, phraser_key, collar, model_name, output_type, layer,
         data, tags=None, to_vector_version=None):
         '''Store one output payload and index its metadata.
@@ -54,7 +62,7 @@ class Store:
             output_type=output_type, layer=layer, tags=tags,
             to_vector_version=to_vector_version)
         stored = self.storage.store(metadata, data=data)
-        return self.index.upsert(stored)
+        return self._bind_metadata(self.index.upsert(stored))
 
     def put_many(self, items):
         '''Store multiple output payloads.
@@ -72,7 +80,7 @@ class Store:
                 'data': item['data'],
             })
         stored = self.storage.store_many(prepared)
-        return self.index.upsert_many(stored)
+        return self._bind_metadatas(self.index.upsert_many(stored))
 
     def find(self, phraser_key, model_name=None, output_type=None,
         layer=None, include_deleted=False):
@@ -83,15 +91,15 @@ class Store:
         layer:             optional layer filter
         include_deleted:   include tombstoned entries
         '''
-        return self.index.find(phraser_key=phraser_key,
+        return self._bind_metadatas(self.index.find(phraser_key=phraser_key,
             model_name=model_name, output_type=output_type, layer=layer,
-            include_deleted=include_deleted)
+            include_deleted=include_deleted))
 
     def find_many(self, queries):
         '''Find multiple records using collar matching rules.
         queries:    iterable of find_one-like keyword mappings
         '''
-        return self.index.find_many(queries)
+        return self._bind_metadatas(self.index.find_many(queries))
 
     def find_one(self, phraser_key, collar, model_name, output_type,
         layer, match='exact'):
@@ -103,9 +111,10 @@ class Store:
         layer:          layer to match
         match:          exact, min, max, or nearest
         '''
-        return self.index.find_one(phraser_key=phraser_key,
+        return self._bind_metadata(self.index.find_one(
+            phraser_key=phraser_key,
             model_name=model_name, output_type=output_type, layer=layer,
-            collar=collar, match=match)
+            collar=collar, match=match))
 
     def exists(self, phraser_key, collar, model_name, output_type,
         layer, match='exact'):
@@ -249,8 +258,8 @@ class Store:
         tag:               grouping label
         include_deleted:   include tombstoned entries
         '''
-        return self.index.find_by_tag(tag,
-            include_deleted=include_deleted)
+        return self._bind_metadatas(self.index.find_by_tag(tag,
+            include_deleted=include_deleted))
 
     def find_by_tags(self, tags, match='all', include_deleted=False):
         '''List metadata records that match a tag set.
@@ -258,8 +267,8 @@ class Store:
         match:             require all or any tags
         include_deleted:   include tombstoned entries
         '''
-        return self.index.find_by_tags(tags, match=match,
-            include_deleted=include_deleted)
+        return self._bind_metadatas(self.index.find_by_tags(tags,
+            match=match, include_deleted=include_deleted))
 
     def find_by_label(self, label, model_name=None, output_type=None,
         layer=None, include_deleted=False):
@@ -294,7 +303,7 @@ class Store:
                     'label', None)
             if labels_by_key[phraser_key] == label:
                 matches.append(record)
-        return matches
+        return self._bind_metadatas(matches)
 
     def list_tags(self, include_deleted=False):
         '''List all known tags.
@@ -313,28 +322,29 @@ class Store:
         entry_id:    metadata identifier
         tags:        grouping labels to add
         '''
-        return self.index.add_tags(entry_id, tags)
+        return self._bind_metadata(self.index.add_tags(entry_id, tags))
 
     def add_tags_many(self, entry_ids, tags):
         '''Add tags to multiple metadata records.
         entry_ids:   metadata identifiers
         tags:        grouping labels to add
         '''
-        return self.index.add_tags_many(entry_ids, tags)
+        return self._bind_metadatas(self.index.add_tags_many(entry_ids, tags))
 
     def remove_tags(self, entry_id, tags):
         '''Remove tags from one metadata record.
         entry_id:    metadata identifier
         tags:        grouping labels to remove
         '''
-        return self.index.remove_tags(entry_id, tags)
+        return self._bind_metadata(self.index.remove_tags(entry_id, tags))
 
     def remove_tags_many(self, entry_ids, tags):
         '''Remove tags from multiple metadata records.
         entry_ids:   metadata identifiers
         tags:        grouping labels to remove
         '''
-        return self.index.remove_tags_many(entry_ids, tags)
+        return self._bind_metadatas(self.index.remove_tags_many(entry_ids,
+            tags))
 
     def shard_stats(self):
         '''Return shard-level stats.'''
@@ -353,7 +363,7 @@ class Store:
             metadata.layer,
             metadata.collar,
         ))
-        return entries
+        return self._bind_metadatas(entries)
 
     @property
     def metadata(self):

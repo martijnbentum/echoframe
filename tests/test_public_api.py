@@ -1084,6 +1084,9 @@ class EchoFrameTests(unittest.TestCase):
         self.assertEqual(repr(metadata),
             'MD(model=wav2vec2, layer=7, status=live, tags=a,b)')
         self.assertLessEqual(len(repr(metadata)), 80)
+        with self.assertRaisesRegex(ValueError,
+            'metadata is not bound to a store'):
+            metadata.load_payload()
 
         class FakePhraserObject:
             def __repr__(self):
@@ -1120,11 +1123,46 @@ class EchoFrameTests(unittest.TestCase):
         self.assertEqual(updated.tags, ['a', 'z'])
         self.assertEqual(updated.created_at, metadata.created_at)
         self.assertEqual(updated.deleted_at, metadata.deleted_at)
+        self.assertIsNone(updated._store)
 
         deleted = metadata.mark_deleted()
         self.assertEqual(deleted.storage_status, 'deleted')
         self.assertEqual(deleted.created_at, metadata.created_at)
         self.assertIsNotNone(deleted.deleted_at)
+
+    def test_store_metadata_are_bound_and_can_load_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = self._make_fake_store(tmpdir)
+            created = store.put(
+                phraser_key='phrase-1',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0, 2.0], [3.0, 4.0]],
+                tags=['exp-a'],
+            )
+
+            self.assertIs(created._store, store)
+            self.assertEqual(created.load_payload(),
+                [[1.0, 2.0], [3.0, 4.0]])
+
+            found = store.find_one(
+                phraser_key='phrase-1',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+            )
+            self.assertIs(found._store, store)
+            self.assertEqual(found.load_payload(),
+                [[1.0, 2.0], [3.0, 4.0]])
+
+            listed = store.metadata
+            self.assertEqual(len(listed), 1)
+            self.assertIs(listed[0]._store, store)
+            self.assertEqual(listed[0].load_payload(),
+                [[1.0, 2.0], [3.0, 4.0]])
 
     def test_output_storage_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

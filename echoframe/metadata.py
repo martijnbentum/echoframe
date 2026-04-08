@@ -26,6 +26,7 @@ STABLE_METADATA_FIELDS = (
     'deleted_at',
 )
 
+
 class Metadata:
     '''EchoFrame metadata.
     phraser_key:          unique phraser object key
@@ -81,15 +82,11 @@ class Metadata:
         self.tags = normalize_tags(self.tags)
 
     def __repr__(self):
-        prefix = 'MD('
-        suffix = ')'
-        limit = 80 - len(prefix) - len(suffix)
+        limit = 80
         tags = ','.join(self.tags) if self.tags else '-'
-        body = (
-            f'model={self.model_name}, layer={self.layer}, '
-            f'status={self.storage_status}, tags={tags}'
-        )
-        return prefix + _truncate_text(body, limit) + suffix
+        body = f'model={self.model_name}, layer={self.layer}, '
+        body += f'status={self.storage_status}, tags={tags}'
+        return 'MD(' + _truncate_text(body, limit) + ')'
 
     def __str__(self):
         return pformat(self._display_dict(), sort_dicts=False, width=80)
@@ -112,6 +109,11 @@ class Metadata:
         return digest
 
     @property
+    def echoframe_key(self):
+        '''Compatibility alias for the echoframe metadata identifier.'''
+        return self.entry_id
+
+    @property
     def identity_key(self):
         '''Canonical identity for a stored output.'''
         return ':'.join([self.phraser_key, self.model_name,
@@ -127,37 +129,30 @@ class Metadata:
 
     def mark_deleted(self):
         '''Return a tombstoned copy.'''
-        metadata = Metadata(phraser_key=self.phraser_key,
-            collar=self.collar, model_name=self.model_name,
-            output_type=self.output_type, layer=self.layer,
-            storage_status='deleted', shard_id=self.shard_id,
-            dataset_path=self.dataset_path, shape=self.shape,
-            dtype=self.dtype, tags=self.tags, created_at=self.created_at,
-            deleted_at=utc_now(),
+        metadata = Metadata(phraser_key=self.phraser_key, collar=self.collar,
+            model_name=self.model_name, output_type=self.output_type,
+            layer=self.layer, storage_status='deleted',
+            shard_id=self.shard_id, dataset_path=self.dataset_path,
+            shape=self.shape, dtype=self.dtype, tags=self.tags,
+            created_at=self.created_at, deleted_at=utc_now(),
             to_vector_version=self.to_vector_version)
         return metadata.bind_store(self._store)
 
     def with_tags(self, tags):
         '''Return a copy with updated tags.'''
-        metadata = Metadata(phraser_key=self.phraser_key,
-            collar=self.collar, model_name=self.model_name,
-            output_type=self.output_type, layer=self.layer,
-            storage_status=self.storage_status, shard_id=self.shard_id,
-            dataset_path=self.dataset_path, shape=self.shape,
-            dtype=self.dtype, tags=tags, created_at=self.created_at,
-            deleted_at=self.deleted_at,
+        metadata = Metadata(phraser_key=self.phraser_key, collar=self.collar,
+            model_name=self.model_name, output_type=self.output_type,
+            layer=self.layer, storage_status=self.storage_status,
+            shard_id=self.shard_id, dataset_path=self.dataset_path,
+            shape=self.shape, dtype=self.dtype, tags=tags,
+            created_at=self.created_at, deleted_at=self.deleted_at,
             to_vector_version=self.to_vector_version)
         return metadata.bind_store(self._store)
 
     def _display_dict(self):
-        data = {
-            'entry_id': self.entry_id,
-            'phraser_key': self.phraser_key,
-            'collar': self.collar,
-            'model_name': self.model_name,
-            'output_type': self.output_type,
-            'layer': self.layer,
-        }
+        data = {'entry_id': self.entry_id, 'phraser_key': self.phraser_key,
+            'collar': self.collar, 'model_name': self.model_name,
+            'output_type': self.output_type, 'layer': self.layer}
         if self.storage_status != 'live':
             data['storage_status'] = self.storage_status
         if self.shard_id is not None:
@@ -170,9 +165,8 @@ class Metadata:
             data['dtype'] = self.dtype
         if self.tags:
             data['tags'] = self.tags
-        phraser_object_repr = self._phraser_object_repr()
-        if phraser_object_repr is not None:
-            data['phraser_object'] = phraser_object_repr
+        if self.phraser_obj is not None:
+            data['phraser_object'] = repr(self.phraser_obj)
         if self.created_at is not None:
             data['created_at'] = self.created_at
         if self.deleted_at is not None:
@@ -181,34 +175,28 @@ class Metadata:
             data['to_vector_version'] = self.to_vector_version
         return data
 
-    def _phraser_object_repr(self):
+    def to_dict(self):
+        '''Serialize to a JSON-friendly dictionary.'''
+        return {'phraser_key': self.phraser_key, 'collar': self.collar,
+            'model_name': self.model_name,
+            'output_type': self.output_type, 'layer': self.layer,
+            'storage_status': self.storage_status,
+            'shard_id': self.shard_id, 'dataset_path': self.dataset_path,
+            'shape': self.shape, 'dtype': self.dtype, 'tags': self.tags,
+            'created_at': self.created_at,
+            'deleted_at': self.deleted_at,
+            'to_vector_version': self.to_vector_version}
+
+    @property
+    def phraser_obj(self):
         try:
             from phraser import models
         except ImportError:
             return None
         try:
-            return repr(models.cache.load(self.phraser_key))
+            return models.cache.load(self.phraser_key)
         except Exception:
             return None
-
-    def to_dict(self):
-        '''Serialize to a JSON-friendly dictionary.'''
-        return {
-            'phraser_key': self.phraser_key,
-            'collar': self.collar,
-            'model_name': self.model_name,
-            'output_type': self.output_type,
-            'layer': self.layer,
-            'storage_status': self.storage_status,
-            'shard_id': self.shard_id,
-            'dataset_path': self.dataset_path,
-            'shape': self.shape,
-            'dtype': self.dtype,
-            'tags': self.tags,
-            'created_at': self.created_at,
-            'deleted_at': self.deleted_at,
-            'to_vector_version': self.to_vector_version,
-        }
 
     @classmethod
     def from_dict(cls, data):
@@ -216,6 +204,7 @@ class Metadata:
         data:    serialized metadata mapping
         '''
         return cls(**data)
+
 
 def utc_now():
     '''Return an ISO-8601 UTC timestamp.'''

@@ -1081,6 +1081,37 @@ class EchoFrameTests(unittest.TestCase):
         self.assertEqual(metadata.shape, (2, 3))
         self.assertIsNotNone(metadata.created_at)
         self.assertIsNone(metadata.deleted_at)
+        self.assertEqual(repr(metadata),
+            'MD(model=wav2vec2, layer=7, status=live, tags=a,b)')
+        self.assertLessEqual(len(repr(metadata)), 80)
+
+        class FakePhraserObject:
+            def __repr__(self):
+                return "PhraserObject(label='hello')"
+
+        phraser_object = FakePhraserObject()
+        fake_models = types.SimpleNamespace(
+            cache=types.SimpleNamespace(
+                load=mock.Mock(return_value=phraser_object),
+            ),
+        )
+        fake_phraser = types.SimpleNamespace(models=fake_models)
+        with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
+            self.assertEqual(str(metadata),
+                f"{{'entry_id': '{metadata.entry_id}',\n"
+                " 'phraser_key': 'phrase-1',\n"
+                " 'collar': 120,\n"
+                " 'model_name': 'wav2vec2',\n"
+                " 'output_type': 'hidden_state',\n"
+                " 'layer': 7,\n"
+                " 'shard_id': 'wav2vec2_hidden_state_0001',\n"
+                " 'dataset_path': '/layer_0007/entry',\n"
+                " 'shape': (2, 3),\n"
+                " 'dtype': 'float32',\n"
+                " 'tags': ['a', 'b'],\n"
+                " 'phraser_object': \"PhraserObject(label='hello')\",\n"
+                f" 'created_at': '{metadata.created_at}',\n"
+                " 'to_vector_version': 'abc123'}")
 
         restored = Metadata.from_dict(metadata.to_dict())
         self.assertEqual(restored.to_dict(), metadata.to_dict())

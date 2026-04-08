@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from hashlib import sha1
+from pprint import pformat
 
 OUTPUT_TYPES = {
     'attention',
@@ -47,6 +48,15 @@ def normalize_tags(tags):
             raise ValueError("tags must not contain ':'")
         values.append(value)
     return sorted(set(values))
+
+
+def _truncate_text(text, max_length):
+    '''Return text clipped to max_length with a trailing ellipsis.'''
+    if len(text) <= max_length:
+        return text
+    if max_length <= 3:
+        return text[:max_length]
+    return text[:max_length - 3] + '...'
 
 
 class Metadata:
@@ -102,6 +112,20 @@ class Metadata:
             self.shape = tuple(self.shape)
         self.tags = normalize_tags(self.tags)
 
+    def __repr__(self):
+        prefix = 'MD('
+        suffix = ')'
+        limit = 80 - len(prefix) - len(suffix)
+        tags = ','.join(self.tags) if self.tags else '-'
+        body = (
+            f'model={self.model_name}, layer={self.layer}, '
+            f'status={self.storage_status}, tags={tags}'
+        )
+        return prefix + _truncate_text(body, limit) + suffix
+
+    def __str__(self):
+        return pformat(self._display_dict(), sort_dicts=False, width=80)
+
     @property
     def entry_id(self):
         '''Stable identifier for one canonical output unit.'''
@@ -143,6 +167,48 @@ class Metadata:
             dtype=self.dtype, tags=tags, created_at=self.created_at,
             deleted_at=self.deleted_at,
             to_vector_version=self.to_vector_version)
+
+    def _display_dict(self):
+        data = {
+            'entry_id': self.entry_id,
+            'phraser_key': self.phraser_key,
+            'collar': self.collar,
+            'model_name': self.model_name,
+            'output_type': self.output_type,
+            'layer': self.layer,
+        }
+        if self.storage_status != 'live':
+            data['storage_status'] = self.storage_status
+        if self.shard_id is not None:
+            data['shard_id'] = self.shard_id
+        if self.dataset_path is not None:
+            data['dataset_path'] = self.dataset_path
+        if self.shape is not None:
+            data['shape'] = self.shape
+        if self.dtype is not None:
+            data['dtype'] = self.dtype
+        if self.tags:
+            data['tags'] = self.tags
+        phraser_object_repr = self._phraser_object_repr()
+        if phraser_object_repr is not None:
+            data['phraser_object'] = phraser_object_repr
+        if self.created_at is not None:
+            data['created_at'] = self.created_at
+        if self.deleted_at is not None:
+            data['deleted_at'] = self.deleted_at
+        if self.to_vector_version is not None:
+            data['to_vector_version'] = self.to_vector_version
+        return data
+
+    def _phraser_object_repr(self):
+        try:
+            from phraser import models
+        except ImportError:
+            return None
+        try:
+            return repr(models.cache.load(self.phraser_key))
+        except Exception:
+            return None
 
     def to_dict(self):
         '''Serialize to a JSON-friendly dictionary.'''

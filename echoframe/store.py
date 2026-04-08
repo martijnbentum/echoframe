@@ -357,8 +357,10 @@ class Store:
 
     @property
     def metadata(self):
-        '''Return stored live metadata records.'''
-        return self.list_entries()
+        '''Return stored metadata records.'''
+        if not hasattr(self, '_metadata'):
+            self._metadata= self.list_entries()
+        return self._metadata
 
     def overview(self, include_deleted=False, health_event_limit=20,
         include_integrity=False):

@@ -1075,6 +1075,7 @@ class EchoFrameTests(unittest.TestCase):
 
         self.assertEqual(metadata.identity_key,
             'phrase-1:wav2vec2:hidden_state:0007:000000120')
+        self.assertEqual(metadata.echoframe_key, metadata.entry_id)
         self.assertEqual(metadata.object_key,
             'obj:phrase-1:wav2vec2:hidden_state:0007:000000120')
         self.assertEqual(metadata.tags, ['a', 'b'])
@@ -1089,6 +1090,8 @@ class EchoFrameTests(unittest.TestCase):
             metadata.load_payload()
 
         class FakePhraserObject:
+            label = 'hello'
+
             def __repr__(self):
                 return "PhraserObject(label='hello')"
 
@@ -1100,6 +1103,9 @@ class EchoFrameTests(unittest.TestCase):
         )
         fake_phraser = types.SimpleNamespace(models=fake_models)
         with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
+            self.assertIs(metadata.phraser_object, phraser_object)
+            self.assertIs(metadata.phraser_object, phraser_object)
+            self.assertEqual(metadata.label, 'hello')
             self.assertEqual(str(metadata),
                 f"{{'entry_id': '{metadata.entry_id}',\n"
                 " 'phraser_key': 'phrase-1',\n"
@@ -1115,6 +1121,7 @@ class EchoFrameTests(unittest.TestCase):
                 " 'phraser_object': \"PhraserObject(label='hello')\",\n"
                 f" 'created_at': '{metadata.created_at}',\n"
                 " 'to_vector_version': 'abc123'}")
+        self.assertEqual(fake_models.cache.load.call_count, 1)
 
         restored = Metadata.from_dict(metadata.to_dict())
         self.assertEqual(restored.to_dict(), metadata.to_dict())

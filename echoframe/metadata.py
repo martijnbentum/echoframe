@@ -56,6 +56,8 @@ class Metadata:
         self.deleted_at = deleted_at
         self.to_vector_version = to_vector_version
         self._store = None
+        self._phraser_object = None
+        self._phraser_object_loaded = False
         self._validate()
 
     def _validate(self):
@@ -165,8 +167,8 @@ class Metadata:
             data['dtype'] = self.dtype
         if self.tags:
             data['tags'] = self.tags
-        if self.phraser_obj is not None:
-            data['phraser_object'] = repr(self.phraser_obj)
+        if self.phraser_object is not None:
+            data['phraser_object'] = repr(self.phraser_object)
         if self.created_at is not None:
             data['created_at'] = self.created_at
         if self.deleted_at is not None:
@@ -188,15 +190,26 @@ class Metadata:
             'to_vector_version': self.to_vector_version}
 
     @property
-    def phraser_obj(self):
+    def phraser_object(self):
+        if self._phraser_object_loaded:
+            return self._phraser_object
         try:
             from phraser import models
         except ImportError:
             return None
         try:
-            return models.cache.load(self.phraser_key)
+            self._phraser_object = models.cache.load(self.phraser_key)
         except Exception:
+            self._phraser_object = None
+        self._phraser_object_loaded = True
+        return self._phraser_object
+
+    @property
+    def label(self):
+        phraser_object = self.phraser_object
+        if phraser_object is None:
             return None
+        return getattr(phraser_object, 'label', None)
 
     @classmethod
     def from_dict(cls, data):

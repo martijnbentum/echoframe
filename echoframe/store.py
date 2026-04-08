@@ -1,5 +1,6 @@
 '''Public store facade for echoframe.'''
 
+import importlib
 from pathlib import Path
 
 from . import compaction
@@ -16,6 +17,14 @@ def _load_phraser_models():
             'phraser is required to find entries by label'
         ) from exc
     return models
+
+
+def _load_to_vector_version():
+    try:
+        module = importlib.import_module('to_vector')
+    except ImportError:
+        return None
+    return getattr(module, '__version__', None)
 
 
 class Store:
@@ -46,7 +55,7 @@ class Store:
         return [self._bind_metadata(metadata) for metadata in metadata_list]
 
     def put(self, phraser_key, collar, model_name, output_type, layer,
-        data, tags=None, to_vector_version=None):
+        data, tags=None):
         '''Store one output payload and index its metadata.
         phraser_key:          unique phraser object key
         collar:               collar in milliseconds
@@ -55,12 +64,11 @@ class Store:
         layer:                model layer index
         data:                 payload to store
         tags:                 optional grouping labels
-        to_vector_version:    optional debug-only version marker
         '''
         metadata = Metadata(phraser_key=phraser_key,
             collar=collar, model_name=model_name,
             output_type=output_type, layer=layer, tags=tags,
-            to_vector_version=to_vector_version)
+            to_vector_version=_load_to_vector_version())
         stored = self.storage.store(metadata, data=data)
         return self._bind_metadata(self.index.upsert(stored))
 
@@ -74,7 +82,7 @@ class Store:
                 collar=item['collar'], model_name=item['model_name'],
                 output_type=item['output_type'], layer=item['layer'],
                 tags=item.get('tags'),
-                to_vector_version=item.get('to_vector_version'))
+                to_vector_version=_load_to_vector_version())
             prepared.append({
                 'metadata': metadata,
                 'data': item['data'],
@@ -403,7 +411,7 @@ class Store:
 
     def find_or_compute(self, phraser_key, collar, model_name,
         output_type, layer, compute, match='exact',
-        tags=None, add_tags_on_hit=False, to_vector_version=None):
+        tags=None, add_tags_on_hit=False):
         '''Load metadata if present, otherwise compute and store a payload.
         phraser_key:          unique phraser object key
         collar:               requested collar in milliseconds
@@ -414,7 +422,6 @@ class Store:
         match:                exact, min, max, or nearest
         tags:                 optional grouping labels
         add_tags_on_hit:      add tags to an existing matching entry
-        to_vector_version:    optional debug-only version marker
         '''
         metadata = self.find_one(phraser_key=phraser_key,
             collar=collar, model_name=model_name,
@@ -426,8 +433,7 @@ class Store:
         data = compute()
         metadata = self.put(phraser_key=phraser_key,
             collar=collar, model_name=model_name,
-            output_type=output_type, layer=layer, data=data, tags=tags,
-            to_vector_version=to_vector_version)
+            output_type=output_type, layer=layer, data=data, tags=tags)
         return metadata, True
 
     def verify_integrity(self):

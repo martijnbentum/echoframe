@@ -48,12 +48,14 @@ metadata = store.put(
     layer=7,
     data=[[0.1, 0.2], [0.3, 0.4]],
     tags=['exp-a', 'speaker-01'],
-    to_vector_version='debug-only-version',
 )
 
 print(metadata.entry_id)
 print(metadata.dataset_path)
 ```
+
+When available, `to_vector_version` is inferred from the installed
+`to_vector.__version__` and stored as debug provenance.
 
 Check whether output is already available:
 
@@ -258,8 +260,9 @@ contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
 - `deleted_at`
 
 `to_vector_version` is intentionally treated as a debug/provenance field rather
-than a stable contract field. It may be present on `Metadata`, but downstream
-code should not rely on it as part of the long-term API surface.
+than a stable contract field. It is inferred from `to_vector.__version__` when
+available, and downstream code should not rely on it as part of the long-term
+API surface.
 
 ## Docs
 

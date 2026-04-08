@@ -198,22 +198,23 @@ class EchoFrameTests(unittest.TestCase):
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-
-            metadata = store.put(
-                phraser_key='phrase-1',
-                collar=120,
-                model_name='wav2vec2',
-                output_type='hidden_state',
-                layer=7,
-                data=[[1.0, 2.0], [3.0, 4.0]],
-                tags=['exp-a'],
-                to_vector_version='abc123',
-            )
+            fake_to_vector = types.SimpleNamespace(__version__='abc123')
+            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
+                metadata = store.put(
+                    phraser_key='phrase-1',
+                    collar=120,
+                    model_name='wav2vec2',
+                    output_type='hidden_state',
+                    layer=7,
+                    data=[[1.0, 2.0], [3.0, 4.0]],
+                    tags=['exp-a'],
+                )
 
             self.assertEqual(metadata.phraser_key, 'phrase-1')
             self.assertEqual(metadata.layer, 7)
             self.assertEqual(metadata.shard_id, 'wav2vec2_hidden_state_0001')
             self.assertEqual(metadata.tags, ['exp-a'])
+            self.assertEqual(metadata.to_vector_version, 'abc123')
             self.assertTrue(store.exists(
                 phraser_key='phrase-1',
                 collar=120,
@@ -505,64 +506,70 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
             calls: list[str] = []
+            fake_to_vector = types.SimpleNamespace(__version__='tv-1')
 
             def compute() -> list[int]:
                 calls.append('compute')
                 return [1, 2, 3]
 
-            metadata, created = store.find_or_compute(
-                phraser_key='phone-1',
-                collar=50,
-                model_name='encodec',
-                output_type='codebook_indices',
-                layer=1,
-                compute=compute,
-            )
-            again, created_again = store.find_or_compute(
-                phraser_key='phone-1',
-                collar=50,
-                model_name='encodec',
-                output_type='codebook_indices',
-                layer=1,
-                compute=compute,
-            )
+            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
+                metadata, created = store.find_or_compute(
+                    phraser_key='phone-1',
+                    collar=50,
+                    model_name='encodec',
+                    output_type='codebook_indices',
+                    layer=1,
+                    compute=compute,
+                )
+                again, created_again = store.find_or_compute(
+                    phraser_key='phone-1',
+                    collar=50,
+                    model_name='encodec',
+                    output_type='codebook_indices',
+                    layer=1,
+                    compute=compute,
+                )
 
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(calls, ['compute'])
+            self.assertEqual(metadata.to_vector_version, 'tv-1')
 
     def test_find_or_compute_can_add_tags_on_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
+            fake_to_vector = types.SimpleNamespace(__version__='tv-2')
 
             def compute() -> list[int]:
                 return [1, 2, 3]
 
-            metadata, created = store.find_or_compute(
-                phraser_key='phone-2',
-                collar=50,
-                model_name='encodec',
-                output_type='codebook_indices',
-                layer=1,
-                compute=compute,
-                tags=['exp-a'],
-            )
-            again, created_again = store.find_or_compute(
-                phraser_key='phone-2',
-                collar=50,
-                model_name='encodec',
-                output_type='codebook_indices',
-                layer=1,
-                compute=compute,
-                tags=['exp-b'],
-                add_tags_on_hit=True,
-            )
+            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
+                metadata, created = store.find_or_compute(
+                    phraser_key='phone-2',
+                    collar=50,
+                    model_name='encodec',
+                    output_type='codebook_indices',
+                    layer=1,
+                    compute=compute,
+                    tags=['exp-a'],
+                )
+                again, created_again = store.find_or_compute(
+                    phraser_key='phone-2',
+                    collar=50,
+                    model_name='encodec',
+                    output_type='codebook_indices',
+                    layer=1,
+                    compute=compute,
+                    tags=['exp-b'],
+                    add_tags_on_hit=True,
+                )
 
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(again.tags, ['exp-a', 'exp-b'])
+            self.assertEqual(metadata.to_vector_version, 'tv-2')
 
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

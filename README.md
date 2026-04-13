@@ -22,7 +22,8 @@ import echoframe
 
 ## API
 
-The public package exports `echoframe.Store`, `echoframe.Metadata`, and
+The public package exports `echoframe.Store`,
+`echoframe.EchoframeMetadata`, and
 `echoframe.STABLE_METADATA_FIELDS`.
 
 ```python
@@ -53,9 +54,6 @@ metadata = store.put(
 print(metadata.entry_id)
 print(metadata.dataset_path)
 ```
-
-When available, `to_vector_version` is inferred from the installed
-`to_vector.__version__` and stored as debug provenance.
 
 Check whether output is already available:
 
@@ -242,7 +240,8 @@ stats = store.shard_stats()
 
 ## Metadata Contract
 
-`Metadata` contains internal and operational fields, but the stable public
+`EchoframeMetadata` contains internal and operational fields, but the stable
+public
 contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
 
 - `phraser_key`
@@ -258,11 +257,6 @@ contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
 - `tags`
 - `created_at`
 - `deleted_at`
-
-`to_vector_version` is intentionally treated as a debug/provenance field rather
-than a stable contract field. It is inferred from `to_vector.__version__` when
-available, and downstream code should not rely on it as part of the long-term
-API surface.
 
 ## Docs
 

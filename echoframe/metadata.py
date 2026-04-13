@@ -24,10 +24,11 @@ STABLE_METADATA_FIELDS = (
     'tags',
     'created_at',
     'deleted_at',
+    'accessed_at',
 )
 
 
-class Metadata:
+class EchoframeMetadata:
     '''EchoFrame metadata.
     phraser_key:          unique phraser object key
     collar:               collar in milliseconds
@@ -40,7 +41,7 @@ class Metadata:
     def __init__(self, phraser_key, collar, model_name, output_type, layer,
         storage_status='live', shard_id=None, dataset_path=None, shape=None,
         dtype=None, tags=None, created_at=None, deleted_at=None,
-        to_vector_version=None):
+        accessed_at=None):
         self.phraser_key = phraser_key
         self.collar = collar
         self.model_name = model_name
@@ -54,7 +55,7 @@ class Metadata:
         self.tags = tags
         self.created_at = created_at
         self.deleted_at = deleted_at
-        self.to_vector_version = to_vector_version
+        self.accessed_at = accessed_at
         self._store = None
         self._phraser_object = None
         self._phraser_object_loaded = False
@@ -131,24 +132,36 @@ class Metadata:
 
     def mark_deleted(self):
         '''Return a tombstoned copy.'''
-        metadata = Metadata(phraser_key=self.phraser_key, collar=self.collar,
-            model_name=self.model_name, output_type=self.output_type,
-            layer=self.layer, storage_status='deleted',
-            shard_id=self.shard_id, dataset_path=self.dataset_path,
-            shape=self.shape, dtype=self.dtype, tags=self.tags,
+        metadata = EchoframeMetadata(phraser_key=self.phraser_key,
+            collar=self.collar, model_name=self.model_name,
+            output_type=self.output_type, layer=self.layer,
+            storage_status='deleted', shard_id=self.shard_id,
+            dataset_path=self.dataset_path, shape=self.shape,
+            dtype=self.dtype, tags=self.tags,
             created_at=self.created_at, deleted_at=utc_now(),
-            to_vector_version=self.to_vector_version)
+            accessed_at=self.accessed_at)
         return metadata.bind_store(self._store)
 
     def with_tags(self, tags):
         '''Return a copy with updated tags.'''
-        metadata = Metadata(phraser_key=self.phraser_key, collar=self.collar,
-            model_name=self.model_name, output_type=self.output_type,
-            layer=self.layer, storage_status=self.storage_status,
-            shard_id=self.shard_id, dataset_path=self.dataset_path,
-            shape=self.shape, dtype=self.dtype, tags=tags,
-            created_at=self.created_at, deleted_at=self.deleted_at,
-            to_vector_version=self.to_vector_version)
+        metadata = EchoframeMetadata(phraser_key=self.phraser_key,
+            collar=self.collar, model_name=self.model_name,
+            output_type=self.output_type, layer=self.layer,
+            storage_status=self.storage_status, shard_id=self.shard_id,
+            dataset_path=self.dataset_path, shape=self.shape,
+            dtype=self.dtype, tags=tags, created_at=self.created_at,
+            deleted_at=self.deleted_at, accessed_at=self.accessed_at)
+        return metadata.bind_store(self._store)
+
+    def with_accessed_at(self, timestamp):
+        '''Return a copy with updated accessed_at.'''
+        metadata = EchoframeMetadata(phraser_key=self.phraser_key,
+            collar=self.collar, model_name=self.model_name,
+            output_type=self.output_type, layer=self.layer,
+            storage_status=self.storage_status, shard_id=self.shard_id,
+            dataset_path=self.dataset_path, shape=self.shape,
+            dtype=self.dtype, tags=self.tags, created_at=self.created_at,
+            deleted_at=self.deleted_at, accessed_at=timestamp)
         return metadata.bind_store(self._store)
 
     def _display_dict(self):
@@ -173,8 +186,8 @@ class Metadata:
             data['created_at'] = self.created_at
         if self.deleted_at is not None:
             data['deleted_at'] = self.deleted_at
-        if self.to_vector_version is not None:
-            data['to_vector_version'] = self.to_vector_version
+        if self.accessed_at is not None:
+            data['accessed_at'] = self.accessed_at
         return data
 
     def to_dict(self):
@@ -187,7 +200,7 @@ class Metadata:
             'shape': self.shape, 'dtype': self.dtype, 'tags': self.tags,
             'created_at': self.created_at,
             'deleted_at': self.deleted_at,
-            'to_vector_version': self.to_vector_version}
+            'accessed_at': self.accessed_at}
 
     @property
     def phraser_object(self):

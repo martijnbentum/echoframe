@@ -1,11 +1,12 @@
 '''Public store facade for echoframe.'''
 
-import importlib
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import compaction
 from .index import LmdbIndex
-from .metadata import Metadata
+from .metadata import EchoframeMetadata, utc_now
 from .output_storage import Hdf5ShardStore
 
 
@@ -17,16 +18,6 @@ def _load_phraser_models():
             'phraser is required to find entries by label'
         ) from exc
     return models
-
-
-def _load_to_vector_version():
-    try:
-        module = importlib.import_module('to_vector')
-    except ImportError:
-        return None
-    return getattr(module, '__version__', None)
-
-
 class Store:
     '''Link phraser keys to stored model outputs.'''
 
@@ -65,10 +56,9 @@ class Store:
         data:                 payload to store
         tags:                 optional grouping labels
         '''
-        metadata = Metadata(phraser_key=phraser_key,
+        metadata = EchoframeMetadata(phraser_key=phraser_key,
             collar=collar, model_name=model_name,
-            output_type=output_type, layer=layer, tags=tags,
-            to_vector_version=_load_to_vector_version())
+            output_type=output_type, layer=layer, tags=tags)
         stored = self.storage.store(metadata, data=data)
         return self._bind_metadata(self.index.upsert(stored))
 
@@ -78,11 +68,10 @@ class Store:
         '''
         prepared = []
         for item in items:
-            metadata = Metadata(phraser_key=item['phraser_key'],
+            metadata = EchoframeMetadata(phraser_key=item['phraser_key'],
                 collar=item['collar'], model_name=item['model_name'],
                 output_type=item['output_type'], layer=item['layer'],
-                tags=item.get('tags'),
-                to_vector_version=_load_to_vector_version())
+                tags=item.get('tags'))
             prepared.append({
                 'metadata': metadata,
                 'data': item['data'],
@@ -139,6 +128,12 @@ class Store:
             output_type=output_type, layer=layer,
             match=match) is not None
 
+    def _touch_accessed_at(self, metadata):
+        '''Update accessed_at on a metadata record and persist to index.'''
+        updated = metadata.with_accessed_at(utc_now())
+        self.index.upsert(updated)
+        return updated
+
     def load(self, phraser_key, collar, model_name, output_type, layer,
         match='exact'):
         '''Load one stored output payload.
@@ -154,6 +149,7 @@ class Store:
             output_type=output_type, layer=layer, match=match)
         if metadata is None:
             raise ValueError('no stored output matched the requested criteria')
+        self._touch_accessed_at(metadata)
         return self.storage.load(metadata)
 
     def metadata_to_payload(self, metadata):
@@ -169,8 +165,14 @@ class Store:
         '''
         metadata_list = self.find_many(queries)
         if not strict:
-            return [None if metadata is None else self.storage.load(metadata)
-                for metadata in metadata_list]
+            payloads = []
+            for metadata in metadata_list:
+                if metadata is None:
+                    payloads.append(None)
+                else:
+                    self._touch_accessed_at(metadata)
+                    payloads.append(self.storage.load(metadata))
+            return payloads
 
         payloads = []
         for metadata in metadata_list:
@@ -178,6 +180,7 @@ class Store:
                 raise ValueError(
                     'no stored output matched one of the requested queries'
                 )
+            self._touch_accessed_at(metadata)
             payloads.append(self.storage.load(metadata))
         return payloads
 
@@ -435,6 +438,51 @@ class Store:
             collar=collar, model_name=model_name,
             output_type=output_type, layer=layer, data=data, tags=tags)
         return metadata, True
+
+    def _storage_bytes(self):
+        '''Return total bytes used by shard files.'''
+        shards_root = self.root / 'shards'
+        if not shards_root.exists():
+            return 0
+        return sum(f.stat().st_size for f in shards_root.rglob('*')
+            if f.is_file())
+
+    def evict_by_recency(self):
+        '''Soft-delete entries older than the recency window until under budget.
+
+        Reads ECHOFRAME_RECENCY_WINDOW_DAYS (default 30) and
+        ECHOFRAME_STORAGE_BUDGET_GB (default no limit) from the environment.
+        Entries without accessed_at are skipped. Oldest entries are deleted
+        first until storage is within the budget.
+        '''
+        window_days = int(os.environ.get('ECHOFRAME_RECENCY_WINDOW_DAYS', 30))
+        budget_gb = os.environ.get('ECHOFRAME_STORAGE_BUDGET_GB')
+        budget_bytes = float(budget_gb) * 1_000_000_000 if budget_gb else None
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+        if budget_bytes is not None and self._storage_bytes() <= budget_bytes:
+            return []
+
+        entries = self.list_entries()
+        stale = []
+        for metadata in entries:
+            if metadata.accessed_at is None:
+                continue
+            accessed = datetime.fromisoformat(metadata.accessed_at)
+            if accessed < cutoff:
+                stale.append(metadata)
+
+        stale.sort(key=lambda m: m.accessed_at)
+
+        evicted = []
+        for metadata in stale:
+            if budget_bytes is not None and self._storage_bytes() <= budget_bytes:
+                break
+            self.storage.delete(metadata)
+            self.index.delete(metadata)
+            evicted.append(metadata)
+        return evicted
 
     def verify_integrity(self):
         '''Verify that live metadata records point to existing datasets.'''

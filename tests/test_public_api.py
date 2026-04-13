@@ -12,7 +12,7 @@ from unittest import mock
 
 import echoframe
 from echoframe.index import LmdbIndex
-from echoframe.metadata import Metadata
+from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore, sanitize_name
 from echoframe.store import Store
 
@@ -189,7 +189,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_public_exports(self) -> None:
         self.assertIn('Store', echoframe.__all__)
-        self.assertIn('Metadata', echoframe.__all__)
+        self.assertIn('EchoframeMetadata', echoframe.__all__)
         self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)
@@ -198,23 +198,20 @@ class EchoFrameTests(unittest.TestCase):
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            fake_to_vector = types.SimpleNamespace(__version__='abc123')
-            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
-                metadata = store.put(
-                    phraser_key='phrase-1',
-                    collar=120,
-                    model_name='wav2vec2',
-                    output_type='hidden_state',
-                    layer=7,
-                    data=[[1.0, 2.0], [3.0, 4.0]],
-                    tags=['exp-a'],
-                )
+            metadata = store.put(
+                phraser_key='phrase-1',
+                collar=120,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=7,
+                data=[[1.0, 2.0], [3.0, 4.0]],
+                tags=['exp-a'],
+            )
 
             self.assertEqual(metadata.phraser_key, 'phrase-1')
             self.assertEqual(metadata.layer, 7)
             self.assertEqual(metadata.shard_id, 'wav2vec2_hidden_state_0001')
             self.assertEqual(metadata.tags, ['exp-a'])
-            self.assertEqual(metadata.to_vector_version, 'abc123')
             self.assertTrue(store.exists(
                 phraser_key='phrase-1',
                 collar=120,
@@ -506,70 +503,64 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
             calls: list[str] = []
-            fake_to_vector = types.SimpleNamespace(__version__='tv-1')
 
             def compute() -> list[int]:
                 calls.append('compute')
                 return [1, 2, 3]
 
-            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
-                metadata, created = store.find_or_compute(
-                    phraser_key='phone-1',
-                    collar=50,
-                    model_name='encodec',
-                    output_type='codebook_indices',
-                    layer=1,
-                    compute=compute,
-                )
-                again, created_again = store.find_or_compute(
-                    phraser_key='phone-1',
-                    collar=50,
-                    model_name='encodec',
-                    output_type='codebook_indices',
-                    layer=1,
-                    compute=compute,
-                )
+            metadata, created = store.find_or_compute(
+                phraser_key='phone-1',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+            )
+            again, created_again = store.find_or_compute(
+                phraser_key='phone-1',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+            )
 
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(calls, ['compute'])
-            self.assertEqual(metadata.to_vector_version, 'tv-1')
 
     def test_find_or_compute_can_add_tags_on_hit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            fake_to_vector = types.SimpleNamespace(__version__='tv-2')
 
             def compute() -> list[int]:
                 return [1, 2, 3]
 
-            with mock.patch.dict(sys.modules, {'to_vector': fake_to_vector}):
-                metadata, created = store.find_or_compute(
-                    phraser_key='phone-2',
-                    collar=50,
-                    model_name='encodec',
-                    output_type='codebook_indices',
-                    layer=1,
-                    compute=compute,
-                    tags=['exp-a'],
-                )
-                again, created_again = store.find_or_compute(
-                    phraser_key='phone-2',
-                    collar=50,
-                    model_name='encodec',
-                    output_type='codebook_indices',
-                    layer=1,
-                    compute=compute,
-                    tags=['exp-b'],
-                    add_tags_on_hit=True,
-                )
+            metadata, created = store.find_or_compute(
+                phraser_key='phone-2',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+                tags=['exp-a'],
+            )
+            again, created_again = store.find_or_compute(
+                phraser_key='phone-2',
+                collar=50,
+                model_name='encodec',
+                output_type='codebook_indices',
+                layer=1,
+                compute=compute,
+                tags=['exp-b'],
+                add_tags_on_hit=True,
+            )
 
             self.assertTrue(created)
             self.assertFalse(created_again)
             self.assertEqual(metadata.entry_id, again.entry_id)
             self.assertEqual(again.tags, ['exp-a', 'exp-b'])
-            self.assertEqual(metadata.to_vector_version, 'tv-2')
 
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -701,7 +692,7 @@ class EchoFrameTests(unittest.TestCase):
 
     def test_invalid_tags_raise_value_error(self) -> None:
         with self.assertRaises(ValueError):
-            Metadata(
+            EchoframeMetadata(
                 phraser_key='phrase-1',
                 collar=10,
                 model_name='wav2vec2',
@@ -710,7 +701,7 @@ class EchoFrameTests(unittest.TestCase):
                 tags=['bad:tag'],
             )
         with self.assertRaises(ValueError):
-            Metadata(
+            EchoframeMetadata(
                 phraser_key='phrase-1',
                 collar=10,
                 model_name='wav2vec2',
@@ -719,7 +710,7 @@ class EchoFrameTests(unittest.TestCase):
                 tags=['   '],
             )
         with self.assertRaises(ValueError):
-            Metadata(
+            EchoframeMetadata(
                 phraser_key='phrase-1',
                 collar=10,
                 model_name='wav2vec2',
@@ -1066,7 +1057,7 @@ class EchoFrameTests(unittest.TestCase):
             self.assertIn('ok', overview_with_integrity['integrity'])
 
     def test_metadata_helpers(self) -> None:
-        metadata = Metadata(
+        metadata = EchoframeMetadata(
             phraser_key='phrase-1',
             collar=120,
             model_name='wav2vec2',
@@ -1077,7 +1068,6 @@ class EchoFrameTests(unittest.TestCase):
             shape=[2, 3],
             dtype='float32',
             tags=[' b ', 'a', 'a'],
-            to_vector_version='abc123',
         )
 
         self.assertEqual(metadata.identity_key,
@@ -1126,11 +1116,10 @@ class EchoFrameTests(unittest.TestCase):
                 " 'dtype': 'float32',\n"
                 " 'tags': ['a', 'b'],\n"
                 " 'phraser_object': \"PhraserObject(label='hello')\",\n"
-                f" 'created_at': '{metadata.created_at}',\n"
-                " 'to_vector_version': 'abc123'}")
+                f" 'created_at': '{metadata.created_at}'}}")
         self.assertEqual(fake_models.cache.load.call_count, 1)
 
-        restored = Metadata.from_dict(metadata.to_dict())
+        restored = EchoframeMetadata.from_dict(metadata.to_dict())
         self.assertEqual(restored.to_dict(), metadata.to_dict())
 
         updated = metadata.with_tags(['z', 'a'])
@@ -1184,7 +1173,7 @@ class EchoFrameTests(unittest.TestCase):
                 Path(tmpdir),
                 h5_module=FakeH5Module(),
             )
-            metadata = Metadata(
+            metadata = EchoframeMetadata(
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='model name',
@@ -1591,7 +1580,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
             )
 
-            duplicated = Metadata(
+            duplicated = EchoframeMetadata(
                 phraser_key=metadata.phraser_key,
                 collar=metadata.collar,
                 model_name=metadata.model_name,
@@ -1605,7 +1594,6 @@ class EchoFrameTests(unittest.TestCase):
                 tags=metadata.tags,
                 created_at=metadata.created_at,
                 deleted_at=metadata.deleted_at,
-                to_vector_version=metadata.to_vector_version,
             )
             store.index.upsert(duplicated)
             with store.index.env.begin(write=True) as txn:

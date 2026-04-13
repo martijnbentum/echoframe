@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from . import compaction, lmdb_helper
-from .metadata import Metadata, normalize_tags, utc_now
+from .metadata import EchoframeMetadata, normalize_tags, utc_now
 
 
 class LmdbIndex:
@@ -54,12 +54,12 @@ class LmdbIndex:
     def get(self, entry_id):
         '''Load one metadata record by entry id.'''
         return lmdb_helper.get_metadata(self.env, self.entries_db,
-            Metadata, entry_id)
+            EchoframeMetadata, entry_id)
 
     def get_many(self, entry_ids):
         '''Load multiple metadata records by entry id.'''
         return lmdb_helper.get_many_metadata(self.env, self.entries_db,
-            Metadata, entry_ids)
+            EchoframeMetadata, entry_ids)
 
     def find(self, phraser_key, model_name=None, output_type=None,
         layer=None, include_deleted=False):
@@ -101,7 +101,7 @@ class LmdbIndex:
     def list_entries(self, include_deleted=False):
         '''List metadata records across the full entries store.'''
         return lmdb_helper.list_metadata(self.env, self.entries_db,
-            Metadata, include_deleted=include_deleted)
+            EchoframeMetadata, include_deleted=include_deleted)
 
     def list_shards(self):
         '''List shard identifiers present in the shard index.'''
@@ -305,7 +305,7 @@ class LmdbIndex:
 
     def _list_entries_in_txn(self, txn, include_deleted=False):
         return lmdb_helper.list_metadata_in_txn(txn, self.entries_db,
-            Metadata, include_deleted=include_deleted)
+            EchoframeMetadata, include_deleted=include_deleted)
 
     def _update_tags_many(self, entry_ids, tags, mode):
         if not entry_ids:
@@ -366,7 +366,7 @@ class LmdbIndex:
 
     def _get_in_txn(self, txn, entry_id):
         return lmdb_helper.get_metadata_in_txn(txn, self.entries_db,
-            Metadata, entry_id)
+            EchoframeMetadata, entry_id)
 
     def _shard_file_size(self, txn, shard_id):
         if self.shards_root is None:

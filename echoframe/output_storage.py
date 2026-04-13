@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 from .metadata import utc_now
-from .metadata import Metadata
+from .metadata import EchoframeMetadata
 
 
 def sanitize_name(value):
@@ -62,14 +62,13 @@ class Hdf5ShardStore:
             dtype = getattr(dataset, 'dtype', None)
             if dtype is None: dtype = getattr(data, 'dtype', 'unknown')
             dtype = str(dtype)
-        return Metadata(phraser_key=metadata.phraser_key,
+        return EchoframeMetadata(phraser_key=metadata.phraser_key,
             collar=metadata.collar, model_name=metadata.model_name,
             output_type=metadata.output_type, layer=metadata.layer,
             storage_status=metadata.storage_status, shard_id=shard_id,
             dataset_path=dataset_path, shape=shape, dtype=dtype,
             tags=metadata.tags, created_at=metadata.created_at,
-            deleted_at=metadata.deleted_at,
-            to_vector_version=metadata.to_vector_version)
+            deleted_at=metadata.deleted_at)
 
     def load(self, metadata):
         '''Load stored payload data.'''
@@ -121,7 +120,7 @@ class Hdf5ShardStore:
                         del group[metadata.entry_id]
                     created = group.create_dataset(metadata.entry_id,
                         data=dataset)
-                    updated.append(Metadata(
+                    updated.append(EchoframeMetadata(
                         phraser_key=metadata.phraser_key,
                         collar=metadata.collar,
                         model_name=metadata.model_name,
@@ -135,7 +134,7 @@ class Hdf5ShardStore:
                         tags=metadata.tags,
                         created_at=metadata.created_at,
                         deleted_at=metadata.deleted_at,
-                        to_vector_version=metadata.to_vector_version,
+                        accessed_at=metadata.accessed_at,
                     ))
 
         if delete_source:

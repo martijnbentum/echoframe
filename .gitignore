@@ -9,3 +9,4 @@ __pycache__/
 echoframe_logs/
 .build/
 echoframe.egg-info/
+uv.lock

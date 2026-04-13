@@ -8,3 +8,4 @@ __pycache__/
 *.swo
 echoframe_logs/
 .build/
+echoframe.egg-info/

@@ -35,9 +35,7 @@ class Embeddings:
             layers_axis = self.dims.index('layers')
             if len(self.layers) != self.data.shape[layers_axis]:
                 message = f'len(layers)={len(self.layers)} does not match '
-                message += (
-                    f'layers axis size={self.data.shape[layers_axis]}'
-                )
+                message += f'layers axis size={self.data.shape[layers_axis]}'
                 raise ValueError(message)
 
     @property

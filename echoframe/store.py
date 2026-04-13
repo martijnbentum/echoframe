@@ -10,14 +10,6 @@ from .metadata import EchoframeMetadata, utc_now
 from .output_storage import Hdf5ShardStore
 
 
-def _load_phraser_models():
-    try:
-        from phraser import models
-    except ImportError as exc:
-        raise ImportError(
-            'phraser is required to find entries by label'
-        ) from exc
-    return models
 class Store:
     '''Link phraser keys to stored model outputs.'''
 
@@ -555,3 +547,13 @@ class Store:
     def _run_compaction_plan(self, plan, from_journal=False):
         return compaction.run_compaction_plan(self.index, self.storage,
             plan, from_journal=from_journal)
+
+
+def _load_phraser_models():
+    try:
+        from phraser import models
+    except ImportError as exc:
+        raise ImportError(
+            'phraser is required to find entries by label'
+        ) from exc
+    return models

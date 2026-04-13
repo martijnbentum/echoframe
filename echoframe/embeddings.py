@@ -22,10 +22,8 @@ class Embeddings:
 
     def __post_init__(self):
         if len(self.dims) != self.data.ndim:
-            message = (
-                f'len(dims)={len(self.dims)} must equal '
-                f'data.ndim={self.data.ndim}'
-            )
+            message = f'len(dims)={len(self.dims)} must equal '
+            message += f'data.ndim={self.data.ndim}'
             raise ValueError(message)
         if 'layers' in self.dims and self.layers is None:
             message = "'layers' in dims but layers is None"
@@ -36,8 +34,8 @@ class Embeddings:
         if self.layers is not None:
             layers_axis = self.dims.index('layers')
             if len(self.layers) != self.data.shape[layers_axis]:
-                message = (
-                    f'len(layers)={len(self.layers)} does not match '
+                message = f'len(layers)={len(self.layers)} does not match '
+                message += (
                     f'layers axis size={self.data.shape[layers_axis]}'
                 )
                 raise ValueError(message)

@@ -42,6 +42,16 @@ class TestEmbeddingsInit(unittest.TestCase):
         emb = _make((8,), ('embed_dim',))
         self.assertEqual(emb.shape, (8,))
 
+    def test_repr_hides_array_preview(self):
+        data = np.arange(6).reshape(2, 3)
+        emb = Embeddings(data=data, dims=('frames', 'embed_dim'))
+        text = repr(emb)
+        self.assertEqual(text,
+            "Embeddings(shape=(2, 3), dims=('frames', 'embed_dim'), "
+            'layers=None)')
+        self.assertNotIn('data=', text)
+        self.assertNotIn('array(', text)
+
 
 class TestEmbeddingsLayer(unittest.TestCase):
     def setUp(self):

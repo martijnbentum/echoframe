@@ -43,6 +43,11 @@ class Embeddings:
         '''Delegate shape to underlying array.'''
         return self.data.shape
 
+    def __repr__(self):
+        text = f'Embeddings(shape={self.shape}, dims={self.dims}'
+        text += f', layers={self.layers})'
+        return text
+
     def layer(self, n):
         '''Return a new Embeddings with only layer n (looked up by value).
         n:    layer index value (not position)
@@ -55,8 +60,7 @@ class Embeddings:
         layers_axis = self.dims.index('layers')
         new_data = np.take(self.data, pos, axis=layers_axis)
         new_dims = tuple(d for d in self.dims if d != 'layers')
-        return Embeddings(data=new_data, dims=new_dims,
-            layers=None)
+        return Embeddings(data=new_data, dims=new_dims, layers=None)
 
     @staticmethod
     def concat(items, axis):

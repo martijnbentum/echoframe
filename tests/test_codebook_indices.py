@@ -226,10 +226,10 @@ class TestCodebookLoading(unittest.TestCase):
             'matrix-entry': np.array([[1.0, 2.0], [3.0, 4.0]]),
         })
         obj = Codebook(
-            echoframe_keys=('indices-entry',),
+            echoframe_key='indices-entry',
             data=np.array([[0, 1], [1, 0]]),
             model_architecture='wav2vec2',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
         first = obj.codebook_matrix
@@ -245,10 +245,10 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             'matrix-entry': np.array([[1.0, 2.0], [3.0, 4.0]]),
         })
         obj = Codebook(
-            echoframe_keys=('indices-entry',),
+            echoframe_key='indices-entry',
             data=np.array([[0, 1], [1, 0]]),
             model_architecture='wav2vec2',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
         vectors = obj.to_codevectors()
@@ -267,13 +267,13 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             ]),
         })
         obj = Codebook(
-            echoframe_keys=('indices-entry',),
+            echoframe_key='indices-entry',
             data=np.array([
                 [1, 0],
                 [0, 1],
             ]),
             model_architecture='spidr',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
         vectors = obj.to_codevectors()
@@ -297,10 +297,10 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             ]),
         })
         obj = Codebook(
-            echoframe_keys=('indices-entry',),
+            echoframe_key='indices-entry',
             data=np.array([1, 0]),
             model_architecture='spidr',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
         vectors = obj.to_codevectors()
@@ -311,26 +311,53 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             [5.0, 6.0],
         ]))
 
+    def test_to_numpy_returns_normalized_indices(self):
+        obj = Codebook(echoframe_key='indices-entry',
+            data=[(0, 1), (1, 0)], model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry')
+
+        result = obj.to_numpy()
+
+        np.testing.assert_array_equal(result, np.array([
+            [0, 1],
+            [1, 0],
+        ]))
+
 
 class TestTokenCodebooks(unittest.TestCase):
     def test_token_collection_tracks_shared_architecture(self):
         first = Codebook(
-            echoframe_keys=('indices-entry-1',),
+            echoframe_key='indices-entry-1',
             data=np.array([[0, 1]]),
             model_architecture='wav2vec2',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         )
         second = Codebook(
-            echoframe_keys=('indices-entry-2',),
+            echoframe_key='indices-entry-2',
             data=np.array([[1, 0]]),
             model_architecture='wav2vec2',
-            codebook_matrix_echoframe_keys=('matrix-entry',),
+            codebook_matrix_echoframe_key='matrix-entry',
         )
 
         result = TokenCodebooks(tokens=[first, second])
 
         self.assertEqual(result.token_count, 2)
         self.assertEqual(result.model_architecture, 'wav2vec2')
+
+    def test_to_numpy_stacks_uniform_tokens(self):
+        first = Codebook(echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]), model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry')
+        second = Codebook(echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]), model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry')
+
+        result = TokenCodebooks(tokens=[first, second]).to_numpy()
+
+        np.testing.assert_array_equal(result, np.array([
+            [[0, 1]],
+            [[1, 0]],
+        ]))
 
 
 if __name__ == '__main__':

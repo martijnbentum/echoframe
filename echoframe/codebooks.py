@@ -9,13 +9,9 @@ from typing import Any
 import numpy as np
 
 
-def _validate_keys(keys, field_name):
-    if not isinstance(keys, tuple) or not keys:
-        raise ValueError(f'{field_name} must be a non-empty tuple')
-    for key in keys:
-        if not isinstance(key, str) or not key:
-            raise ValueError(
-                f'every element of {field_name} must be a non-empty string')
+def _validate_key(key, field_name):
+    if not isinstance(key, str) or not key:
+        raise ValueError(f'{field_name} must be a non-empty string')
 
 
 def _normalize_wav2vec2_indices(indices):
@@ -45,10 +41,10 @@ def _normalize_spidr_indices(indices):
 class Codebook:
     '''Immutable container for one token of codebook indices.'''
 
-    echoframe_keys: tuple[str, ...]
+    echoframe_key: str
     data: Any
     model_architecture: str
-    codebook_matrix_echoframe_keys: tuple[str, ...]
+    codebook_matrix_echoframe_key: str
     store: Any = field(default=None, repr=False, compare=False)
     _codebook_matrix: Any = field(default=None, init=False, repr=False,
         compare=False)
@@ -56,26 +52,13 @@ class Codebook:
         repr=False, compare=False)
 
     def __post_init__(self):
-        _validate_keys(self.echoframe_keys, 'echoframe_keys')
-        _validate_keys(self.codebook_matrix_echoframe_keys,
-            'codebook_matrix_echoframe_keys')
-        if len(self.echoframe_keys) != 1:
-            raise ValueError('echoframe_keys must contain exactly one key')
-        if len(self.codebook_matrix_echoframe_keys) != 1:
-            raise ValueError(
-                'codebook_matrix_echoframe_keys must contain exactly one key')
+        _validate_key(self.echoframe_key, 'echoframe_key')
+        _validate_key(self.codebook_matrix_echoframe_key,
+            'codebook_matrix_echoframe_key')
         if self.model_architecture not in {'spidr', 'wav2vec2'}:
             raise ValueError(
                 "model_architecture must be 'spidr' or 'wav2vec2'")
         self._normalized_indices()
-
-    @property
-    def echoframe_key(self) -> str:
-        return self.echoframe_keys[0]
-
-    @property
-    def codebook_matrix_echoframe_key(self) -> str:
-        return self.codebook_matrix_echoframe_keys[0]
 
     def bind_store(self, store):
         '''Attach a store for lazy linked-artifact loading.'''
@@ -102,6 +85,10 @@ class Codebook:
     def codebook_matrix(self):
         '''Load and cache the linked codebook matrix artifact.'''
         return self._load_codebook_matrix()
+
+    def to_numpy(self):
+        '''Return normalized codebook indices as a numpy array.'''
+        return self._normalized_indices()
 
     def to_codevectors(self):
         '''Reconstruct codevectors from the stored indices.'''
@@ -132,7 +119,7 @@ class Codebook:
         return np.asarray(codevectors)
 
     def __repr__(self):
-        shape = self._normalized_indices().shape
+        shape = self.to_numpy().shape
         text = 'Codebook('
         text += f'shape={shape}, '
         text += f'model_architecture={self.model_architecture!r})'
@@ -185,6 +172,16 @@ class TokenCodebooks:
     @property
     def model_architecture(self):
         return self.tokens[0].model_architecture
+
+    def to_numpy(self):
+        '''Return a stacked numpy array when token shapes are uniform.'''
+        arrays = [token.to_numpy() for token in self.tokens]
+        reference = arrays[0].shape
+        if any(array.shape != reference for array in arrays[1:]):
+            message = 'TokenCodebooks.to_numpy() requires identical token '
+            message += 'shapes'
+            raise NotImplementedError(message)
+        return np.stack(arrays, axis=0)
 
     def __repr__(self):
         text = 'TokenCodebooks('

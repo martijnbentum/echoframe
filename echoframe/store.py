@@ -8,6 +8,12 @@ from . import compaction
 from .index import LmdbIndex
 from .metadata import EchoframeMetadata, utc_now
 from .output_storage import Hdf5ShardStore
+from .typed_loaders import (
+    load_codebook as _load_codebook,
+    load_embeddings as _load_embeddings,
+    load_many_codebooks as _load_many_codebooks,
+    load_many_embeddings as _load_many_embeddings,
+)
 
 
 class Store:
@@ -159,6 +165,24 @@ class Store:
                 'no stored output matched the requested echoframe key')
         self._touch_accessed_at(metadata)
         return self.storage.load(metadata)
+
+    def load_embeddings(self, phraser_key, collar, model_name, layers,
+        frame_aggregation=None):
+        '''Load one typed Embeddings object.'''
+        return _load_embeddings(self, phraser_key, collar, model_name,
+            layers, frame_aggregation=frame_aggregation)
+
+    def load_many_embeddings(self, requests):
+        '''Load many typed Embeddings objects.'''
+        return _load_many_embeddings(self, requests)
+
+    def load_codebook(self, phraser_key, collar, model_name):
+        '''Load one typed Codebook object.'''
+        return _load_codebook(self, phraser_key, collar, model_name)
+
+    def load_many_codebooks(self, requests):
+        '''Load many typed Codebook objects.'''
+        return _load_many_codebooks(self, requests)
 
     def load_many(self, queries, strict=False):
         '''Load multiple stored output payloads.

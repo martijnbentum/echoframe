@@ -150,6 +150,22 @@ class TestGetEmbeddings(unittest.TestCase):
             np.testing.assert_array_equal(result.tokens[0].to_numpy(), data_1)
             np.testing.assert_array_equal(result.tokens[1].to_numpy(), data_2)
 
+    def test_batch_uses_typed_store_loader(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            data = np.arange(6).reshape(2, 3).astype(float)
+            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
+            segments = [_make_segment(key=b'\xaa\xbb')]
+
+            original = store.load_many_embeddings
+            with mock.patch.object(store, 'load_many_embeddings',
+                wraps=original) as patched:
+                result = get_embeddings_batch(segments, layers=4, collar=500,
+                    model_name='wav2vec2', store=store, model=None)
+
+            self.assertIsInstance(result, TokenEmbeddings)
+            patched.assert_called_once()
+
     def test_duration_clips_collared_window(self):
         tmpdir, store = _make_store()
         with tmpdir:
@@ -253,6 +269,23 @@ class TestGetCodebookIndices(unittest.TestCase):
                 indices_1)
             np.testing.assert_array_equal(result.tokens[1].to_numpy(),
                 indices_2)
+
+    def test_batch_uses_typed_codebook_loader(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            indices = np.array([[0, 1]])
+            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
+            segments = [_make_segment(key=b'\xaa\xbb')]
+
+            original = store.load_many_codebooks
+            with mock.patch.object(store, 'load_many_codebooks',
+                wraps=original) as patched:
+                result = get_codebook_indices_batch(segments, collar=500,
+                    model_name='wav2vec2', store=store, model=None)
+
+            self.assertIsInstance(result, TokenCodebooks)
+            patched.assert_called_once()
 
     def test_duration_clips_collared_window(self):
         tmpdir, store = _make_store()

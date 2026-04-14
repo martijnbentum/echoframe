@@ -72,7 +72,7 @@ def load_many_embeddings(store, requests):
     '''Load many embedding containers with deduped request identities.'''
     unique_requests = _dedupe_embedding_requests(requests)
     tokens = [load_embeddings(store, request.phraser_key, request.collar,
-        request.model_name, request.layers,
+        request.model_name, _request_layers(request),
         frame_aggregation=request.frame_aggregation)
         for request in unique_requests]
     return TokenEmbeddings(tokens=tokens)
@@ -130,6 +130,12 @@ def _dedupe_codebook_requests(requests):
         seen.add(canonical)
         unique.append(canonical)
     return unique
+
+
+def _request_layers(request):
+    if len(request.layers) == 1:
+        return request.layers[0]
+    return request.layers
 
 
 def _find_one(store, phraser_key, collar, model_name, output_type, layer):

@@ -50,16 +50,27 @@ def get_embeddings_batch(segments, layers, collar=500, model_name='wav2vec2',
     store_root='echoframe', gpu=False, tags=None):
     '''Return embeddings for multiple segment objects.'''
     segments = _require_segments(segments)
+    layers_list = _normalise_layers(layers)
     _validate_frame_aggregation(frame_aggregation)
     store = _resolve_store(store, store_root)
-    token_list = [
-        get_embeddings(segment, layers=layers, collar=collar,
-            model_name=model_name, frame_aggregation=frame_aggregation,
-            model=model, store=store, store_root=store_root, gpu=gpu,
-            tags=tags)
-        for segment in segments
-    ]
-    return echoframe.TokenEmbeddings(tokens=token_list)
+    requests = []
+    for segment in segments:
+        phraser_key, audio_filename, col_start_ms, col_end_ms, \
+            orig_start_ms, orig_end_ms = _segment_context(segment, collar)
+        if _embeddings_missing(store, phraser_key, collar, model_name,
+            layers_list):
+            compute_model = _require_loaded_model(model, 'embeddings')
+            _compute_and_store_embeddings(audio_filename, col_start_ms,
+                col_end_ms, orig_start_ms, orig_end_ms, collar, layers_list,
+                model_name, compute_model, phraser_key, store, gpu, tags)
+        requests.append({
+            'phraser_key': phraser_key,
+            'collar': collar,
+            'model_name': model_name,
+            'layers': layers,
+            'frame_aggregation': frame_aggregation,
+        })
+    return store.load_many_embeddings(requests)
 
 
 def get_codebook_indices(segment, collar=500, model_name='wav2vec2',
@@ -83,13 +94,22 @@ def get_codebook_indices_batch(segments, collar=500, model_name='wav2vec2',
     '''Return codebook indices for multiple segment objects.'''
     segments = _require_segments(segments)
     store = _resolve_store(store, store_root)
-    token_list = [
-        get_codebook_indices(segment, collar=collar, model_name=model_name,
-            model=model, store=store, store_root=store_root, gpu=gpu,
-            tags=tags)
-        for segment in segments
-    ]
-    return echoframe.TokenCodebooks(tokens=token_list)
+    requests = []
+    for segment in segments:
+        phraser_key, audio_filename, col_start_ms, col_end_ms, \
+            orig_start_ms, orig_end_ms = _segment_context(segment, collar)
+        if _codebook_artifacts_missing(store, phraser_key, collar,
+            model_name):
+            compute_model = _require_loaded_model(model, 'codebook indices')
+            _compute_and_store_codebook_indices(audio_filename, col_start_ms,
+                col_end_ms, orig_start_ms, orig_end_ms, collar, model_name,
+                compute_model, phraser_key, store, gpu, tags)
+        requests.append({
+            'phraser_key': phraser_key,
+            'collar': collar,
+            'model_name': model_name,
+        })
+    return store.load_many_codebooks(requests)
 
 
 def segment_to_echoframe_key(segment):

@@ -79,7 +79,6 @@ class Embeddings:
 
     def __repr__(self):
         text = 'Embeddings('
-        text += f'echoframe_keys={self.echoframe_keys!r}, '
         text += f'shape={self.shape}, dims={self.dims}, '
         text += f'layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
@@ -183,7 +182,6 @@ class TokenEmbeddings:
     def __repr__(self):
         text = 'TokenEmbeddings('
         text += f'token_count={self.token_count}, '
-        text += f'echoframe_keys={self.echoframe_keys}, '
         text += f'dims={self.dims}, layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
         return text

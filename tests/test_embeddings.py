@@ -12,7 +12,11 @@ def _make(shape, dims, layers=None, echoframe_key='token-1',
         frame_aggregation=None, data=None):
     if data is None:
         data = np.zeros(shape)
-    return Embeddings(echoframe_key=echoframe_key, data=data, dims=dims,
+    if layers is not None and 'layers' in dims:
+        echoframe_keys = tuple(echoframe_key for _ in layers)
+    else:
+        echoframe_keys = (echoframe_key,)
+    return Embeddings(echoframe_keys=echoframe_keys, data=data, dims=dims,
         layers=layers, frame_aggregation=frame_aggregation)
 
 
@@ -28,7 +32,7 @@ class TestEmbeddingsInit(unittest.TestCase):
             Embeddings(data=np.zeros((8,)), dims=('embed_dim',))
 
     def test_raises_if_echoframe_key_empty(self):
-        with self.assertRaisesRegex(ValueError, 'echoframe_key'):
+        with self.assertRaisesRegex(ValueError, 'echoframe_keys'):
             _make((8,), ('embed_dim',), echoframe_key='')
 
     def test_raises_if_dims_length_mismatch(self):
@@ -81,10 +85,10 @@ class TestEmbeddingsInit(unittest.TestCase):
 
     def test_repr_hides_array_preview(self):
         data = np.arange(6).reshape(2, 3)
-        emb = Embeddings(echoframe_key='token-1', data=data,
+        emb = Embeddings(echoframe_keys=('token-1',), data=data,
             dims=('frames', 'embed_dim'))
         text = repr(emb)
-        self.assertIn("echoframe_key='token-1'", text)
+        self.assertIn("echoframe_keys=('token-1',)", text)
         self.assertIn("shape=(2, 3)", text)
         self.assertIn("dims=('frames', 'embed_dim')", text)
         self.assertIn('frame_aggregation=None', text)
@@ -93,7 +97,7 @@ class TestEmbeddingsInit(unittest.TestCase):
 
     def test_to_numpy_returns_original_array(self):
         data = np.arange(6).reshape(2, 3)
-        emb = Embeddings(echoframe_key='token-1', data=data,
+        emb = Embeddings(echoframe_keys=('token-1',), data=data,
             dims=('frames', 'embed_dim'))
         result = emb.to_numpy()
         self.assertIs(result, data)
@@ -114,15 +118,16 @@ class TestEmbeddingsLayer(unittest.TestCase):
 
     def test_layer_correct_data(self):
         data = np.arange(3 * 5 * 8).reshape(3, 5, 8).astype(float)
-        emb = Embeddings(echoframe_key='token-1', data=data,
-            dims=('layers', 'frames', 'embed_dim'), layers=(3, 6, 12))
+        emb = Embeddings(echoframe_keys=('token-1', 'token-1', 'token-1'),
+            data=data, dims=('layers', 'frames', 'embed_dim'),
+            layers=(3, 6, 12))
         result = emb.layer(3)
         np.testing.assert_array_equal(result.data, data[0])
 
     def test_layer_preserves_frame_aggregation(self):
         data = np.arange(3 * 8).reshape(3, 8).astype(float)
-        emb = Embeddings(echoframe_key='token-1', data=data,
-            dims=('layers', 'embed_dim'), layers=(3, 6, 12),
+        emb = Embeddings(echoframe_keys=('token-1', 'token-1', 'token-1'),
+            data=data, dims=('layers', 'embed_dim'), layers=(3, 6, 12),
             frame_aggregation='mean')
         result = emb.layer(6)
         self.assertEqual(result.dims, ('embed_dim',))

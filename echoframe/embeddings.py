@@ -12,22 +12,26 @@ import numpy as np
 @dataclass(frozen=True)
 class Embeddings:
     '''Immutable named array container for embedding outputs.
-    echoframe_key:  echoframe metadata identifier for this token
+    echoframe_keys:  echoframe metadata identifiers for this token
     data:    raw embedding array
     dims:    axis labels; length must equal data.ndim
     layers:  layer indices when 'layers' is in dims; None otherwise
     frame_aggregation:  aggregation over frames, or None if frames remain
     '''
 
-    echoframe_key: str
+    echoframe_keys: tuple[str, ...]
     data: np.ndarray
     dims: tuple
     layers: Optional[tuple] = None
     frame_aggregation: Optional[str] = None
 
     def __post_init__(self):
-        if not isinstance(self.echoframe_key, str) or not self.echoframe_key:
-            raise ValueError('echoframe_key must be a non-empty string')
+        if not isinstance(self.echoframe_keys, tuple) or not self.echoframe_keys:
+            raise ValueError('echoframe_keys must be a non-empty tuple')
+        for k in self.echoframe_keys:
+            if not isinstance(k, str) or not k:
+                raise ValueError(
+                    'every element of echoframe_keys must be a non-empty string')
         if len(self.dims) != self.data.ndim:
             message = f'dims length mismatch: len(dims)={len(self.dims)} '
             message += f'data.ndim={self.data.ndim}'
@@ -45,6 +49,15 @@ class Embeddings:
                 message += f'{len(self.layers)} '
                 message += f'layers axis size={self.data.shape[layers_axis]}'
                 raise ValueError(message)
+        if 'layers' not in self.dims:
+            if len(self.echoframe_keys) != 1:
+                raise ValueError(
+                    'echoframe_keys must have length 1 when '
+                    "'layers' is not in dims")
+        else:
+            if len(self.echoframe_keys) != len(self.layers):
+                raise ValueError(
+                    'echoframe_keys length must equal number of layers')
         if self.frame_aggregation is not None:
             invalid = not isinstance(self.frame_aggregation, str)
             invalid = invalid or not self.frame_aggregation
@@ -56,17 +69,29 @@ class Embeddings:
                 "frame_aggregation must be None when 'frames' is in dims")
 
     @property
+    def echoframe_key(self) -> str:
+        return self.echoframe_keys[0]
+
+    @property
     def shape(self):
         '''Delegate shape to underlying array.'''
         return self.data.shape
 
     def __repr__(self):
         text = 'Embeddings('
-        text += f'echoframe_key={self.echoframe_key!r}, '
+        text += f'echoframe_keys={self.echoframe_keys!r}, '
         text += f'shape={self.shape}, dims={self.dims}, '
         text += f'layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
         return text
+
+    def key_for_layer(self, n: int) -> str:
+        if 'layers' not in self.dims:
+            raise ValueError("'layers' not in dims")
+        if n not in self.layers:
+            raise ValueError(f'layer {n} not in self.layers={self.layers}')
+        pos = self.layers.index(n)
+        return self.echoframe_keys[pos]
 
     def layer(self, n):
         '''Return a new Embeddings with only layer n (looked up by value).
@@ -80,8 +105,8 @@ class Embeddings:
         layers_axis = self.dims.index('layers')
         new_data = np.take(self.data, pos, axis=layers_axis)
         new_dims = tuple(d for d in self.dims if d != 'layers')
-        return Embeddings(echoframe_key=self.echoframe_key, data=new_data,
-            dims=new_dims, layers=None,
+        return Embeddings(echoframe_keys=(self.key_for_layer(n),),
+            data=new_data, dims=new_dims, layers=None,
             frame_aggregation=self.frame_aggregation)
 
     def to_numpy(self):

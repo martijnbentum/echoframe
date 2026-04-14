@@ -1,6 +1,6 @@
 '''Disk-backed storage for model outputs linked to phraser keys.'''
 
-from .embeddings import Embeddings
+from .embeddings import Embeddings, TokenEmbeddings
 from .metadata import (
     EchoframeMetadata,
     OUTPUT_TYPES,
@@ -10,6 +10,7 @@ from .store import Store
 
 __all__ = [
     'Embeddings',
+    'TokenEmbeddings',
     'Store',
     'OUTPUT_TYPES',
     'EchoframeMetadata',

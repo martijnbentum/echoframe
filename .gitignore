@@ -10,3 +10,4 @@ echoframe_logs/
 .build/
 echoframe.egg-info/
 uv.lock
+docs/interview_workflow.md

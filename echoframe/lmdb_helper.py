@@ -15,14 +15,27 @@ DB_NAMES = {
     'compaction_db': b'compaction',
 }
 
+_ENV_CACHE = {}
+
 
 def open_env(path, map_size):
     import lmdb
 
     root = Path(path)
     root.mkdir(parents=True, exist_ok=True)
-    return lmdb.open(str(root), create=True, max_dbs=12,
+    resolved_root = root.resolve()
+    cached = _ENV_CACHE.get(resolved_root)
+    if cached is not None:
+        if cached['map_size'] != map_size:
+            message = 'LMDB environment is already open for '
+            message += f'{resolved_root} with map_size='
+            message += f"{cached['map_size']}; requested map_size={map_size}"
+            raise ValueError(message)
+        return cached['env']
+    env = lmdb.open(str(resolved_root), create=True, max_dbs=12,
         map_size=map_size, subdir=True)
+    _ENV_CACHE[resolved_root] = {'env': env, 'map_size': map_size}
+    return env
 
 
 def open_databases(env):

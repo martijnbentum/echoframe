@@ -2162,3 +2162,69 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]['journal_id'], journal['journal_id'])
             self.assertEqual(records[0]['status'], 'completed')
+
+    def test_repeated_store_construction_reuses_lmdb_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            second = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+
+            self.assertIs(first.index.env, second.index.env)
+
+            first.put(
+                phraser_key='phrase-cache-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[1.0, 2.0]],
+            )
+            self.assertEqual(self._payload_to_list(second.load(
+                phraser_key='phrase-cache-1',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )), [[1.0, 2.0]])
+
+            second.put(
+                phraser_key='phrase-cache-2',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+                data=[[3.0, 4.0]],
+            )
+            self.assertEqual(self._payload_to_list(first.load(
+                phraser_key='phrase-cache-2',
+                collar=100,
+                model_name='wav2vec2',
+                output_type='hidden_state',
+                layer=3,
+            )), [[3.0, 4.0]])
+
+    def test_equivalent_paths_reuse_the_same_lmdb_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            equivalent_root = root / '.'
+
+            first = Store(root, max_shard_size_bytes=1024 * 1024)
+            second = Store(equivalent_root, max_shard_size_bytes=1024 * 1024)
+
+            self.assertIs(first.index.env, second.index.env)
+
+    def test_different_roots_do_not_reuse_the_same_lmdb_env(self) -> None:
+        with tempfile.TemporaryDirectory() as first_tmpdir:
+            with tempfile.TemporaryDirectory() as second_tmpdir:
+                first = Store(first_tmpdir,
+                    max_shard_size_bytes=1024 * 1024)
+                second = Store(second_tmpdir,
+                    max_shard_size_bytes=1024 * 1024)
+
+                self.assertIsNot(first.index.env, second.index.env)
+
+    def test_same_root_with_different_map_size_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+
+            with self.assertRaisesRegex(ValueError, 'map_size'):
+                LmdbIndex(Path(tmpdir) / 'index.lmdb', map_size=2 << 30)

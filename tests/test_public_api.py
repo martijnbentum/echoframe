@@ -190,6 +190,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_public_exports(self) -> None:
         self.assertIn('Store', echoframe.__all__)
         self.assertIn('EchoframeMetadata', echoframe.__all__)
+        self.assertIn('Codebook', echoframe.__all__)
         self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)
@@ -513,7 +514,7 @@ class EchoFrameTests(unittest.TestCase):
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
-                layer=1,
+                layer=0,
                 compute=compute,
             )
             again, created_again = store.find_or_compute(
@@ -521,7 +522,7 @@ class EchoFrameTests(unittest.TestCase):
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
-                layer=1,
+                layer=0,
                 compute=compute,
             )
 
@@ -542,7 +543,7 @@ class EchoFrameTests(unittest.TestCase):
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
-                layer=1,
+                layer=0,
                 compute=compute,
                 tags=['exp-a'],
             )
@@ -551,7 +552,7 @@ class EchoFrameTests(unittest.TestCase):
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
-                layer=1,
+                layer=0,
                 compute=compute,
                 tags=['exp-b'],
                 add_tags_on_hit=True,
@@ -1951,7 +1952,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                     'collar': 80,
                     'model_name': 'encodec',
                     'output_type': 'codebook_indices',
-                    'layer': 1,
+                    'layer': 0,
                     'data': [1, 2, 3],
                     'tags': ['exp-a', 'run-1'],
                 },
@@ -1960,7 +1961,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                     'collar': 90,
                     'model_name': 'encodec',
                     'output_type': 'codebook_indices',
-                    'layer': 1,
+                    'layer': 0,
                     'data': [4, 5, 6],
                     'tags': ['exp-a', 'run-2'],
                 },
@@ -1969,7 +1970,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                     'collar': 90,
                     'model_name': 'encodec',
                     'output_type': 'codebook_indices',
-                    'layer': 1,
+                    'layer': 0,
                     'data': [7, 8, 9],
                     'tags': ['exp-b', 'run-2'],
                 },
@@ -1981,14 +1982,14 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                     'collar': 80,
                     'model_name': 'encodec',
                     'output_type': 'codebook_indices',
-                    'layer': 1,
+                    'layer': 0,
                 },
                 {
                     'phraser_key': 'phrase-11',
                     'collar': 95,
                     'model_name': 'encodec',
                     'output_type': 'codebook_indices',
-                    'layer': 1,
+                    'layer': 0,
                     'match': 'max',
                 },
             ])

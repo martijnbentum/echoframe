@@ -43,7 +43,8 @@ class Store:
         phraser_key:          unique phraser object key
         collar:               collar in milliseconds
         model_name:           model identifier
-        output_type:          hidden_state, attention, or codebook_indices
+        output_type:          hidden_state, attention, codebook_indices, or
+                              codebook_matrix
         layer:                model layer index
         data:                 payload to store
         tags:                 optional grouping labels
@@ -148,6 +149,15 @@ class Store:
         '''Load one stored output payload from echoframe metadata.
         metadata:    metadata record that points to a stored payload
         '''
+        return self.storage.load(metadata)
+
+    def load_with_echoframe_key(self, echoframe_key):
+        '''Load one stored payload by echoframe metadata key.'''
+        metadata = self.index.get(echoframe_key)
+        if metadata is None:
+            raise ValueError(
+                'no stored output matched the requested echoframe key')
+        self._touch_accessed_at(metadata)
         return self.storage.load(metadata)
 
     def load_many(self, queries, strict=False):

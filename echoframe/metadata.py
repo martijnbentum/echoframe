@@ -7,7 +7,13 @@ from pprint import pformat
 OUTPUT_TYPES = {
     'attention',
     'codebook_indices',
+    'codebook_matrix',
     'hidden_state',
+}
+
+CODEBOOK_OUTPUT_TYPES = {
+    'codebook_indices',
+    'codebook_matrix',
 }
 
 STABLE_METADATA_FIELDS = (
@@ -33,7 +39,8 @@ class EchoframeMetadata:
     phraser_key:          unique phraser object key
     collar:               collar in milliseconds
     model_name:           model identifier
-    output_type:          hidden_state, attention, or codebook_indices
+    output_type:          hidden_state, attention, codebook_indices, or
+                          codebook_matrix
     layer:                model layer index
     tags:                 optional grouping labels
     '''
@@ -73,6 +80,9 @@ class EchoframeMetadata:
             raise ValueError(message)
         if self.layer < 0:
             raise ValueError('layer must be >= 0')
+        if self.output_type in CODEBOOK_OUTPUT_TYPES and self.layer != 0:
+            raise ValueError(
+                'codebook output types require layer to be exactly 0')
         if self.storage_status not in {'live', 'deleted'}:
             message = "storage_status must be 'live' or 'deleted'"
             raise ValueError(message)

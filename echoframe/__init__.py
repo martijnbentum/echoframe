@@ -1,5 +1,6 @@
 '''Disk-backed storage for model outputs linked to phraser keys.'''
 
+from .codebooks import Codebook, TokenCodebooks
 from .embeddings import Embeddings, TokenEmbeddings
 from .metadata import (
     EchoframeMetadata,
@@ -10,6 +11,8 @@ from .store import Store
 
 __all__ = [
     'Embeddings',
+    'Codebook',
+    'TokenCodebooks',
     'TokenEmbeddings',
     'Store',
     'OUTPUT_TYPES',

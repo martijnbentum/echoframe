@@ -251,7 +251,7 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
-        vectors = obj.to_codevectors()
+        vectors = obj.codevectors
 
         np.testing.assert_array_equal(vectors, np.array([
             [1.0, 2.0, 3.0, 4.0],
@@ -276,7 +276,7 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
-        vectors = obj.to_codevectors()
+        vectors = obj.codevectors
 
         self.assertEqual(vectors.shape, (2, 2, 2))
         np.testing.assert_array_equal(vectors[0], np.array([
@@ -303,7 +303,7 @@ class TestCodebookVectorReconstruction(unittest.TestCase):
             codebook_matrix_echoframe_key='matrix-entry',
         ).bind_store(store)
 
-        vectors = obj.to_codevectors()
+        vectors = obj.codevectors
 
         self.assertEqual(vectors.shape, (1, 2, 2))
         np.testing.assert_array_equal(vectors[0], np.array([
@@ -357,6 +357,24 @@ class TestTokenCodebooks(unittest.TestCase):
         np.testing.assert_array_equal(result, np.array([
             [[0, 1]],
             [[1, 0]],
+        ]))
+
+    def test_codevectors_stacks_uniform_tokens(self):
+        store = CountingStore({
+            'matrix-entry': np.array([[1.0], [2.0]]),
+        })
+        first = Codebook(echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]), model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry').bind_store(store)
+        second = Codebook(echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]), model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry').bind_store(store)
+
+        result = TokenCodebooks(tokens=[first, second]).codevectors
+
+        np.testing.assert_array_equal(result, np.array([
+            [[1.0, 2.0]],
+            [[2.0, 1.0]],
         ]))
 
 

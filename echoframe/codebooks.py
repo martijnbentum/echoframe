@@ -90,7 +90,8 @@ class Codebook:
         '''Return normalized codebook indices as a numpy array.'''
         return self._normalized_indices()
 
-    def to_codevectors(self):
+    @property
+    def codevectors(self):
         '''Reconstruct codevectors from the stored indices.'''
         indices = self._normalized_indices()
         codebook_matrix = np.asarray(self.codebook_matrix)
@@ -179,6 +180,17 @@ class TokenCodebooks:
         reference = arrays[0].shape
         if any(array.shape != reference for array in arrays[1:]):
             message = 'TokenCodebooks.to_numpy() requires identical token '
+            message += 'shapes'
+            raise NotImplementedError(message)
+        return np.stack(arrays, axis=0)
+
+    @property
+    def codevectors(self):
+        '''Return stacked codevectors when token shapes are uniform.'''
+        arrays = [token.codevectors for token in self.tokens]
+        reference = arrays[0].shape
+        if any(array.shape != reference for array in arrays[1:]):
+            message = 'TokenCodebooks.codevectors requires identical token '
             message += 'shapes'
             raise NotImplementedError(message)
         return np.stack(arrays, axis=0)

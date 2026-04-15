@@ -1,0 +1,5 @@
+[
+    {"model_name": "bert-base-uncased"},
+    {"model_name": "wav2vec2-base"},
+    {"model_name": "hubert-base-ls960"}
+]

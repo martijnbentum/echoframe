@@ -7,6 +7,7 @@ from pathlib import Path
 from . import compaction
 from .index import LmdbIndex
 from .metadata import EchoframeMetadata, utc_now
+from .model_registry import ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .typed_loaders import (
     load_codebook as _load_codebook,
@@ -34,6 +35,7 @@ class Store:
             shards_root=shards_root)
         self.storage = storage or Hdf5ShardStore(shards_root,
             max_shard_size_bytes=max_shard_size_bytes)
+        self.registry = ModelRegistry(self.index.env)
 
     def _bind_metadata(self, metadata):
         if metadata is None:
@@ -42,6 +44,31 @@ class Store:
 
     def _bind_metadatas(self, metadata_list):
         return [self._bind_metadata(metadata) for metadata in metadata_list]
+
+    def register_model(self, model_name):
+        '''Register one model in the store registry.
+
+        model_name:   str model identifier
+        Returns a dict with model_name, model_id, and created_at.
+        Raises ValueError if model_name is already registered.
+        '''
+        return self.registry.register(model_name)
+
+    def import_model_seeds(self, path):
+        '''Import model definitions from a JSON seed file.
+
+        Validates the entire file before writing anything. Raises ValueError
+        if any model name already exists in the store.
+        Returns a list of stored record dicts.
+        '''
+        return self.registry.import_seeds(path)
+
+    def get_model_metadata(self, model_name):
+        '''Look up a model_metadata record by model name.
+
+        Returns a dict with model_name, model_id, and created_at, or None.
+        '''
+        return self.registry.get(model_name)
 
     def put(self, phraser_key, collar, model_name, output_type, layer,
         data, tags=None):

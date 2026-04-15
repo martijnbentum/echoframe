@@ -65,7 +65,7 @@ def load_embeddings(store, phraser_key, collar, model_name, layers,
         arrays.append(store.load_with_echoframe_key(metadata.entry_id))
         echoframe_keys.append(metadata.entry_id)
     return _build_embeddings(arrays, layers_list, single_layer,
-        frame_aggregation, tuple(echoframe_keys))
+        frame_aggregation, tuple(echoframe_keys), path=store.root)
 
 
 def load_many_embeddings(store, requests):
@@ -75,7 +75,7 @@ def load_many_embeddings(store, requests):
         request.model_name, _request_layers(request),
         frame_aggregation=request.frame_aggregation)
         for request in unique_requests]
-    return TokenEmbeddings(tokens=tokens)
+    return TokenEmbeddings(tokens=tokens, path=store.root)
 
 
 def load_codebook(store, phraser_key, collar, model_name):
@@ -91,7 +91,8 @@ def load_codebook(store, phraser_key, collar, model_name):
         data=indices,
         model_architecture=model_architecture,
         codebook_matrix_echoframe_key=matrix_metadata.entry_id,
-    ).bind_store(store)
+        path=store.root,
+    )
 
 
 def load_many_codebooks(store, requests):
@@ -99,7 +100,7 @@ def load_many_codebooks(store, requests):
     unique_requests = _dedupe_codebook_requests(requests)
     tokens = [load_codebook(store, request.phraser_key, request.collar,
         request.model_name) for request in unique_requests]
-    return TokenCodebooks(tokens=tokens)
+    return TokenCodebooks(tokens=tokens, path=store.root)
 
 
 def _dedupe_embedding_requests(requests):
@@ -163,7 +164,7 @@ def _validate_frame_aggregation(frame_aggregation):
 
 
 def _build_embeddings(arrays, layers_list, single_layer, frame_aggregation,
-    echoframe_keys):
+    echoframe_keys, path=None):
     processed = [_apply_aggregation(arr, frame_aggregation) for arr in arrays]
 
     if single_layer:
@@ -171,14 +172,14 @@ def _build_embeddings(arrays, layers_list, single_layer, frame_aggregation,
         dims = ('embed_dim',) if frame_aggregation else ('frames', 'embed_dim')
         return Embeddings(data=data, dims=dims, layers=None,
             echoframe_keys=echoframe_keys,
-            frame_aggregation=frame_aggregation)
+            frame_aggregation=frame_aggregation, path=path)
 
     data = np.stack(processed, axis=0)
     dims = (('layers', 'embed_dim') if frame_aggregation else
         ('layers', 'frames', 'embed_dim'))
     return Embeddings(data=data, dims=dims, layers=tuple(layers_list),
         echoframe_keys=echoframe_keys,
-        frame_aggregation=frame_aggregation)
+        frame_aggregation=frame_aggregation, path=path)
 
 
 def _apply_aggregation(data, frame_aggregation):

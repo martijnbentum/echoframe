@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -238,6 +239,53 @@ class TestCodebookLoading(unittest.TestCase):
         np.testing.assert_array_equal(first, second)
         self.assertEqual(store.load_calls, 1)
 
+    def test_store_raises_without_path_or_binding(self):
+        obj = Codebook(
+            echoframe_key='indices-entry',
+            data=np.array([[0, 1], [1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+
+        with self.assertRaisesRegex(ValueError,
+                'codebook is not bound to a store and has no path'):
+            _ = obj.store
+
+    def test_bind_store_sets_path_and_keeps_store(self):
+        store = CountingStore({
+            'matrix-entry': np.array([[1.0, 2.0], [3.0, 4.0]]),
+        })
+        obj = Codebook(
+            echoframe_key='indices-entry',
+            data=np.array([[0, 1], [1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+
+        result = obj.bind_store(store)
+
+        self.assertIs(result, obj)
+        self.assertIs(obj.store, store)
+
+    @mock.patch('echoframe.store.Store')
+    def test_store_lazily_opens_and_caches_from_path(self, store_cls):
+        fake_store = object()
+        store_cls.return_value = fake_store
+        obj = Codebook(
+            echoframe_key='indices-entry',
+            data=np.array([[0, 1], [1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/codebook-store'),
+        )
+
+        first = obj.store
+        second = obj.store
+
+        self.assertIs(first, fake_store)
+        self.assertIs(second, fake_store)
+        store_cls.assert_called_once_with(Path('/tmp/codebook-store'))
+
 
 class TestCodebookVectorReconstruction(unittest.TestCase):
     def test_wav2vec2_codevectors_are_reconstructed_from_two_indices(self):
@@ -343,6 +391,153 @@ class TestTokenCodebooks(unittest.TestCase):
 
         self.assertEqual(result.token_count, 2)
         self.assertEqual(result.model_architecture, 'wav2vec2')
+
+    def test_bind_store_propagates_path_and_store(self):
+        store = CountingStore({
+            'matrix-entry': np.array([[1.0], [2.0]]),
+        })
+        first = Codebook(
+            echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+        second = Codebook(
+            echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+
+        result = TokenCodebooks(tokens=[first, second]).bind_store(store)
+
+        self.assertIs(result.store, store)
+        self.assertEqual(result.path, getattr(store, 'root', None))
+        self.assertIs(result.tokens[0].store, store)
+        self.assertIs(result.tokens[1].store, store)
+
+    def test_infers_path_from_child_tokens(self):
+        first = Codebook(
+            echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/shared-store'),
+        )
+        second = Codebook(
+            echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/shared-store'),
+        )
+
+        result = TokenCodebooks(tokens=[first, second])
+
+        self.assertEqual(result.path, Path('/tmp/shared-store'))
+
+    def test_rejects_conflicting_child_paths(self):
+        first = Codebook(
+            echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/store-a'),
+        )
+        second = Codebook(
+            echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/store-b'),
+        )
+
+        with self.assertRaisesRegex(ValueError, 'token path mismatch'):
+            TokenCodebooks(tokens=[first, second])
+
+    def test_rejects_collection_path_conflicting_with_children(self):
+        first = Codebook(
+            echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/store-a'),
+        )
+        second = Codebook(
+            echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+            path=Path('/tmp/store-a'),
+        )
+
+        with self.assertRaisesRegex(ValueError, 'token path mismatch'):
+            TokenCodebooks(tokens=[first, second], path=Path('/tmp/store-b'))
+
+    def test_collection_path_allows_detached_child_tokens(self):
+        first = Codebook(
+            echoframe_key='indices-entry-1',
+            data=np.array([[0, 1]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+        second = Codebook(
+            echoframe_key='indices-entry-2',
+            data=np.array([[1, 0]]),
+            model_architecture='wav2vec2',
+            codebook_matrix_echoframe_key='matrix-entry',
+        )
+
+        result = TokenCodebooks(tokens=[first, second],
+            path=Path('/tmp/shared-store'))
+
+        self.assertEqual(result.path, Path('/tmp/shared-store'))
+
+    @mock.patch('echoframe.store.Store')
+    def test_store_lazily_opens_and_caches_from_path(self, store_cls):
+        fake_store = object()
+        store_cls.return_value = fake_store
+        result = TokenCodebooks(tokens=[
+            Codebook(
+                echoframe_key='indices-entry-1',
+                data=np.array([[0, 1]]),
+                model_architecture='wav2vec2',
+                codebook_matrix_echoframe_key='matrix-entry',
+            ),
+            Codebook(
+                echoframe_key='indices-entry-2',
+                data=np.array([[1, 0]]),
+                model_architecture='wav2vec2',
+                codebook_matrix_echoframe_key='matrix-entry',
+            ),
+        ], path=Path('/tmp/shared-store'))
+
+        first = result.store
+        second = result.store
+
+        self.assertIs(first, fake_store)
+        self.assertIs(second, fake_store)
+        store_cls.assert_called_once_with(Path('/tmp/shared-store'))
+
+    def test_store_raises_without_path_or_binding(self):
+        result = TokenCodebooks(tokens=[
+            Codebook(
+                echoframe_key='indices-entry-1',
+                data=np.array([[0, 1]]),
+                model_architecture='wav2vec2',
+                codebook_matrix_echoframe_key='matrix-entry',
+            ),
+            Codebook(
+                echoframe_key='indices-entry-2',
+                data=np.array([[1, 0]]),
+                model_architecture='wav2vec2',
+                codebook_matrix_echoframe_key='matrix-entry',
+            ),
+        ])
+
+        with self.assertRaisesRegex(
+            ValueError, 'token codebooks are not bound to a store and have no path'):
+            _ = result.store
 
     def test_to_numpy_stacks_uniform_tokens(self):
         first = Codebook(echoframe_key='indices-entry-1',

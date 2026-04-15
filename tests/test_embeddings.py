@@ -1,7 +1,10 @@
 '''Tests for the Embeddings container.'''
 
+from pathlib import Path
+from types import SimpleNamespace
 import unittest
 import warnings
+from unittest import mock
 
 import numpy as np
 
@@ -9,7 +12,7 @@ from echoframe.embeddings import Embeddings, TokenEmbeddings
 
 
 def _make(shape, dims, layers=None, echoframe_key='token-1',
-        frame_aggregation=None, data=None):
+        frame_aggregation=None, data=None, path=None):
     if data is None:
         data = np.zeros(shape)
     if layers is not None and 'layers' in dims:
@@ -17,13 +20,13 @@ def _make(shape, dims, layers=None, echoframe_key='token-1',
     else:
         echoframe_keys = (echoframe_key,)
     return Embeddings(echoframe_keys=echoframe_keys, data=data, dims=dims,
-        layers=layers, frame_aggregation=frame_aggregation)
+        layers=layers, frame_aggregation=frame_aggregation, path=path)
 
 
 def _make_token(shape, dims, layers=None, echoframe_key='token-1',
-        frame_aggregation=None, data=None):
+        frame_aggregation=None, data=None, path=None):
     return _make(shape, dims, layers=layers, echoframe_key=echoframe_key,
-        frame_aggregation=frame_aggregation, data=data)
+        frame_aggregation=frame_aggregation, data=data, path=path)
 
 
 class TestEmbeddingsInit(unittest.TestCase):
@@ -103,6 +106,35 @@ class TestEmbeddingsInit(unittest.TestCase):
         self.assertIs(result, data)
         np.testing.assert_array_equal(result, data)
 
+    def test_store_raises_without_path_or_binding(self):
+        emb = _make((8,), ('embed_dim',))
+        with self.assertRaisesRegex(ValueError,
+                'embeddings are not bound to a store and have no path'):
+            _ = emb.store
+
+    def test_bind_store_sets_path_and_returns_store(self):
+        store = SimpleNamespace(root=Path('/tmp/embeddings-store'))
+        emb = _make((8,), ('embed_dim',))
+
+        result = emb.bind_store(store)
+
+        self.assertIs(result, emb)
+        self.assertIs(emb.store, store)
+        self.assertEqual(emb.path, store.root)
+
+    @mock.patch('echoframe.store.Store')
+    def test_store_lazily_opens_and_caches_from_path(self, store_cls):
+        fake_store = object()
+        store_cls.return_value = fake_store
+        emb = _make((8,), ('embed_dim',), path=Path('/tmp/embeddings-store'))
+
+        first = emb.store
+        second = emb.store
+
+        self.assertIs(first, fake_store)
+        self.assertIs(second, fake_store)
+        store_cls.assert_called_once_with(Path('/tmp/embeddings-store'))
+
 
 class TestEmbeddingsLayer(unittest.TestCase):
     def setUp(self):
@@ -133,6 +165,26 @@ class TestEmbeddingsLayer(unittest.TestCase):
         self.assertEqual(result.dims, ('embed_dim',))
         self.assertEqual(result.frame_aggregation, 'mean')
         np.testing.assert_array_equal(result.data, data[1])
+
+    def test_layer_preserves_path_without_binding_store(self):
+        emb = _make((3, 5, 8), ('layers', 'frames', 'embed_dim'),
+            layers=(3, 6, 12), path=Path('/tmp/embeddings-store'))
+
+        result = emb.layer(6)
+
+        self.assertEqual(result.path, emb.path)
+        self.assertIsNone(result.__dict__.get('_store'))
+
+    def test_layer_preserves_path_and_bound_store(self):
+        store = SimpleNamespace(root=Path('/tmp/embeddings-store'))
+        emb = _make((3, 5, 8), ('layers', 'frames', 'embed_dim'),
+            layers=(3, 6, 12), path=Path('/tmp/embeddings-store'))
+        emb.bind_store(store)
+
+        result = emb.layer(6)
+
+        self.assertEqual(result.path, emb.path)
+        self.assertIs(result.store, store)
 
     def test_layer_unknown_raises(self):
         with self.assertRaises(ValueError):
@@ -211,6 +263,44 @@ class TestTokenEmbeddingsInit(unittest.TestCase):
         self.assertEqual(obj.layers, (3, 6, 12))
         self.assertEqual(obj.frame_aggregation, 'mean')
 
+    def test_infers_path_from_child_tokens(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1',
+            path=Path('/tmp/shared-store'))
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2',
+            path=Path('/tmp/shared-store'))
+
+        obj = TokenEmbeddings(tokens=[token_1, token_2])
+
+        self.assertEqual(obj.path, Path('/tmp/shared-store'))
+
+    def test_rejects_conflicting_child_paths(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1',
+            path=Path('/tmp/store-a'))
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2',
+            path=Path('/tmp/store-b'))
+
+        with self.assertRaisesRegex(ValueError, 'token path mismatch'):
+            TokenEmbeddings(tokens=[token_1, token_2])
+
+    def test_rejects_collection_path_conflicting_with_children(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1',
+            path=Path('/tmp/store-a'))
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2',
+            path=Path('/tmp/store-a'))
+
+        with self.assertRaisesRegex(ValueError, 'token path mismatch'):
+            TokenEmbeddings(tokens=[token_1, token_2],
+                path=Path('/tmp/store-b'))
+
+    def test_collection_path_allows_detached_child_tokens(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1')
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2')
+
+        obj = TokenEmbeddings(tokens=[token_1, token_2],
+            path=Path('/tmp/shared-store'))
+
+        self.assertEqual(obj.path, Path('/tmp/shared-store'))
+
     def test_repr_hides_array_preview(self):
         token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1')
         token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2')
@@ -224,6 +314,14 @@ class TestTokenEmbeddingsInit(unittest.TestCase):
         self.assertIn('frame_aggregation=None', text)
         self.assertNotIn('data=', text)
         self.assertNotIn('array(', text)
+
+    def test_store_raises_without_path_or_binding(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1')
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2')
+        obj = TokenEmbeddings(tokens=[token_1, token_2])
+        with self.assertRaisesRegex(ValueError,
+                'token embeddings are not bound to a store and have no path'):
+            _ = obj.store
 
 
 class TestTokenEmbeddingsLayer(unittest.TestCase):
@@ -241,6 +339,38 @@ class TestTokenEmbeddingsLayer(unittest.TestCase):
         self.assertEqual(result.layers, None)
         np.testing.assert_array_equal(result.tokens[0].data, token_1.data[1])
         np.testing.assert_array_equal(result.tokens[1].data, token_2.data[1])
+
+    def test_layer_preserves_path_and_bound_store(self):
+        store = SimpleNamespace(root=Path('/tmp/token-embeddings-store'))
+        token_1 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-1',
+            path=Path('/tmp/token-embeddings-store'))
+        token_2 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-2',
+            path=Path('/tmp/token-embeddings-store'))
+        obj = TokenEmbeddings(tokens=[token_1, token_2]).bind_store(store)
+
+        result = obj.layer(6)
+
+        self.assertEqual(result.path, obj.path)
+        self.assertIs(result.store, store)
+
+    def test_layer_preserves_path_without_binding_store(self):
+        token_1 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-1',
+            path=Path('/tmp/token-embeddings-store'))
+        token_2 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-2',
+            path=Path('/tmp/token-embeddings-store'))
+        obj = TokenEmbeddings(tokens=[token_1, token_2],
+            path=Path('/tmp/token-embeddings-store'))
+
+        result = obj.layer(6)
+
+        self.assertEqual(result.path, obj.path)
+        self.assertIsNone(result.__dict__.get('_store'))
+        self.assertEqual(result.tokens[0].path, obj.path)
+        self.assertEqual(result.tokens[1].path, obj.path)
 
     def test_layer_preserves_frame_based_tokens(self):
         data_1 = np.arange(3 * 5 * 8).reshape(3, 5, 8).astype(float)

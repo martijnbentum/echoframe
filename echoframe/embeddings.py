@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 import warnings
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -24,6 +25,8 @@ class Embeddings:
     dims: tuple
     layers: Optional[tuple] = None
     frame_aggregation: Optional[str] = None
+    path: Path | None = field(default=None, compare=False)
+    _store: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.echoframe_keys, tuple) or not self.echoframe_keys:
@@ -68,9 +71,31 @@ class Embeddings:
             raise ValueError(
                 "frame_aggregation must be None when 'frames' is in dims")
 
+    def bind_store(self, store):
+        '''Attach a store for lazy linked-artifact loading.'''
+        object.__setattr__(self, '_store', store)
+        root = getattr(store, 'root', None)
+        if root is not None:
+            object.__setattr__(self, 'path', Path(root))
+        return self
+
     @property
     def echoframe_key(self) -> str:
         return self.echoframe_keys[0]
+
+    @property
+    def store(self):
+        '''Return the bound store or reopen one from path metadata.'''
+        store = self._store
+        if store is not None:
+            return store
+        if self.path is None:
+            raise ValueError(
+                'embeddings are not bound to a store and have no path')
+        from .store import Store
+        store = Store(self.path)
+        object.__setattr__(self, '_store', store)
+        return store
 
     @property
     def shape(self):
@@ -79,6 +104,7 @@ class Embeddings:
 
     def __repr__(self):
         text = 'Embeddings('
+        text += f'echoframe_keys={self.echoframe_keys}, '
         text += f'shape={self.shape}, dims={self.dims}, '
         text += f'layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
@@ -104,9 +130,12 @@ class Embeddings:
         layers_axis = self.dims.index('layers')
         new_data = np.take(self.data, pos, axis=layers_axis)
         new_dims = tuple(d for d in self.dims if d != 'layers')
-        return Embeddings(echoframe_keys=(self.key_for_layer(n),),
+        result = Embeddings(echoframe_keys=(self.key_for_layer(n),),
             data=new_data, dims=new_dims, layers=None,
-            frame_aggregation=self.frame_aggregation)
+            frame_aggregation=self.frame_aggregation, path=self.path)
+        if self._store is not None:
+            result.bind_store(self._store)
+        return result
 
     def to_numpy(self):
         '''Return the underlying numpy array.'''
@@ -120,6 +149,8 @@ class TokenEmbeddings:
     '''
 
     tokens: list[Embeddings]
+    path: Path | None = field(default=None, compare=False)
+    _store: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not isinstance(self.tokens, list):
@@ -140,6 +171,7 @@ class TokenEmbeddings:
             seen.add(token.echoframe_key)
             deduped.append(token)
         reference = deduped[0]
+        token_path = None
         for token in deduped[1:]:
             if token.dims != reference.dims:
                 raise ValueError('token dims mismatch')
@@ -147,12 +179,41 @@ class TokenEmbeddings:
                 raise ValueError('token layers mismatch')
             if token.frame_aggregation != reference.frame_aggregation:
                 raise ValueError('token frame_aggregation mismatch')
+        for token in deduped:
+            if token.path is not None:
+                if token_path is None:
+                    token_path = token.path
+                elif token.path != token_path:
+                    raise ValueError('token path mismatch')
+        if self.path is None and token_path is not None:
+            object.__setattr__(self, 'path', token_path)
+        elif self.path is not None and token_path is not None and (
+            token_path != self.path
+        ):
+            raise ValueError('token path mismatch')
+        if self._store is None:
+            token_store = deduped[0].__dict__.get('_store')
+            if token_store is not None and all(
+                token.__dict__.get('_store') is token_store
+                for token in deduped
+            ):
+                object.__setattr__(self, '_store', token_store)
         if duplicate_keys:
             message = 'duplicate echoframe_key values were removed'
             for key in duplicate_keys:
                 message += f'\n{key}'
             warnings.warn(message, stacklevel=2)
         object.__setattr__(self, 'tokens', deduped)
+
+    def bind_store(self, store):
+        '''Attach a store for lazy linked-artifact loading.'''
+        object.__setattr__(self, '_store', store)
+        root = getattr(store, 'root', None)
+        if root is not None:
+            object.__setattr__(self, 'path', Path(root))
+        for token in self.tokens:
+            token.bind_store(store)
+        return self
 
     @property
     def token_count(self):
@@ -179,9 +240,38 @@ class TokenEmbeddings:
         '''Return shared frame aggregation.'''
         return self.tokens[0].frame_aggregation
 
+    @property
+    def store(self):
+        '''Return the bound store or reopen one from path metadata.'''
+        store = self._store
+        if store is not None:
+            return store
+        token_store = self.tokens[0].__dict__.get('_store')
+        if token_store is not None and all(
+            token.__dict__.get('_store') is token_store for token in self.tokens
+        ):
+            object.__setattr__(self, '_store', token_store)
+            return token_store
+        if self.path is not None:
+            from .store import Store
+            store = Store(self.path)
+            object.__setattr__(self, '_store', store)
+            return store
+        token_paths = {token.path for token in self.tokens if token.path is not None}
+        if len(token_paths) == 1:
+            path = token_paths.pop()
+            object.__setattr__(self, 'path', path)
+            from .store import Store
+            store = Store(path)
+            object.__setattr__(self, '_store', store)
+            return store
+        raise ValueError(
+            'token embeddings are not bound to a store and have no path')
+
     def __repr__(self):
         text = 'TokenEmbeddings('
         text += f'token_count={self.token_count}, '
+        text += f'echoframe_keys={self.echoframe_keys}, '
         text += f'dims={self.dims}, layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
         return text
@@ -189,7 +279,10 @@ class TokenEmbeddings:
     def layer(self, n):
         '''Return a new TokenEmbeddings with only layer n.'''
         tokens = [token.layer(n) for token in self.tokens]
-        return TokenEmbeddings(tokens=tokens)
+        result = TokenEmbeddings(tokens=tokens, path=self.path)
+        if self._store is not None:
+            result.bind_store(self._store)
+        return result
 
     def to_numpy(self):
         '''Return a stacked numpy array when token shapes are uniform.'''

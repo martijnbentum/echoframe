@@ -48,6 +48,8 @@ class TestLoadEmbeddings(unittest.TestCase):
             self.assertEqual(result.echoframe_keys, (result.echoframe_key,))
             self.assertEqual(result.dims, ('frames', 'embed_dim'))
             self.assertIsNone(result.layers)
+            self.assertEqual(result.path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
             np.testing.assert_array_equal(result.to_numpy(), data)
 
     def test_multi_layer_returns_existing_shape(self):
@@ -67,6 +69,8 @@ class TestLoadEmbeddings(unittest.TestCase):
             ))
             self.assertEqual(result.dims, ('layers', 'frames', 'embed_dim'))
             self.assertEqual(result.layers, (3, 7))
+            self.assertEqual(result.path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
             np.testing.assert_array_equal(result.to_numpy(), np.stack([
                 data_1,
                 data_2,
@@ -164,12 +168,18 @@ class TestLoadManyEmbeddings(unittest.TestCase):
                 result.tokens[0].echoframe_key,
                 result.tokens[1].echoframe_key,
             ))
+            self.assertEqual(result.path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
+            self.assertEqual(result.tokens[0].path, store.root)
+            self.assertEqual(result.tokens[1].path, store.root)
+            self.assertIsNone(result.tokens[0].__dict__.get('_store'))
+            self.assertIsNone(result.tokens[1].__dict__.get('_store'))
             self.assertEqual(len(calls), 4)
             self.assertEqual(len(set(calls)), 4)
 
 
 class TestLoadCodebook(unittest.TestCase):
-    def test_load_codebook_returns_store_bound_object(self):
+    def test_load_codebook_sets_path_for_lazy_store_access(self):
         tmpdir, store = _make_store()
         with tmpdir:
             indices = np.array([[1, 0], [0, 1]])
@@ -184,9 +194,11 @@ class TestLoadCodebook(unittest.TestCase):
             metadata = store.find_one(phraser_key='phrase-1', collar=500,
                 model_name='spidr', output_type='codebook_indices', layer=0)
             self.assertEqual(result.echoframe_key, metadata.entry_id)
-            self.assertIs(result.store, store)
+            self.assertEqual(result.path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
             self.assertEqual(result.model_architecture, 'spidr')
             np.testing.assert_array_equal(result.to_numpy(), indices)
+            result.bind_store(store)
             np.testing.assert_array_equal(result.codevectors[0], np.array([
                 [3.0, 4.0],
                 [5.0, 6.0],
@@ -238,12 +250,36 @@ class TestLoadManyCodebooks(unittest.TestCase):
                 result.tokens[0].echoframe_key,
                 result.tokens[1].echoframe_key,
             ))
+            self.assertEqual(result.path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
+            self.assertEqual(result.tokens[0].path, store.root)
+            self.assertEqual(result.tokens[1].path, store.root)
+            self.assertIsNone(result.tokens[0].__dict__.get('_store'))
+            self.assertIsNone(result.tokens[1].__dict__.get('_store'))
             self.assertEqual(len(calls), 2)
             self.assertEqual(len(set(calls)), 2)
             np.testing.assert_array_equal(result.tokens[0].to_numpy(),
                 indices_1)
             np.testing.assert_array_equal(result.tokens[1].to_numpy(),
                 indices_2)
+
+    def test_load_many_codebooks_sets_collection_path_for_lazy_access(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            indices = np.array([[0, 1]])
+            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+            _put_codebook(store, 'phrase-1', 500, 'wav2vec2', indices, matrix)
+
+            result = store.load_many_codebooks([{
+                'phraser_key': 'phrase-1',
+                'collar': 500,
+                'model_name': 'wav2vec2',
+            }])
+
+            self.assertEqual(result.path, store.root)
+            self.assertEqual(result.tokens[0].path, store.root)
+            self.assertIsNone(result.__dict__.get('_store'))
+            self.assertIsNone(result.tokens[0].__dict__.get('_store'))
 
 
 if __name__ == '__main__':

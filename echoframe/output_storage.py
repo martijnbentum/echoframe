@@ -37,6 +37,10 @@ class Hdf5ShardStore:
 
     def store(self, metadata, data):
         '''Store payload data and return updated metadata.'''
+        if metadata.output_type == 'model_metadata':
+            if data is not None:
+                raise ValueError('model_metadata does not use HDF5 payload data')
+            return metadata
         shard_id = self._active_shard_id(model_name=metadata.model_name,
             output_type=metadata.output_type)
         return self.store_with_shard(metadata, data=data, shard_id=shard_id)
@@ -51,24 +55,29 @@ class Hdf5ShardStore:
     def store_with_shard(self, metadata, data, shard_id):
         '''Store payload data in a specific shard.'''
         dataset_path = self._dataset_path(metadata)
+        dataset_name = metadata.format_echoframe_key()
         file_path = self.root / f'{shard_id}.h5'
 
         with self.h5.File(file_path, 'a') as handle:
             group = handle.require_group(f'/layer_{metadata.layer:04d}')
-            if metadata.entry_id in group:
-                del group[metadata.entry_id]
-            dataset = group.create_dataset(metadata.entry_id, data=data)
+            if dataset_name in group:
+                del group[dataset_name]
+            dataset = group.create_dataset(dataset_name, data=data)
             shape = tuple(getattr(dataset, 'shape', ()) or ())
             dtype = getattr(dataset, 'dtype', None)
             if dtype is None: dtype = getattr(data, 'dtype', 'unknown')
             dtype = str(dtype)
-        return EchoframeMetadata(phraser_key=metadata.phraser_key,
+        return metadata.__class__(phraser_key=metadata.phraser_key,
             collar=metadata.collar, model_name=metadata.model_name,
             output_type=metadata.output_type, layer=metadata.layer,
+            echoframe_key=metadata.echoframe_key,
             storage_status=metadata.storage_status, shard_id=shard_id,
             dataset_path=dataset_path, shape=shape, dtype=dtype,
             tags=metadata.tags, created_at=metadata.created_at,
-            deleted_at=metadata.deleted_at)
+            deleted_at=metadata.deleted_at, accessed_at=metadata.accessed_at,
+            model_id=metadata.model_id, local_path=metadata.local_path,
+            huggingface_id=metadata.huggingface_id,
+            language=metadata.language)
 
     def load(self, metadata):
         '''Load stored payload data.'''
@@ -116,16 +125,18 @@ class Hdf5ShardStore:
                 for metadata in entries:
                     dataset = source[metadata.dataset_path][()]
                     group = target.require_group(f'/layer_{metadata.layer:04d}')
-                    if metadata.entry_id in group:
-                        del group[metadata.entry_id]
-                    created = group.create_dataset(metadata.entry_id,
+                    dataset_name = metadata.format_echoframe_key()
+                    if dataset_name in group:
+                        del group[dataset_name]
+                    created = group.create_dataset(dataset_name,
                         data=dataset)
-                    updated.append(EchoframeMetadata(
+                    updated.append(metadata.__class__(
                         phraser_key=metadata.phraser_key,
                         collar=metadata.collar,
                         model_name=metadata.model_name,
                         output_type=metadata.output_type,
                         layer=metadata.layer,
+                        echoframe_key=metadata.echoframe_key,
                         storage_status=metadata.storage_status,
                         shard_id=target_shard_id,
                         dataset_path=self._dataset_path(metadata),
@@ -135,6 +146,10 @@ class Hdf5ShardStore:
                         created_at=metadata.created_at,
                         deleted_at=metadata.deleted_at,
                         accessed_at=metadata.accessed_at,
+                        model_id=metadata.model_id,
+                        local_path=metadata.local_path,
+                        huggingface_id=metadata.huggingface_id,
+                        language=metadata.language,
                     ))
 
         if delete_source:
@@ -184,7 +199,7 @@ class Hdf5ShardStore:
             index += 1
 
     def _dataset_path(self, metadata):
-        return f'/layer_{metadata.layer:04d}/{metadata.entry_id}'
+        return f'/layer_{metadata.layer:04d}/{metadata.format_echoframe_key()}'
 
     def _file_size(self, file_path):
         return file_path.stat().st_size
@@ -245,8 +260,8 @@ class Hdf5ShardStore:
             'ok': True,
             'exists': True,
             'open_error': None,
-            'missing_entries': [],
-            'unreadable_entries': [],
+            'missing_echoframe_keys': [],
+            'unreadable_echoframe_keys': [],
         }
         try:
             file_path.stat()
@@ -264,7 +279,8 @@ class Hdf5ShardStore:
                 for metadata in entries or []:
                     if metadata.dataset_path not in handle:
                         report['ok'] = False
-                        report['missing_entries'].append(metadata.entry_id)
+                        report['missing_echoframe_keys'].append(
+                            metadata.format_echoframe_key())
                         continue
                     if not read_data:
                         continue
@@ -272,8 +288,8 @@ class Hdf5ShardStore:
                         handle[metadata.dataset_path][()]
                     except Exception as exc:
                         report['ok'] = False
-                        report['unreadable_entries'].append({
-                            'entry_id': metadata.entry_id,
+                        report['unreadable_echoframe_keys'].append({
+                            'echoframe_key_hex': metadata.format_echoframe_key(),
                             'dataset_path': metadata.dataset_path,
                             'error': str(exc),
                         })

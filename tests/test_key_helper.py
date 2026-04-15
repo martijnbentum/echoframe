@@ -7,16 +7,20 @@ from echoframe import key_helper
 from echoframe.key_helper import (
     model_name_hash,
     tag_hash,
+    validate_segment_phraser_key,
     pack_hidden_state_key,
     pack_attention_key,
     pack_codebook_indices_key,
     pack_codebook_matrix_key,
     pack_model_metadata_key,
+    pack_echoframe_key,
     unpack_hidden_state_key,
     unpack_attention_key,
     unpack_codebook_indices_key,
     unpack_codebook_matrix_key,
     unpack_model_metadata_key,
+    unpack_echoframe_key,
+    output_type_from_echoframe_key,
     make_tag_scan_key,
     make_output_type_scan_key,
     make_tag_scan_prefix,
@@ -64,6 +68,27 @@ class TestHashing(unittest.TestCase):
 
     def test_tag_hash_differs_for_different_tags(self):
         self.assertNotEqual(tag_hash('train'), tag_hash('test'))
+
+
+class TestSegmentPhraserKeyValidation(unittest.TestCase):
+
+    def test_validate_returns_bytes_unchanged(self):
+        self.assertEqual(
+            validate_segment_phraser_key(SAMPLE_PHRASER_KEY),
+            SAMPLE_PHRASER_KEY,
+        )
+
+    def test_validate_accepts_bytearray(self):
+        result = validate_segment_phraser_key(bytearray(SAMPLE_PHRASER_KEY))
+        self.assertEqual(result, SAMPLE_PHRASER_KEY)
+
+    def test_validate_rejects_string(self):
+        with self.assertRaises(ValueError):
+            validate_segment_phraser_key('not-bytes')
+
+    def test_validate_rejects_wrong_length(self):
+        with self.assertRaises(ValueError):
+            validate_segment_phraser_key(b'x' * 21)
 
 
 class TestPackUnpackHiddenState(unittest.TestCase):
@@ -178,6 +203,115 @@ class TestPackUnpackModelMetadata(unittest.TestCase):
             pack_model_metadata_key('bert-base-uncased'),
             pack_model_metadata_key('wav2vec2-base'),
         )
+
+
+class TestPackDispatch(unittest.TestCase):
+
+    def test_pack_dispatch_hidden_state(self):
+        key = pack_echoframe_key(
+            'hidden_state',
+            model_id=MODEL_ID,
+            layer=LAYER,
+            phraser_key=SAMPLE_PHRASER_KEY,
+            collar=COLLAR,
+        )
+        self.assertEqual(
+            key,
+            pack_hidden_state_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR),
+        )
+
+    def test_pack_dispatch_attention(self):
+        key = pack_echoframe_key(
+            'attention',
+            model_id=MODEL_ID,
+            layer=LAYER,
+            phraser_key=SAMPLE_PHRASER_KEY,
+            collar=COLLAR,
+        )
+        self.assertEqual(
+            key,
+            pack_attention_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR),
+        )
+
+    def test_pack_dispatch_codebook_indices(self):
+        key = pack_echoframe_key(
+            'codebook_indices',
+            model_id=MODEL_ID,
+            phraser_key=SAMPLE_PHRASER_KEY,
+            collar=COLLAR,
+        )
+        self.assertEqual(
+            key,
+            pack_codebook_indices_key(MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR),
+        )
+
+    def test_pack_dispatch_codebook_matrix(self):
+        key = pack_echoframe_key('codebook_matrix', model_id=MODEL_ID)
+        self.assertEqual(key, pack_codebook_matrix_key(MODEL_ID))
+
+    def test_pack_dispatch_model_metadata(self):
+        key = pack_echoframe_key(
+            'model_metadata',
+            model_name='bert-base-uncased',
+        )
+        self.assertEqual(key, pack_model_metadata_key('bert-base-uncased'))
+
+    def test_pack_dispatch_unknown_output_type_raises(self):
+        with self.assertRaises(ValueError):
+            pack_echoframe_key('unknown_type')
+
+
+class TestUnpackDispatch(unittest.TestCase):
+
+    def test_unpack_dispatch_hidden_state(self):
+        key = pack_hidden_state_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
+            COLLAR)
+        fields = unpack_echoframe_key(key)
+        self.assertEqual(fields['output_type'], 'hidden_state')
+
+    def test_unpack_dispatch_attention(self):
+        key = pack_attention_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
+            COLLAR)
+        fields = unpack_echoframe_key(key)
+        self.assertEqual(fields['output_type'], 'attention')
+
+    def test_unpack_dispatch_codebook_indices(self):
+        key = pack_codebook_indices_key(MODEL_ID, SAMPLE_PHRASER_KEY,
+            COLLAR)
+        fields = unpack_echoframe_key(key)
+        self.assertEqual(fields['output_type'], 'codebook_indices')
+
+    def test_unpack_dispatch_codebook_matrix(self):
+        key = pack_codebook_matrix_key(MODEL_ID)
+        fields = unpack_echoframe_key(key)
+        self.assertEqual(fields['output_type'], 'codebook_matrix')
+
+    def test_unpack_dispatch_model_metadata(self):
+        key = pack_model_metadata_key('bert-base-uncased')
+        fields = unpack_echoframe_key(key)
+        self.assertEqual(fields['output_type'], 'model_metadata')
+
+
+class TestOutputTypeInference(unittest.TestCase):
+
+    def test_output_type_from_hidden_state_key(self):
+        key = pack_hidden_state_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
+            COLLAR)
+        self.assertEqual(
+            output_type_from_echoframe_key(key),
+            'hidden_state',
+        )
+
+    def test_output_type_from_attention_key(self):
+        key = pack_attention_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
+            COLLAR)
+        self.assertEqual(output_type_from_echoframe_key(key), 'attention')
+
+    def test_output_type_from_unknown_length_raises(self):
+        with self.assertRaises(ValueError):
+            output_type_from_echoframe_key(b'bad')
 
 
 class TestSecondaryTagScanKey(unittest.TestCase):

@@ -9,9 +9,14 @@ from pathlib import Path
 from unittest import mock
 
 from echoframe.index import LmdbIndex
-from echoframe.metadata import EchoframeMetadata, utc_now
+from echoframe.metadata import (
+    EchoframeMetadata,
+    metadata_class_for_output_type,
+    utc_now,
+)
 from echoframe.output_storage import Hdf5ShardStore
 from echoframe.store import Store
+from tests.test_public_api import _ensure_model, _find_one, _load_many_queries, _load_query, _pk
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +164,32 @@ def _make_fake_store(tmpdir):
     return Store(tmpdir, index=index, storage=storage)
 
 
+def _put(store, *, phraser_key, collar, model_name, output_type, layer,
+    data, tags=None):
+    phraser_key = _pk(phraser_key)
+    _ensure_model(store, model_name)
+    key_kwargs = {
+        'output_type': output_type,
+        'model_name': model_name,
+    }
+    if output_type in {'hidden_state', 'attention'}:
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'layer': layer,
+            'collar': collar,
+        })
+    elif output_type == 'codebook_indices':
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'collar': collar,
+        })
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=store.make_echoframe_key(**key_kwargs))
+    return store.put(metadata.echoframe_key, metadata, data)
+
+
 def _days_ago(n):
     ts = datetime.now(timezone.utc) - timedelta(days=n)
     return ts.replace(microsecond=0).isoformat()
@@ -172,27 +203,27 @@ class TestAccessedAt(unittest.TestCase):
     def test_load_updates_accessed_at(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_fake_store(tmpdir)
-            store.put(phraser_key='p1', collar=0, model_name='m1',
+            _put(store, phraser_key='p1', collar=0, model_name='m1',
                 output_type='hidden_state', layer=0, data=[1.0])
-            metadata_before = store.find_one(phraser_key='p1', collar=0,
+            metadata_before = _find_one(store, phraser_key='p1', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
             self.assertIsNone(metadata_before.accessed_at)
 
-            store.load(phraser_key='p1', collar=0, model_name='m1',
+            _load_query(store, phraser_key='p1', collar=0, model_name='m1',
                 output_type='hidden_state', layer=0)
-            metadata_after = store.find_one(phraser_key='p1', collar=0,
+            metadata_after = _find_one(store, phraser_key='p1', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
             self.assertIsNotNone(metadata_after.accessed_at)
 
     def test_load_many_updates_accessed_at(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = _make_fake_store(tmpdir)
-            store.put(phraser_key='p1', collar=0, model_name='m1',
+            _put(store, phraser_key='p1', collar=0, model_name='m1',
                 output_type='hidden_state', layer=0, data=[1.0])
-            store.load_many([{'phraser_key': 'p1', 'collar': 0,
+            _load_many_queries(store, [{'phraser_key': 'p1', 'collar': 0,
                 'model_name': 'm1', 'output_type': 'hidden_state',
                 'layer': 0}])
-            metadata = store.find_one(phraser_key='p1', collar=0,
+            metadata = _find_one(store, phraser_key='p1', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
             self.assertIsNotNone(metadata.accessed_at)
 
@@ -200,9 +231,9 @@ class TestAccessedAt(unittest.TestCase):
 class TestEvictByRecency(unittest.TestCase):
     def _store_with_entry(self, tmpdir, phraser_key, accessed_at):
         store = _make_fake_store(tmpdir)
-        store.put(phraser_key=phraser_key, collar=0, model_name='m1',
+        _put(store, phraser_key=phraser_key, collar=0, model_name='m1',
             output_type='hidden_state', layer=0, data=[1.0])
-        metadata = store.find_one(phraser_key=phraser_key, collar=0,
+        metadata = _find_one(store, phraser_key=phraser_key, collar=0,
             model_name='m1', output_type='hidden_state', layer=0)
         if accessed_at is not None:
             updated = metadata.with_accessed_at(accessed_at)
@@ -226,14 +257,14 @@ class TestEvictByRecency(unittest.TestCase):
                 h5_module=FakeH5Module())
             store = Store(tmpdir, index=index, storage=storage)
 
-            store.put(phraser_key='old', collar=0, model_name='m1',
+            _put(store, phraser_key='old', collar=0, model_name='m1',
                 output_type='hidden_state', layer=0, data=[1.0])
-            store.put(phraser_key='older', collar=0, model_name='m1',
+            _put(store, phraser_key='older', collar=0, model_name='m1',
                 output_type='hidden_state', layer=0, data=[2.0])
 
-            m_old = store.find_one(phraser_key='old', collar=0,
+            m_old = _find_one(store, phraser_key='old', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
-            m_older = store.find_one(phraser_key='older', collar=0,
+            m_older = _find_one(store, phraser_key='older', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
             store.index.upsert(m_old.with_accessed_at(_days_ago(40)))
             store.index.upsert(m_older.with_accessed_at(_days_ago(60)))
@@ -257,7 +288,7 @@ class TestEvictByRecency(unittest.TestCase):
                     evicted = store.evict_by_recency()
 
             self.assertEqual(len(evicted), 1)
-            self.assertEqual(evicted[0].phraser_key, 'older')
+        self.assertEqual(evicted[0].phraser_key, _pk('older'))
 
     def test_entries_without_accessed_at_are_skipped(self):
         with tempfile.TemporaryDirectory() as tmpdir:

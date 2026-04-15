@@ -14,6 +14,7 @@ from echoframe import Store
 from echoframe.codebooks import Codebook, TokenCodebooks
 from echoframe.embeddings import Embeddings, TokenEmbeddings
 from echoframe.index import LmdbIndex
+from echoframe.metadata import metadata_class_for_output_type
 from echoframe.output_storage import Hdf5ShardStore
 import echoframe.segment_features as segment_features
 from echoframe.segment_features import (
@@ -23,7 +24,7 @@ from echoframe.segment_features import (
     get_embeddings_batch,
     segment_to_echoframe_key,
 )
-from tests.test_public_api import FakeEnv, FakeH5Module
+from tests.test_public_api import FakeEnv, FakeH5Module, _ensure_model, _pk
 
 
 def _make_store():
@@ -33,11 +34,40 @@ def _make_store():
     storage = Hdf5ShardStore(Path(tmpdir.name) / 'shards',
         h5_module=FakeH5Module())
     store = Store(tmpdir.name, index=index, storage=storage)
+    _ensure_model(store, 'wav2vec2')
     return tmpdir, store
 
 
-def _make_segment(start=1000, end=1300, key=b'\xaa\xbb',
+def _put(store, *, phraser_key, collar, model_name, output_type, layer,
+    data, tags=None):
+    phraser_key = _pk(phraser_key)
+    _ensure_model(store, model_name)
+    key_kwargs = {
+        'output_type': output_type,
+        'model_name': model_name,
+    }
+    if output_type in {'hidden_state', 'attention'}:
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'layer': layer,
+            'collar': collar,
+        })
+    elif output_type == 'codebook_indices':
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'collar': collar,
+        })
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=store.make_echoframe_key(**key_kwargs))
+    return store.put(metadata.echoframe_key, metadata, data)
+
+
+def _make_segment(start=1000, end=1300, key=None,
     filename='audio.wav', duration=None):
+    if key is None:
+        key = _pk('aabb')
     audio = types.SimpleNamespace(filename=filename)
     if duration is not None:
         audio.duration = duration
@@ -45,14 +75,14 @@ def _make_segment(start=1000, end=1300, key=b'\xaa\xbb',
 
 
 def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='hidden_state', layer=layer, data=data)
 
 
 def _put_codebook(store, phraser_key, collar, model_name, indices, matrix):
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='codebook_indices', layer=0, data=indices)
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='codebook_matrix', layer=0, data=matrix)
 
 
@@ -78,9 +108,9 @@ def _patch_runtime_dependencies(outputs=None, indices=None, matrix=None,
 class SegmentFeatureTests(unittest.TestCase):
     def test_segment_to_echoframe_key_handles_bytes_and_strings(self):
         self.assertEqual(segment_to_echoframe_key(
-            types.SimpleNamespace(key=b'\xaa\xbb')), 'aabb')
-        self.assertEqual(segment_to_echoframe_key(
-            types.SimpleNamespace(key='my-key')), 'my-key')
+            types.SimpleNamespace(key=_pk('aabb'))), _pk('aabb'))
+        with self.assertRaises(TypeError):
+            segment_to_echoframe_key(types.SimpleNamespace(key='my-key'))
 
     def test_segment_to_echoframe_key_missing_key_raises(self):
         with self.assertRaises(ValueError):
@@ -138,8 +168,8 @@ class TestGetEmbeddings(unittest.TestCase):
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data_1)
             _put_hidden_state(store, 'ccdd', 500, 'wav2vec2', 4, data_2)
             segments = [
-                _make_segment(key=b'\xaa\xbb'),
-                _make_segment(key=b'\xcc\xdd'),
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
             ]
 
             result = get_embeddings_batch(segments, layers=4, collar=500,
@@ -155,7 +185,7 @@ class TestGetEmbeddings(unittest.TestCase):
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
-            segments = [_make_segment(key=b'\xaa\xbb')]
+            segments = [_make_segment(key=_pk('aabb'))]
 
             original = store.load_many_embeddings
             with mock.patch.object(store, 'load_many_embeddings',
@@ -256,8 +286,8 @@ class TestGetCodebookIndices(unittest.TestCase):
             _put_codebook(store, 'ccdd', 500, 'wav2vec2', indices_2,
                 matrix_2)
             segments = [
-                _make_segment(key=b'\xaa\xbb'),
-                _make_segment(key=b'\xcc\xdd'),
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
             ]
 
             result = get_codebook_indices_batch(segments, collar=500,
@@ -276,7 +306,7 @@ class TestGetCodebookIndices(unittest.TestCase):
             indices = np.array([[0, 1]])
             matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
             _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
-            segments = [_make_segment(key=b'\xaa\xbb')]
+            segments = [_make_segment(key=_pk('aabb'))]
 
             original = store.load_many_codebooks
             with mock.patch.object(store, 'load_many_codebooks',

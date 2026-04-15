@@ -11,8 +11,10 @@ import numpy as np
 
 
 def _validate_key(key, field_name):
-    if not isinstance(key, str) or not key:
-        raise ValueError(f'{field_name} must be a non-empty string')
+    valid = isinstance(key, str) and bool(key)
+    valid = valid or (isinstance(key, bytes) and bool(key))
+    if not valid:
+        raise ValueError(f'{field_name} must be a non-empty string or bytes')
 
 
 def _normalize_wav2vec2_indices(indices):
@@ -91,8 +93,7 @@ class Codebook:
     def _load_codebook_matrix(self):
         if self._codebook_matrix_loaded:
             return self._codebook_matrix
-        payload = self.store.load_with_echoframe_key(
-            self.codebook_matrix_echoframe_key)
+        payload = self.store.load(self.codebook_matrix_echoframe_key)
         object.__setattr__(self, '_codebook_matrix', payload)
         object.__setattr__(self, '_codebook_matrix_loaded', True)
         return payload

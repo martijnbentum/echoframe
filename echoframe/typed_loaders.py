@@ -60,10 +60,16 @@ def load_embeddings(store, phraser_key, collar, model_name, layers,
     arrays = []
     echoframe_keys = []
     for layer in layers_list:
-        metadata = _find_one(store, phraser_key, collar, model_name,
-            'hidden_state', layer)
-        arrays.append(store.load_with_echoframe_key(metadata.entry_id))
-        echoframe_keys.append(metadata.entry_id)
+        echoframe_key = store.make_echoframe_key(
+            'hidden_state',
+            model_name=model_name,
+            phraser_key=phraser_key,
+            layer=layer,
+            collar=collar,
+        )
+        metadata = _require_metadata(store, echoframe_key)
+        arrays.append(store.load(echoframe_key))
+        echoframe_keys.append(metadata.echoframe_key)
     return _build_embeddings(arrays, layers_list, single_layer,
         frame_aggregation, tuple(echoframe_keys), path=store.root)
 
@@ -80,17 +86,25 @@ def load_many_embeddings(store, requests):
 
 def load_codebook(store, phraser_key, collar, model_name):
     '''Load one codebook container from store-backed artifacts.'''
-    indices_metadata = _find_one(store, phraser_key, collar, model_name,
-        'codebook_indices', 0)
-    matrix_metadata = _find_one(store, phraser_key, collar, model_name,
-        'codebook_matrix', 0)
-    indices = store.load_with_echoframe_key(indices_metadata.entry_id)
+    indices_key = store.make_echoframe_key(
+        'codebook_indices',
+        model_name=model_name,
+        phraser_key=phraser_key,
+        collar=collar,
+    )
+    matrix_key = store.make_echoframe_key(
+        'codebook_matrix',
+        model_name=model_name,
+    )
+    indices_metadata = _require_metadata(store, indices_key)
+    matrix_metadata = _require_metadata(store, matrix_key)
+    indices = store.load(indices_key)
     model_architecture = _infer_architecture(matrix_metadata)
     return Codebook(
-        echoframe_key=indices_metadata.entry_id,
+        echoframe_key=indices_metadata.echoframe_key,
         data=indices,
         model_architecture=model_architecture,
-        codebook_matrix_echoframe_key=matrix_metadata.entry_id,
+        codebook_matrix_echoframe_key=matrix_metadata.echoframe_key,
         path=store.root,
     )
 
@@ -139,11 +153,10 @@ def _request_layers(request):
     return request.layers
 
 
-def _find_one(store, phraser_key, collar, model_name, output_type, layer):
-    metadata = store.find_one(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, output_type=output_type, layer=layer)
+def _require_metadata(store, echoframe_key):
+    metadata = store.load_metadata(echoframe_key)
     if metadata is None:
-        raise ValueError('no stored output matched the requested criteria')
+        raise ValueError('no stored output matched the requested echoframe key')
     return metadata
 
 

@@ -32,9 +32,12 @@ class Embeddings:
         if not isinstance(self.echoframe_keys, tuple) or not self.echoframe_keys:
             raise ValueError('echoframe_keys must be a non-empty tuple')
         for k in self.echoframe_keys:
-            if not isinstance(k, str) or not k:
+            valid = isinstance(k, str) and bool(k)
+            valid = valid or (isinstance(k, bytes) and bool(k))
+            if not valid:
                 raise ValueError(
-                    'every element of echoframe_keys must be a non-empty string')
+                    'every element of echoframe_keys must be a non-empty '
+                    'string or bytes')
         if len(self.dims) != self.data.ndim:
             message = f'dims length mismatch: len(dims)={len(self.dims)} '
             message += f'data.ndim={self.data.ndim}'
@@ -80,8 +83,15 @@ class Embeddings:
         return self
 
     @property
-    def echoframe_key(self) -> str:
+    def echoframe_key(self):
         return self.echoframe_keys[0]
+
+    @property
+    def echoframe_key_hex(self) -> str:
+        key = self.echoframe_key
+        if isinstance(key, bytes):
+            return key.hex()
+        return key
 
     @property
     def store(self):

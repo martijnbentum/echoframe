@@ -12,7 +12,11 @@ from unittest import mock
 
 import echoframe
 from echoframe.index import LmdbIndex
-from echoframe.metadata import EchoframeMetadata
+from echoframe.metadata import (
+    EchoframeMetadata,
+    filter_metadata,
+    metadata_class_for_output_type,
+)
 from echoframe.output_storage import Hdf5ShardStore, sanitize_name
 from echoframe.store import Store
 
@@ -173,6 +177,168 @@ class FlakySizeStorage(Hdf5ShardStore):
             purpose=purpose)
 
 
+def _pk(value) -> bytes:
+    if isinstance(value, bytes):
+        raw = value
+    else:
+        raw = str(value).encode('utf-8')
+    if len(raw) > 22:
+        raise ValueError('test phraser keys must be <= 22 bytes')
+    return raw.ljust(22, b'\0')
+
+
+def _hex(metadata) -> str:
+    return metadata.format_echoframe_key()
+
+
+def _ensure_model(store: Store, model_name: str) -> None:
+    if store.get_model_metadata(model_name) is None:
+        store.register_model(model_name)
+
+
+def _make_key(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer):
+    _ensure_model(store, model_name)
+    phraser_key = _pk(phraser_key)
+    kwargs = {
+        'output_type': output_type,
+        'model_name': model_name,
+    }
+    if output_type in {'hidden_state', 'attention'}:
+        kwargs.update({
+            'phraser_key': phraser_key,
+            'layer': layer,
+            'collar': collar,
+        })
+    elif output_type == 'codebook_indices':
+        kwargs.update({
+            'phraser_key': phraser_key,
+            'collar': collar,
+        })
+    elif output_type == 'codebook_matrix':
+        pass
+    else:
+        raise ValueError(f'unsupported output_type in test helper: {output_type}')
+    return store.make_echoframe_key(**kwargs)
+
+
+def _put(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer, data, tags=None):
+    phraser_key = _pk(phraser_key)
+    echoframe_key = _make_key(store, phraser_key=phraser_key,
+        collar=collar, model_name=model_name, output_type=output_type,
+        layer=layer)
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=echoframe_key)
+    return store.put(echoframe_key, metadata, data)
+
+
+def _put_item(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer, data, tags=None):
+    phraser_key = _pk(phraser_key)
+    echoframe_key = _make_key(store, phraser_key=phraser_key,
+        collar=collar, model_name=model_name, output_type=output_type,
+        layer=layer)
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=echoframe_key)
+    return {'echoframe_key': echoframe_key, 'metadata': metadata, 'data': data}
+
+
+def _find(store: Store, phraser_key, include_deleted=False, **filters):
+    records = store.find_phraser(_pk(phraser_key),
+        include_deleted=include_deleted)
+    return filter_metadata(records, **filters)
+
+
+def _find_one(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer, match='exact'):
+    matches = _find(store, phraser_key, model_name=model_name,
+        output_type=output_type, layer=layer, collar=collar, match=match)
+    if not matches:
+        return None
+    return matches[0]
+
+
+def _exists(store: Store, phraser_key, collar, model_name, output_type, layer,
+    match='exact'):
+    return _find_one(store, phraser_key=phraser_key, collar=collar,
+        model_name=model_name, output_type=output_type, layer=layer,
+        match=match) is not None
+
+
+def _load_query(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer, match='exact'):
+    metadata = _find_one(store, phraser_key=phraser_key, collar=collar,
+        model_name=model_name, output_type=output_type, layer=layer,
+        match=match)
+    if metadata is None:
+        raise ValueError('no stored output matched the requested criteria')
+    return store.load(metadata.echoframe_key)
+
+
+def _find_many(store: Store, queries):
+    return [_find_one(store, **query) for query in queries]
+
+
+def _load_many_queries(store: Store, queries, strict=False):
+    payloads = []
+    for query in queries:
+        metadata = _find_one(store, **query)
+        if metadata is None:
+            if strict:
+                raise ValueError(
+                    'no stored output matched one of the requested queries')
+            payloads.append(None)
+        else:
+            payloads.append(store.load(metadata.echoframe_key))
+    return payloads
+
+
+def _put_many(store: Store, items):
+    prepared = []
+    for item in items:
+        if 'metadata' in item:
+            prepared.append(item)
+            continue
+        prepared.append(_put_item(store, **item))
+    return store.put_many(prepared)
+
+
+def _delete(store: Store, *, phraser_key, collar, model_name, output_type,
+    layer, match='exact'):
+    return store.delete(phraser_key=_pk(phraser_key), collar=collar,
+        model_name=model_name, output_type=output_type, layer=layer,
+        match=match)
+
+
+def _load_object_frames(store: Store, *, phraser_key, model_name, layer,
+    collar=500, output_type='hidden_state', match='exact'):
+    return store.load_object_frames(phraser_key=_pk(phraser_key),
+        model_name=model_name, layer=layer, collar=collar,
+        output_type=output_type, match=match)
+
+
+def _iter_object_frames(store: Store, *, phraser_key, model_name, layer,
+    collar=None, output_type='hidden_state', match='exact'):
+    return store.iter_object_frames(phraser_key=_pk(phraser_key),
+        model_name=model_name, layer=layer, collar=collar,
+        output_type=output_type, match=match)
+
+
+def _find_or_compute(store: Store, *, phraser_key, collar, model_name,
+    output_type, layer, compute, match='exact', tags=None,
+    add_tags_on_hit=False):
+    _ensure_model(store, model_name)
+    return store.find_or_compute(phraser_key=_pk(phraser_key), collar=collar,
+        model_name=model_name, output_type=output_type, layer=layer,
+        compute=compute, match=match, tags=tags,
+        add_tags_on_hit=add_tags_on_hit)
+
+
 class EchoFrameTests(unittest.TestCase):
     def _make_fake_store(self, tmpdir: str) -> Store:
         index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
@@ -199,7 +365,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -209,11 +375,11 @@ class EchoFrameTests(unittest.TestCase):
                 tags=['exp-a'],
             )
 
-            self.assertEqual(metadata.phraser_key, 'phrase-1')
+            self.assertEqual(metadata.phraser_key, _pk('phrase-1'))
             self.assertEqual(metadata.layer, 7)
             self.assertEqual(metadata.shard_id, 'wav2vec2_hidden_state_0001')
             self.assertEqual(metadata.tags, ['exp-a'])
-            self.assertTrue(store.exists(
+            self.assertTrue(_exists(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -221,7 +387,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=7,
             ))
             self.assertEqual(
-                store.load(
+                _load_query(store, 
                     phraser_key='phrase-1',
                     collar=120,
                     model_name='wav2vec2',
@@ -234,7 +400,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_load_many_returns_payloads_in_query_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -242,7 +408,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=7,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-2',
                 collar=130,
                 model_name='wav2vec2',
@@ -251,7 +417,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[2.0]],
             )
 
-            payloads = store.load_many([
+            payloads = _load_many_queries(store, [
                 {
                     'phraser_key': 'phrase-2',
                     'collar': 130,
@@ -273,7 +439,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_metadata_to_payload_and_metadatas_to_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -281,7 +447,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=7,
                 data=[[1.0]],
             )
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-2',
                 collar=130,
                 model_name='wav2vec2',
@@ -300,7 +466,7 @@ class EchoFrameTests(unittest.TestCase):
         self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -319,7 +485,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_metadata_property_matches_list_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-2',
                 collar=100,
                 model_name='wav2vec2',
@@ -327,7 +493,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[1.0]],
             )
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -336,18 +502,18 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[2.0]],
             )
 
-            self.assertEqual([item.entry_id for item in store.metadata], [
-                second.entry_id,
-                first.entry_id,
+            self.assertEqual([_hex(item) for item in store.metadata], [
+                _hex(second),
+                _hex(first),
             ])
-            self.assertEqual([item.entry_id for item in store.metadata], [
-                item.entry_id for item in store.list_entries()
+            self.assertEqual([_hex(item) for item in store.metadata], [
+                _hex(item) for item in store.list_entries()
             ])
 
     def test_load_object_frames_single_and_all_collars(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=500,
                 model_name='wav2vec2',
@@ -355,7 +521,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=7,
                 data=[[1.0, 2.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=750,
                 model_name='wav2vec2',
@@ -365,14 +531,14 @@ class EchoFrameTests(unittest.TestCase):
             )
 
             exact = store.load_object_frames(
-                phraser_key='phrase-1',
+                phraser_key=_pk('phrase-1'),
                 collar=500,
                 model_name='wav2vec2',
                 output_type='hidden_state',
                 layer=7,
             )
             nearest = store.load_object_frames(
-                phraser_key='phrase-1',
+                phraser_key=_pk('phrase-1'),
                 collar=700,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -380,7 +546,7 @@ class EchoFrameTests(unittest.TestCase):
                 match='nearest',
             )
             all_collars = store.load_object_frames(
-                phraser_key='phrase-1',
+                phraser_key=_pk('phrase-1'),
                 collar=None,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -398,7 +564,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_iter_object_frames_yields_metadata_and_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-1',
                 collar=500,
                 model_name='wav2vec2',
@@ -406,7 +572,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=7,
                 data=[[1.0, 2.0]],
             )
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-1',
                 collar=750,
                 model_name='wav2vec2',
@@ -416,12 +582,12 @@ class EchoFrameTests(unittest.TestCase):
             )
 
             rows = list(store.iter_object_frames(
-                phraser_key='phrase-1',
+                phraser_key=_pk('phrase-1'),
                 model_name='wav2vec2',
                 layer=7,
             ))
             nearest = list(store.iter_object_frames(
-                phraser_key='phrase-1',
+                phraser_key=_pk('phrase-1'),
                 model_name='wav2vec2',
                 layer=7,
                 collar=700,
@@ -435,8 +601,8 @@ class EchoFrameTests(unittest.TestCase):
                     (750, [[3.0, 4.0]]),
                 ],
             )
-            self.assertEqual(rows[0][0].entry_id, first.entry_id)
-            self.assertEqual(rows[1][0].entry_id, second.entry_id)
+            self.assertEqual(_hex(rows[0][0]), _hex(first))
+            self.assertEqual(_hex(rows[1][0]), _hex(second))
             self.assertEqual(len(nearest), 1)
             self.assertEqual(nearest[0][0].collar, 750)
             self.assertEqual(nearest[0][1], [[3.0, 4.0]])
@@ -446,7 +612,7 @@ class EchoFrameTests(unittest.TestCase):
             store = self._make_fake_store(tmpdir)
 
             for collar in (100, 200, 350):
-                store.put(
+                _put(store, 
                     phraser_key='word-1',
                     collar=collar,
                     model_name='hubert',
@@ -455,7 +621,7 @@ class EchoFrameTests(unittest.TestCase):
                     data=[[[1, 2], [3, 4]]],
                 )
 
-            minimum = store.find_one(
+            minimum = _find_one(store, 
                 phraser_key='word-1',
                 collar=150,
                 model_name='hubert',
@@ -463,7 +629,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 match='min',
             )
-            maximum = store.find_one(
+            maximum = _find_one(store, 
                 phraser_key='word-1',
                 collar=150,
                 model_name='hubert',
@@ -471,7 +637,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 match='max',
             )
-            nearest = store.find_one(
+            nearest = _find_one(store, 
                 phraser_key='word-1',
                 collar=180,
                 model_name='hubert',
@@ -484,15 +650,15 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(maximum.collar, 100)
             self.assertEqual(nearest.collar, 200)
 
-            deleted = store.delete(
-                phraser_key='word-1',
+            deleted = _delete(store,
+                phraser_key=_pk('word-1'),
                 collar=200,
                 model_name='hubert',
                 output_type='attention',
                 layer=3,
             )
             self.assertEqual(deleted.storage_status, 'deleted')
-            self.assertFalse(store.exists(
+            self.assertFalse(_exists(store, 
                 phraser_key='word-1',
                 collar=200,
                 model_name='hubert',
@@ -509,16 +675,16 @@ class EchoFrameTests(unittest.TestCase):
                 calls.append('compute')
                 return [1, 2, 3]
 
-            metadata, created = store.find_or_compute(
-                phraser_key='phone-1',
+            metadata, created = _find_or_compute(store,
+                phraser_key=_pk('phone-1'),
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
                 layer=0,
                 compute=compute,
             )
-            again, created_again = store.find_or_compute(
-                phraser_key='phone-1',
+            again, created_again = _find_or_compute(store,
+                phraser_key=_pk('phone-1'),
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
@@ -528,7 +694,7 @@ class EchoFrameTests(unittest.TestCase):
 
             self.assertTrue(created)
             self.assertFalse(created_again)
-            self.assertEqual(metadata.entry_id, again.entry_id)
+            self.assertEqual(_hex(metadata), _hex(again))
             self.assertEqual(calls, ['compute'])
 
     def test_find_or_compute_can_add_tags_on_hit(self) -> None:
@@ -538,8 +704,8 @@ class EchoFrameTests(unittest.TestCase):
             def compute() -> list[int]:
                 return [1, 2, 3]
 
-            metadata, created = store.find_or_compute(
-                phraser_key='phone-2',
+            metadata, created = _find_or_compute(store,
+                phraser_key=_pk('phone-2'),
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
@@ -547,8 +713,8 @@ class EchoFrameTests(unittest.TestCase):
                 compute=compute,
                 tags=['exp-a'],
             )
-            again, created_again = store.find_or_compute(
-                phraser_key='phone-2',
+            again, created_again = _find_or_compute(store,
+                phraser_key=_pk('phone-2'),
                 collar=50,
                 model_name='encodec',
                 output_type='codebook_indices',
@@ -560,14 +726,14 @@ class EchoFrameTests(unittest.TestCase):
 
             self.assertTrue(created)
             self.assertFalse(created_again)
-            self.assertEqual(metadata.entry_id, again.entry_id)
+            self.assertEqual(_hex(metadata), _hex(again))
             self.assertEqual(again.tags, ['exp-a', 'exp-b'])
 
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
 
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-2',
                 collar=90,
                 model_name='wav2vec2',
@@ -579,16 +745,16 @@ class EchoFrameTests(unittest.TestCase):
 
             entries = store.find_by_tag('exp-a')
             self.assertEqual(len(entries), 1)
-            self.assertEqual(entries[0].entry_id, metadata.entry_id)
+            self.assertEqual(_hex(entries[0]), _hex(metadata))
 
-            updated = store.add_tags(metadata.entry_id, ['review'])
+            updated = store.add_tags(metadata.echoframe_key, ['review'])
             self.assertEqual(updated.tags, ['exp-a', 'review', 'subset-1'])
 
             entries = store.find_by_tag('review')
             self.assertEqual(len(entries), 1)
-            self.assertEqual(entries[0].entry_id, metadata.entry_id)
+            self.assertEqual(_hex(entries[0]), _hex(metadata))
 
-            updated = store.remove_tags(metadata.entry_id, ['exp-a'])
+            updated = store.remove_tags(metadata.echoframe_key, ['exp-a'])
             self.assertEqual(updated.tags, ['review', 'subset-1'])
             self.assertEqual(store.find_by_tag('exp-a'), [])
 
@@ -596,7 +762,7 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
 
-            store.put(
+            _put(store, 
                 phraser_key='phrase-10',
                 collar=90,
                 model_name='wav2vec2',
@@ -605,7 +771,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
                 tags=['exp-a', 'subset-1'],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-11',
                 collar=90,
                 model_name='wav2vec2',
@@ -624,7 +790,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_find_by_label(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-10',
                 collar=90,
                 model_name='wav2vec2',
@@ -632,7 +798,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=5,
                 data=[[1.0]],
             )
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-10',
                 collar=120,
                 model_name='wav2vec2',
@@ -640,7 +806,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=6,
                 data=[[2.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-11',
                 collar=90,
                 model_name='hubert',
@@ -650,8 +816,8 @@ class EchoFrameTests(unittest.TestCase):
             )
 
             load = mock.Mock(side_effect=lambda key: {
-                'phrase-10': types.SimpleNamespace(label='hello'),
-                'phrase-11': types.SimpleNamespace(label='world'),
+                _pk('phrase-10'): types.SimpleNamespace(label='hello'),
+                _pk('phrase-11'): types.SimpleNamespace(label='world'),
             }[key])
             fake_models = types.SimpleNamespace(
                 cache=types.SimpleNamespace(load=load))
@@ -662,15 +828,15 @@ class EchoFrameTests(unittest.TestCase):
                 filtered = store.find_by_label('hello',
                     model_name='wav2vec2', layer=6)
 
-            self.assertEqual(sorted(item.entry_id for item in records),
-                sorted([first.entry_id, second.entry_id]))
-            self.assertEqual([item.entry_id for item in filtered], [
-                second.entry_id,
+            self.assertEqual(sorted(_hex(item) for item in records),
+                sorted([_hex(first), _hex(second)]))
+            self.assertEqual([_hex(item) for item in filtered], [
+                _hex(second),
             ])
             self.assertEqual(load.call_args_list, [
-                mock.call('phrase-10'),
-                mock.call('phrase-11'),
-                mock.call('phrase-10'),
+                mock.call(_pk('phrase-10')),
+                mock.call(_pk('phrase-11')),
+                mock.call(_pk('phrase-10')),
             ])
 
     def test_find_by_label_validates_input(self) -> None:
@@ -724,7 +890,7 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
 
-            one = store.put(
+            one = _put(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -732,7 +898,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[1.0]],
             )
-            two = store.put(
+            two = _put(store, 
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -744,8 +910,8 @@ class EchoFrameTests(unittest.TestCase):
             old_shard = one.shard_id
             self.assertEqual(old_shard, two.shard_id)
 
-            store.delete(
-                phraser_key='phrase-b',
+            _delete(store,
+                phraser_key=_pk('phrase-b'),
                 collar=100,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -754,7 +920,7 @@ class EchoFrameTests(unittest.TestCase):
             compacted = store.compact_shards()
             self.assertEqual(compacted, [old_shard])
 
-            live = store.find_one(
+            live = _find_one(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -763,7 +929,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             self.assertNotEqual(live.shard_id, old_shard)
             self.assertEqual(
-                store.load(
+                _load_query(store, 
                     phraser_key='phrase-a',
                     collar=100,
                     model_name='wav2vec2',
@@ -778,13 +944,13 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
 
-            self.assertEqual(store.find_many([]), [])
-            self.assertEqual(store.load_many([]), [])
+            self.assertEqual(_find_many(store, []), [])
+            self.assertEqual(_load_many_queries(store, []), [])
             self.assertEqual(store.put_many([]), [])
             self.assertEqual(store.add_tags_many([], ['exp-a']), [])
             self.assertEqual(store.remove_tags_many([], ['exp-a']), [])
-            self.assertIsNone(store.delete(
-                phraser_key='missing',
+            self.assertIsNone(_delete(store,
+                phraser_key=_pk('missing'),
                 collar=10,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -792,7 +958,7 @@ class EchoFrameTests(unittest.TestCase):
             ))
             with self.assertRaisesRegex(ValueError,
                 'no stored output matched'):
-                store.load(
+                _load_query(store, 
                     phraser_key='missing',
                     collar=10,
                     model_name='wav2vec2',
@@ -803,7 +969,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_load_many_returns_none_for_misses_and_can_be_strict(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -812,7 +978,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
             )
 
-            payloads = store.load_many([
+            payloads = _load_many_queries(store, [
                 {
                     'phraser_key': 'phrase-1',
                     'collar': 100,
@@ -831,7 +997,7 @@ class EchoFrameTests(unittest.TestCase):
 
             self.assertEqual(payloads, [[[1.0]], None])
             with self.assertRaisesRegex(ValueError, 'no stored output matched'):
-                store.load_many([
+                _load_many_queries(store, [
                     {
                         'phraser_key': 'phrase-1',
                         'collar': 100,
@@ -854,16 +1020,16 @@ class EchoFrameTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError,
                 'no stored output matched'):
-                store.load_object_frames(
-                    phraser_key='missing',
+                _load_object_frames(store,
+                    phraser_key=_pk('missing'),
                     collar=500,
                     model_name='wav2vec2',
                     output_type='hidden_state',
                     layer=7,
                 )
 
-            self.assertEqual(store.load_object_frames(
-                phraser_key='missing',
+            self.assertEqual(_load_object_frames(store,
+                phraser_key=_pk('missing'),
                 collar=None,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -871,15 +1037,15 @@ class EchoFrameTests(unittest.TestCase):
             ), {})
             with self.assertRaisesRegex(ValueError,
                 'no stored output matched'):
-                list(store.iter_object_frames(
-                    phraser_key='missing',
+                list(_iter_object_frames(store,
+                    phraser_key=_pk('missing'),
                     collar=500,
                     model_name='wav2vec2',
                     output_type='hidden_state',
                     layer=7,
                 ))
-            self.assertEqual(list(store.iter_object_frames(
-                phraser_key='missing',
+            self.assertEqual(list(_iter_object_frames(store,
+                phraser_key=_pk('missing'),
                 collar=None,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -889,7 +1055,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_include_deleted_filters(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            live = store.put(
+            live = _put(store, 
                 phraser_key='phrase-live',
                 collar=80,
                 model_name='wav2vec2',
@@ -898,7 +1064,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
                 tags=['exp-a', 'shared'],
             )
-            deleted = store.put(
+            deleted = _put(store, 
                 phraser_key='phrase-deleted',
                 collar=90,
                 model_name='wav2vec2',
@@ -907,8 +1073,8 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[2.0]],
                 tags=['exp-b', 'shared'],
             )
-            store.delete(
-                phraser_key='phrase-deleted',
+            _delete(store,
+                phraser_key=_pk('phrase-deleted'),
                 collar=90,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -916,28 +1082,28 @@ class EchoFrameTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                [item.entry_id for item in store.find(
+                [_hex(item) for item in _find(store, 
                     'phrase-deleted',
                     include_deleted=True,
                 )],
-                [deleted.entry_id],
+                [_hex(deleted)],
             )
-            self.assertEqual(store.find('phrase-deleted'), [])
+            self.assertEqual(_find(store, 'phrase-deleted'), [])
             self.assertEqual(
-                [item.entry_id for item in store.find_by_tag(
+                [_hex(item) for item in store.find_by_tag(
                     'exp-b',
                     include_deleted=True,
                 )],
-                [deleted.entry_id],
+                [_hex(deleted)],
             )
             self.assertEqual(store.find_by_tag('exp-b'), [])
-            self.assertEqual(sorted(item.entry_id for item in
+            self.assertEqual(sorted(_hex(item) for item in
                 store.find_by_tags(['shared'], include_deleted=True)), [
-                deleted.entry_id,
-                live.entry_id,
+                _hex(deleted),
+                _hex(live),
             ])
-            self.assertEqual([item.entry_id for item in
-                store.find_by_tags(['shared'])], [live.entry_id])
+            self.assertEqual([_hex(item) for item in
+                store.find_by_tags(['shared'])], [_hex(live)])
             self.assertEqual(store.list_tags(), ['exp-a', 'shared'])
             self.assertEqual(sorted(store.list_tags(include_deleted=True)), [
                 'exp-a',
@@ -948,7 +1114,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_index_validation_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -959,7 +1125,7 @@ class EchoFrameTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, 'match must be one of'):
-                store.find_one(
+                _find_one(store, 
                     phraser_key='phrase-1',
                     collar=100,
                     model_name='wav2vec2',
@@ -968,7 +1134,7 @@ class EchoFrameTests(unittest.TestCase):
                     match='bad',
                 )
             with self.assertRaisesRegex(ValueError, 'match must be one of'):
-                store.find_many([
+                _find_many(store, [
                     {
                         'phraser_key': 'phrase-1',
                         'collar': 100,
@@ -988,7 +1154,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_get_shard_metadata_directly(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1007,7 +1173,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_public_overview_and_entry_listing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1016,7 +1182,7 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[1.0]],
                 tags=['exp-a'],
             )
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-2',
                 collar=120,
                 model_name='wav2vec2',
@@ -1025,8 +1191,8 @@ class EchoFrameTests(unittest.TestCase):
                 data=[[2.0]],
                 tags=['exp-b'],
             )
-            store.delete(
-                phraser_key='phrase-2',
+            _delete(store,
+                phraser_key=_pk('phrase-2'),
                 collar=120,
                 model_name='wav2vec2',
                 output_type='hidden_state',
@@ -1038,16 +1204,16 @@ class EchoFrameTests(unittest.TestCase):
             overview = store.overview(include_deleted=True,
                 health_event_limit=5)
 
-            self.assertEqual([item.entry_id for item in live_entries],
-                [first.entry_id])
-            self.assertEqual([item.entry_id for item in all_entries], [
-                first.entry_id,
-                second.entry_id,
+            self.assertEqual([_hex(item) for item in live_entries],
+                [_hex(first)])
+            self.assertEqual([_hex(item) for item in all_entries], [
+                _hex(first),
+                _hex(second),
             ])
             self.assertEqual(overview['entry_count'], 2)
             self.assertEqual(overview['shard_count'], 1)
-            self.assertEqual([item['entry_id'] for item in
-                overview['entries']], [first.entry_id, second.entry_id])
+            self.assertEqual([item['echoframe_key_hex'] for item in
+                overview['entries']], [_hex(first), _hex(second)])
             self.assertEqual(sorted(overview['tags']), ['exp-a', 'exp-b'])
             self.assertIsNone(overview['integrity'])
             self.assertLessEqual(len(
@@ -1071,11 +1237,8 @@ class EchoFrameTests(unittest.TestCase):
             tags=[' b ', 'a', 'a'],
         )
 
-        self.assertEqual(metadata.identity_key,
-            'phrase-1:wav2vec2:hidden_state:0007:000000120')
-        self.assertEqual(metadata.echoframe_key, metadata.entry_id)
-        self.assertEqual(metadata.object_key,
-            'obj:phrase-1:wav2vec2:hidden_state:0007:000000120')
+        self.assertEqual(metadata.format_echoframe_key(),
+            metadata.echoframe_key.hex())
         self.assertEqual(metadata.tags, ['a', 'b'])
         self.assertEqual(metadata.shape, (2, 3))
         self.assertIsNotNone(metadata.created_at)
@@ -1105,7 +1268,7 @@ class EchoFrameTests(unittest.TestCase):
             self.assertIs(metadata.phraser_object, phraser_object)
             self.assertEqual(metadata.label, 'hello')
             self.assertEqual(str(metadata),
-                f"{{'entry_id': '{metadata.entry_id}',\n"
+                f"{{'echoframe_key_hex': '{metadata.format_echoframe_key()}',\n"
                 " 'phraser_key': 'phrase-1',\n"
                 " 'collar': 120,\n"
                 " 'model_name': 'wav2vec2',\n"
@@ -1137,7 +1300,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_store_metadata_are_bound_and_can_load_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            created = store.put(
+            created = _put(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -1151,7 +1314,7 @@ class EchoFrameTests(unittest.TestCase):
             self.assertEqual(created.load_payload(),
                 [[1.0, 2.0], [3.0, 4.0]])
 
-            found = store.find_one(
+            found = _find_one(store, 
                 phraser_key='phrase-1',
                 collar=120,
                 model_name='wav2vec2',
@@ -1187,7 +1350,7 @@ class EchoFrameTests(unittest.TestCase):
                 shard_id='manual_0001')
             self.assertEqual(stored.shard_id, 'manual_0001')
             self.assertEqual(stored.dataset_path,
-                f'/layer_0002/{metadata.entry_id}')
+                f'/layer_0002/{metadata.format_echoframe_key()}')
             self.assertEqual(storage.shard_size('manual_0001'),
                 (Path(tmpdir) / 'manual_0001.h5').stat().st_size)
 
@@ -1214,7 +1377,7 @@ class EchoFrameTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             store_root = Path(tmpdir) / 'tests' / 'data' / 'store-root'
             store = self._make_fake_store(str(store_root))
-            store.put(
+            _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1255,7 +1418,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             store = Store(tmpdir, index=index, storage=storage)
 
-            first = store.put(
+            first = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1265,7 +1428,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             storage.force_stat_failure = True
 
-            second = store.put(
+            second = _put(store, 
                 phraser_key='phrase-2',
                 collar=100,
                 model_name='wav2vec2',
@@ -1457,7 +1620,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_index_falls_back_to_last_known_shard_size(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1477,7 +1640,7 @@ class EchoFrameTests(unittest.TestCase):
 
             with mock.patch.object(Path, 'stat', autospec=True,
                 side_effect=flaky_stat):
-                updated = store.add_tags(metadata.entry_id, ['exp-b'])
+                updated = store.add_tags(metadata.echoframe_key, ['exp-b'])
 
             self.assertEqual(updated.tags, ['exp-a', 'exp-b'])
             shard_stats = store.index.get_shard_metadata(metadata.shard_id)
@@ -1488,7 +1651,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_compaction_no_op_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            live = store.put(
+            live = _put(store, 
                 phraser_key='phrase-live',
                 collar=100,
                 model_name='wav2vec2',
@@ -1496,7 +1659,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[1.0]],
             )
-            deleted = store.put(
+            deleted = _put(store, 
                 phraser_key='phrase-deleted',
                 collar=100,
                 model_name='hubert',
@@ -1504,7 +1667,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=2,
                 data=[[[1, 2]]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-deleted',
                 collar=100,
                 model_name='hubert',
@@ -1530,7 +1693,7 @@ class EchoFrameTests(unittest.TestCase):
         self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            live = store.put(
+            live = _put(store, 
                 phraser_key='phrase-live',
                 collar=100,
                 model_name='wav2vec2',
@@ -1538,7 +1701,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[1.0]],
             )
-            deleted = store.put(
+            deleted = _put(store, 
                 phraser_key='phrase-deleted',
                 collar=120,
                 model_name='wav2vec2',
@@ -1546,7 +1709,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-deleted',
                 collar=120,
                 model_name='wav2vec2',
@@ -1560,19 +1723,19 @@ class EchoFrameTests(unittest.TestCase):
             all_entries = store.list_entries(include_deleted=True)
             overview = store.overview(include_deleted=True)
 
-            self.assertEqual([item.entry_id for item in live_entries],
-                [live.entry_id])
-            self.assertEqual([item.entry_id for item in all_entries], [
-                deleted.entry_id,
-                live.entry_id,
+            self.assertEqual([_hex(item) for item in live_entries],
+                [_hex(live)])
+            self.assertEqual([_hex(item) for item in all_entries], [
+                _hex(deleted),
+                _hex(live),
             ])
-            self.assertEqual([item['entry_id'] for item in
-                overview['entries']], [deleted.entry_id, live.entry_id])
+            self.assertEqual([item['echoframe_key_hex'] for item in
+                overview['entries']], [_hex(deleted), _hex(live)])
 
     def test_list_entries_ignores_stale_shard_index_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-live',
                 collar=100,
                 model_name='wav2vec2',
@@ -1595,18 +1758,19 @@ class EchoFrameTests(unittest.TestCase):
                 tags=metadata.tags,
                 created_at=metadata.created_at,
                 deleted_at=metadata.deleted_at,
+                echoframe_key=metadata.echoframe_key,
             )
             store.index.upsert(duplicated)
             with store.index.env.begin(write=True) as txn:
                 txn.put(store.index._shard_key(metadata.shard_id,
-                    metadata.entry_id),
-                    metadata.entry_id.encode('utf-8'),
+                    metadata.echoframe_key),
+                    metadata.echoframe_key,
                     db=store.index.by_shard_db)
 
             entries = store.list_entries()
 
-            self.assertEqual([item.entry_id for item in entries],
-                [metadata.entry_id])
+            self.assertEqual([_hex(item) for item in entries],
+                [_hex(metadata)])
 
     def test_compaction_marks_failed_journal_on_error(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1618,7 +1782,7 @@ class EchoFrameTests(unittest.TestCase):
             )
             store = Store(tmpdir, index=index, storage=storage)
 
-            one = store.put(
+            one = _put(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -1626,7 +1790,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1634,7 +1798,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1655,7 +1819,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_shard_health_report_excludes_deleted_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            live = store.put(
+            live = _put(store, 
                 phraser_key='phrase-live',
                 collar=100,
                 model_name='wav2vec2',
@@ -1663,7 +1827,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-deleted',
                 collar=120,
                 model_name='wav2vec2',
@@ -1671,7 +1835,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=1,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-deleted',
                 collar=120,
                 model_name='wav2vec2',
@@ -1688,7 +1852,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_resume_pending_runs_before_new_compaction(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            one = store.put(
+            one = _put(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -1696,7 +1860,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1704,7 +1868,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1714,8 +1878,8 @@ class EchoFrameTests(unittest.TestCase):
             plan = store.compact_shards(dry_run=True)[0]
             journal = store.index.create_compaction_journal(
                 plan['shard_id'],
-                source_entry_ids=plan['source_entry_ids'],
-                live_entry_ids=plan['live_entry_ids'],
+                source_echoframe_keys=plan['source_echoframe_keys'],
+                live_echoframe_keys=plan['live_echoframe_keys'],
                 target_shard_id=plan['target_shard_id'],
             )
 
@@ -1732,7 +1896,7 @@ class EchoFrameTests(unittest.TestCase):
     def test_resume_compaction_removes_stale_source_shard_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = self._make_fake_store(tmpdir)
-            one = store.put(
+            one = _put(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -1740,7 +1904,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1748,7 +1912,7 @@ class EchoFrameTests(unittest.TestCase):
                 layer=3,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -1758,13 +1922,13 @@ class EchoFrameTests(unittest.TestCase):
             plan = store.compact_shards(dry_run=True)[0]
             journal = store.index.create_compaction_journal(
                 plan['shard_id'],
-                source_entry_ids=plan['source_entry_ids'],
-                live_entry_ids=plan['live_entry_ids'],
+                source_echoframe_keys=plan['source_echoframe_keys'],
+                live_echoframe_keys=plan['live_echoframe_keys'],
                 target_shard_id=plan['target_shard_id'],
             )
 
-            live_entries = [store.index.get(entry_id)
-                for entry_id in journal['live_entry_ids']]
+            live_entries = [store.index.get(echoframe_key)
+                for echoframe_key in journal['live_echoframe_keys']]
             updated = store.storage.compact_shard_to(
                 journal['shard_id'],
                 [entry for entry in live_entries if entry is not None],
@@ -1789,14 +1953,14 @@ class EchoFrameTests(unittest.TestCase):
                 return_value='2026-04-01T12:00:00+00:00'):
                 first = store.index.create_compaction_journal(
                     'wav2vec2_hidden_state_0001',
-                    source_entry_ids=['a'],
-                    live_entry_ids=['a'],
+                    source_echoframe_keys=['a'],
+                    live_echoframe_keys=['a'],
                     target_shard_id='wav2vec2_hidden_state_0002',
                 )
                 second = store.index.create_compaction_journal(
                     'wav2vec2_hidden_state_0001',
-                    source_entry_ids=['a'],
-                    live_entry_ids=['a'],
+                    source_echoframe_keys=['a'],
+                    live_echoframe_keys=['a'],
                     target_shard_id='wav2vec2_hidden_state_0002',
                 )
 
@@ -1827,7 +1991,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
     def test_real_put_delete_compact_and_tag_flow(self) -> None:
         tmpdir, store = self._make_store()
         with tmpdir:
-            records = store.put_many([
+            records = _put_many(store, [
                 {
                     'phraser_key': 'phrase-1',
                     'collar': 100,
@@ -1849,7 +2013,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             ])
 
             self.assertEqual(len(records), 2)
-            loaded = store.load(
+            loaded = _load_query(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1858,7 +2022,8 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(self._payload_to_list(loaded), [[1.0]])
 
-            updated = store.add_tags_many([record.entry_id for record in records],
+            updated = store.add_tags_many(
+                [record.echoframe_key for record in records],
                 ['batch'])
             self.assertEqual(len(updated), 2)
             self.assertEqual(sorted(store.list_tags()), [
@@ -1867,7 +2032,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             self.assertEqual(len(store.find_by_tags(['speaker-1', 'speaker-2'],
                 match='any')), 2)
 
-            deleted = store.delete(
+            deleted = _delete(store,
                 phraser_key='phrase-2',
                 collar=100,
                 model_name='wav2vec2',
@@ -1884,7 +2049,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
 
             compacted = store.compact_shards()
             self.assertEqual(compacted, [shard_id])
-            live = store.find_one(
+            live = _find_one(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1892,7 +2057,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 layer=3,
             )
             self.assertNotEqual(live.shard_id, shard_id)
-            self.assertEqual(self._payload_to_list(store.load(
+            self.assertEqual(self._payload_to_list(_load_query(store, 
                 phraser_key='phrase-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -1903,7 +2068,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
     def test_real_integrity_checks_and_shard_stats(self) -> None:
         tmpdir, store = self._make_store()
         with tmpdir:
-            metadata = store.put(
+            metadata = _put(store, 
                 phraser_key='phrase-3',
                 collar=120,
                 model_name='hubert',
@@ -1912,7 +2077,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 data=[[[1, 2], [3, 4]]],
                 tags=['exp-b'],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-4',
                 collar=120,
                 model_name='hubert',
@@ -1921,7 +2086,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 data=[[[5, 6], [7, 8]]],
                 tags=['exp-b', 'subset-1'],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-4',
                 collar=120,
                 model_name='hubert',
@@ -1940,13 +2105,15 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             self.assertFalse(report['ok'])
             self.assertEqual(report['checked_entries'], 1)
             self.assertEqual(len(report['broken_references']), 1)
-            self.assertEqual(report['broken_references'][0]['entry_id'],
-                metadata.entry_id)
+            self.assertEqual(
+                report['broken_references'][0]['echoframe_key_hex'],
+                _hex(metadata),
+            )
 
     def test_real_find_many_and_tag_queries(self) -> None:
         tmpdir, store = self._make_store()
         with tmpdir:
-            store.put_many([
+            _put_many(store, [
                 {
                     'phraser_key': 'phrase-10',
                     'collar': 80,
@@ -1976,7 +2143,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 },
             ])
 
-            results = store.find_many([
+            results = _find_many(store, [
                 {
                     'phraser_key': 'phrase-10',
                     'collar': 80,
@@ -1995,24 +2162,24 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             ])
 
             self.assertEqual([result.phraser_key for result in results], [
-                'phrase-10',
-                'phrase-11',
+                _pk('phrase-10'),
+                _pk('phrase-11'),
             ])
             self.assertEqual(sorted(store.list_tags()), [
                 'exp-a', 'exp-b', 'run-1', 'run-2'])
             all_match = store.find_by_tags(['exp-a', 'run-2'], match='all')
             any_match = store.find_by_tags(['exp-b', 'run-1'], match='any')
             self.assertEqual([item.phraser_key for item in all_match],
-                ['phrase-11'])
+                [_pk('phrase-11')])
             self.assertEqual(sorted(item.phraser_key for item in any_match), [
-                'phrase-10',
-                'phrase-12',
+                _pk('phrase-10'),
+                _pk('phrase-12'),
             ])
 
     def test_real_retrieval_helpers(self) -> None:
         tmpdir, store = self._make_store()
         with tmpdir:
-            store.put(
+            _put(store, 
                 phraser_key='phrase-20',
                 collar=500,
                 model_name='wav2vec2',
@@ -2020,7 +2187,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 layer=7,
                 data=[[1.0, 2.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-20',
                 collar=750,
                 model_name='wav2vec2',
@@ -2028,7 +2195,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 layer=7,
                 data=[[3.0, 4.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-21',
                 collar=500,
                 model_name='wav2vec2',
@@ -2037,7 +2204,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 data=[[5.0, 6.0]],
             )
 
-            payloads = store.load_many([
+            payloads = _load_many_queries(store, [
                 {
                     'phraser_key': 'phrase-21',
                     'collar': 500,
@@ -2060,26 +2227,26 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                     'layer': 7,
                 },
             ])
-            exact = store.load_object_frames(
+            exact = _load_object_frames(store,
                 phraser_key='phrase-20',
                 model_name='wav2vec2',
                 layer=7,
                 collar=500,
             )
-            nearest = store.load_object_frames(
+            nearest = _load_object_frames(store,
                 phraser_key='phrase-20',
                 model_name='wav2vec2',
                 layer=7,
                 collar=700,
                 match='nearest',
             )
-            all_collars = store.load_object_frames(
+            all_collars = _load_object_frames(store,
                 phraser_key='phrase-20',
                 model_name='wav2vec2',
                 layer=7,
                 collar=None,
             )
-            rows = list(store.iter_object_frames(
+            rows = list(_iter_object_frames(store,
                 phraser_key='phrase-20',
                 model_name='wav2vec2',
                 layer=7,
@@ -2112,7 +2279,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError,
                 'no stored output matched'):
-                store.load_many([
+                _load_many_queries(store, [
                     {
                         'phraser_key': 'missing',
                         'collar': 500,
@@ -2125,7 +2292,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
     def test_resume_compaction_from_journal(self) -> None:
         tmpdir, store = self._make_store()
         with tmpdir:
-            one = store.put(
+            one = _put(store, 
                 phraser_key='phrase-a',
                 collar=100,
                 model_name='wav2vec2',
@@ -2133,7 +2300,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 layer=3,
                 data=[[1.0]],
             )
-            store.put(
+            _put(store, 
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -2141,7 +2308,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 layer=3,
                 data=[[2.0]],
             )
-            store.delete(
+            _delete(store,
                 phraser_key='phrase-b',
                 collar=100,
                 model_name='wav2vec2',
@@ -2151,8 +2318,8 @@ class EchoFrameIntegrationTests(unittest.TestCase):
             plan = store.compact_shards(dry_run=True)[0]
             journal = store.index.create_compaction_journal(
                 plan['shard_id'],
-                source_entry_ids=plan['source_entry_ids'],
-                live_entry_ids=plan['live_entry_ids'],
+                source_echoframe_keys=plan['source_echoframe_keys'],
+                live_echoframe_keys=plan['live_echoframe_keys'],
                 target_shard_id=plan['target_shard_id'],
             )
 
@@ -2170,7 +2337,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
 
             self.assertIs(first.index.env, second.index.env)
 
-            first.put(
+            first_record = _put(first,
                 phraser_key='phrase-cache-1',
                 collar=100,
                 model_name='wav2vec2',
@@ -2179,14 +2346,10 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 data=[[1.0, 2.0]],
             )
             self.assertEqual(self._payload_to_list(second.load(
-                phraser_key='phrase-cache-1',
-                collar=100,
-                model_name='wav2vec2',
-                output_type='hidden_state',
-                layer=3,
+                first_record.echoframe_key,
             )), [[1.0, 2.0]])
 
-            second.put(
+            second_record = _put(second,
                 phraser_key='phrase-cache-2',
                 collar=100,
                 model_name='wav2vec2',
@@ -2195,11 +2358,7 @@ class EchoFrameIntegrationTests(unittest.TestCase):
                 data=[[3.0, 4.0]],
             )
             self.assertEqual(self._payload_to_list(first.load(
-                phraser_key='phrase-cache-2',
-                collar=100,
-                model_name='wav2vec2',
-                output_type='hidden_state',
-                layer=3,
+                second_record.echoframe_key,
             )), [[3.0, 4.0]])
 
     def test_equivalent_paths_reuse_the_same_lmdb_env(self) -> None:

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import echoframe
 import numpy as np
+from .metadata import metadata_class_for_output_type
 
 try:
     import frame
@@ -113,15 +114,13 @@ def get_codebook_indices_batch(segments, collar=500, model_name='wav2vec2',
 
 
 def segment_to_echoframe_key(segment):
-    '''Convert a segment key to the text key used by echoframe.'''
+    '''Return the raw binary segment key used by echoframe.'''
     key = getattr(segment, 'key', None)
     if key is None:
         raise ValueError('segment must expose a key')
     if isinstance(key, bytes):
-        return key.hex()
-    if isinstance(key, str):
         return key
-    raise TypeError('segment.key must be bytes or str')
+    raise TypeError('segment.key must be bytes')
 
 
 def _resolve_store(store, store_root):
@@ -190,14 +189,32 @@ def _segment_context(segment, collar):
 
 
 def _embeddings_missing(store, phraser_key, collar, model_name, layers):
-    return any(not store.exists(phraser_key, collar, model_name,
-        'hidden_state', layer) for layer in layers)
+    for layer in layers:
+        echoframe_key = store.make_echoframe_key(
+            'hidden_state',
+            model_name=model_name,
+            phraser_key=phraser_key,
+            layer=layer,
+            collar=collar,
+        )
+        if store.load_metadata(echoframe_key) is None:
+            return True
+    return False
 
 
 def _codebook_artifacts_missing(store, phraser_key, collar, model_name):
-    return (not store.exists(phraser_key, collar, model_name,
-        'codebook_indices', 0) or not store.exists(phraser_key, collar,
-        model_name, 'codebook_matrix', 0))
+    indices_key = store.make_echoframe_key(
+        'codebook_indices',
+        model_name=model_name,
+        phraser_key=phraser_key,
+        collar=collar,
+    )
+    matrix_key = store.make_echoframe_key(
+        'codebook_matrix',
+        model_name=model_name,
+    )
+    return (store.load_metadata(indices_key) is None or
+        store.load_metadata(matrix_key) is None)
 
 
 def _compute_and_store_embeddings(audio_filename, col_start_ms,
@@ -233,8 +250,18 @@ def _compute_and_store_embeddings(audio_filename, col_start_ms,
             raise ValueError(message)
         hs = hidden_states[layer]
         data = hs[0, indices, :] if hs.ndim == 3 else hs[indices, :]
-        store.put(phraser_key, collar, model_name, 'hidden_state', layer,
-            data, tags=tags)
+        metadata_cls = metadata_class_for_output_type('hidden_state')
+        echoframe_key = store.make_echoframe_key(
+            'hidden_state',
+            model_name=model_name,
+            phraser_key=phraser_key,
+            layer=layer,
+            collar=collar,
+        )
+        metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+            model_name=model_name, layer=layer, tags=tags,
+            echoframe_key=echoframe_key)
+        store.put(metadata.echoframe_key, metadata, data)
 
 
 def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
@@ -260,10 +287,25 @@ def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
         audio_filename, start=_ms_to_s(col_start_ms), end=_ms_to_s(col_end_ms),
         model=compute_model, gpu=gpu)
     selected_indices = np.asarray(artifacts.indices)[frame_indices]
-    store.put(phraser_key, collar, model_name, 'codebook_indices', 0,
-        selected_indices, tags=tags)
-    store.put(phraser_key, collar, model_name, 'codebook_matrix', 0,
-        np.asarray(artifacts.codebook_matrix), tags=tags)
+    ci_cls = metadata_class_for_output_type('codebook_indices')
+    ci_key = store.make_echoframe_key(
+        'codebook_indices',
+        model_name=model_name,
+        phraser_key=phraser_key,
+        collar=collar,
+    )
+    ci_metadata = ci_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, tags=tags, echoframe_key=ci_key)
+    store.put(ci_metadata.echoframe_key, ci_metadata, selected_indices)
+    cm_cls = metadata_class_for_output_type('codebook_matrix')
+    cm_key = store.make_echoframe_key(
+        'codebook_matrix',
+        model_name=model_name,
+    )
+    cm_metadata = cm_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, tags=tags, echoframe_key=cm_key)
+    store.put(cm_metadata.echoframe_key, cm_metadata,
+        np.asarray(artifacts.codebook_matrix))
 
 
 def _ms_to_s(value):

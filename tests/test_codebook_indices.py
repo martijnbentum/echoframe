@@ -16,6 +16,7 @@ from echoframe import (
     TokenCodebooks,
 )
 from echoframe.index import LmdbIndex
+from echoframe.metadata import metadata_class_for_output_type
 from echoframe.output_storage import Hdf5ShardStore
 
 
@@ -149,7 +150,7 @@ class CountingStore:
         self.matrices = matrices
         self.load_calls = 0
 
-    def load_with_echoframe_key(self, echoframe_key):
+    def load(self, echoframe_key):
         self.load_calls += 1
         return self.matrices[echoframe_key]
 
@@ -198,25 +199,21 @@ class TestStoreCodebookMatrixRoundTrip(unittest.TestCase):
         tmpdir, store = self._make_store()
         with tmpdir:
             matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            metadata = store.put(
-                phraser_key='phrase-1',
-                collar=0,
-                model_name='wav2vec2',
+            store.register_model('wav2vec2')
+            echoframe_key = store.make_echoframe_key(
                 output_type='codebook_matrix',
-                layer=0,
-                data=matrix,
+                model_name='wav2vec2',
             )
+            metadata_cls = metadata_class_for_output_type('codebook_matrix')
+            metadata = metadata_cls(phraser_key='phrase-1', collar=0,
+                model_name='wav2vec2', layer=0,
+                echoframe_key=echoframe_key)
+            metadata = store.put(echoframe_key, metadata, matrix)
 
             self.assertEqual(metadata.output_type, 'codebook_matrix')
             self.assertEqual(metadata.layer, 0)
             np.testing.assert_array_equal(
-                store.load(
-                    phraser_key='phrase-1',
-                    collar=0,
-                    model_name='wav2vec2',
-                    output_type='codebook_matrix',
-                    layer=0,
-                ),
+                store.load(echoframe_key),
                 matrix,
             )
 

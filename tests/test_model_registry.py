@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from echoframe.metadata import metadata_class_for_output_type
 from echoframe.store import Store
 
 
@@ -16,6 +17,14 @@ def _write_seed(tmp_dir, data):
     path = Path(tmp_dir) / 'seed.json'
     path.write_text(json.dumps(data))
     return path
+
+
+def _put(store, phraser_key, collar, model_name, output_type, layer, data,
+    tags=None):
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags)
+    return store.put(metadata.echoframe_key, metadata, data)
 
 
 class TestRegisterModel(unittest.TestCase):
@@ -255,8 +264,8 @@ class TestExistingStoreUnchanged(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             data = np.zeros((4, 8), dtype='float32')
-            store.put('pk_abc', 0, 'bert', 'hidden_state', 0, data)
-            results = store.find('pk_abc')
+            _put(store, 'pk_abc', 0, 'bert', 'hidden_state', 0, data)
+            results = store.find_phraser('pk_abc')
         self.assertEqual(len(results), 1)
 
     def test_registry_does_not_affect_artifact_entries(self):
@@ -265,7 +274,7 @@ class TestExistingStoreUnchanged(unittest.TestCase):
             store = _make_store(tmp)
             store.register_model('bert-base-uncased')
             data = np.zeros((4, 8), dtype='float32')
-            store.put('pk_abc', 0, 'bert', 'hidden_state', 0, data)
+            _put(store, 'pk_abc', 0, 'bert', 'hidden_state', 0, data)
             entries = store.list_entries()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].model_name, 'bert')

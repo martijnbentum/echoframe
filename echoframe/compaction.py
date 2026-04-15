@@ -10,7 +10,7 @@ from .metadata import utc_now
 
 def broken_reference(metadata, reason):
     return {
-        'entry_id': metadata.entry_id,
+        'echoframe_key_hex': metadata.echoframe_key.hex(),
         'phraser_key': metadata.phraser_key,
         'model_name': metadata.model_name,
         'output_type': metadata.output_type,
@@ -37,20 +37,19 @@ def build_shard_health_report(index, storage, shard_id, error):
             entries=entries, read_data=True)
         report['shards'].append(shard_report)
         report['checked_entries'] += len(entries)
-        missing = set(shard_report['missing_entries'])
-        unreadable = {
-            item['entry_id'] for item in shard_report['unreadable_entries']
-        }
+        missing = set(shard_report['missing_echoframe_keys'])
+        unreadable = {item['echoframe_key_hex']
+            for item in shard_report['unreadable_echoframe_keys']}
         if shard_report['open_error'] is not None:
             for metadata in entries:
                 report['lost_items'].append(broken_reference(metadata,
                     reason=shard_report['open_error']))
             continue
         for metadata in entries:
-            if metadata.entry_id in missing:
+            if metadata.format_echoframe_key() in missing:
                 report['lost_items'].append(broken_reference(metadata,
                     reason='missing dataset'))
-            elif metadata.entry_id in unreadable:
+            elif metadata.format_echoframe_key() in unreadable:
                 report['lost_items'].append(broken_reference(metadata,
                     reason='unreadable dataset'))
     return report
@@ -69,8 +68,10 @@ def build_compaction_plan(index, storage, shard_id):
     return {
         'shard_id': shard_id,
         'target_shard_id': target_shard_id,
-        'source_entry_ids': [entry.entry_id for entry in all_entries],
-        'live_entry_ids': [entry.entry_id for entry in live_entries],
+        'source_echoframe_keys': [entry.echoframe_key.hex()
+            for entry in all_entries],
+        'live_echoframe_keys': [entry.echoframe_key.hex()
+            for entry in live_entries],
         'live_entry_count': len(live_entries),
         'deleted_entry_count': len(all_entries) - len(live_entries),
         'byte_size': stats.get('byte_size', 0),
@@ -78,8 +79,8 @@ def build_compaction_plan(index, storage, shard_id):
     }
 
 
-def create_compaction_journal(index, shard_id, source_entry_ids,
-    live_entry_ids, target_shard_id):
+def create_compaction_journal(index, shard_id, source_echoframe_keys,
+    live_echoframe_keys, target_shard_id):
     journal_id = (
         f'{utc_now()}:{shard_id}:{target_shard_id}:{uuid4().hex}'
     )
@@ -87,8 +88,8 @@ def create_compaction_journal(index, shard_id, source_entry_ids,
         'journal_id': journal_id,
         'shard_id': shard_id,
         'target_shard_id': target_shard_id,
-        'source_entry_ids': list(source_entry_ids),
-        'live_entry_ids': list(live_entry_ids),
+        'source_echoframe_keys': list(source_echoframe_keys),
+        'live_echoframe_keys': list(live_echoframe_keys),
         'status': 'running',
         'started_at': utc_now(),
         'finished_at': None,
@@ -132,8 +133,8 @@ def list_compaction_journal(index, status=None):
 def run_compaction_plan(index, storage, plan, from_journal=False):
     shard_id = plan['shard_id']
     live_entries = []
-    for entry_id in plan['live_entry_ids']:
-        metadata = index.get(entry_id)
+    for echoframe_key in plan['live_echoframe_keys']:
+        metadata = index.get(echoframe_key)
         if metadata is None:
             continue
         if metadata.storage_status != 'live':
@@ -146,8 +147,8 @@ def run_compaction_plan(index, storage, plan, from_journal=False):
         journal = plan
     else:
         journal = index.create_compaction_journal(shard_id,
-            source_entry_ids=plan['source_entry_ids'],
-            live_entry_ids=plan['live_entry_ids'],
+            source_echoframe_keys=plan['source_echoframe_keys'],
+            live_echoframe_keys=plan['live_echoframe_keys'],
             target_shard_id=plan['target_shard_id'])
 
     try:
@@ -156,13 +157,14 @@ def run_compaction_plan(index, storage, plan, from_journal=False):
             delete_source=False)
         if updated:
             index.upsert_many(updated)
-        deleted_ids = [entry_id for entry_id in journal['source_entry_ids']
-            if entry_id not in journal['live_entry_ids']]
-        if deleted_ids:
-            index.remove_shard_entries(shard_id, deleted_ids)
-        old_live_ids = list(journal['live_entry_ids'])
-        if old_live_ids:
-            index.remove_shard_entries(shard_id, old_live_ids)
+        deleted_keys = [echoframe_key
+            for echoframe_key in journal['source_echoframe_keys']
+            if echoframe_key not in journal['live_echoframe_keys']]
+        if deleted_keys:
+            index.remove_shard_entries(shard_id, deleted_keys)
+        old_live_keys = list(journal['live_echoframe_keys'])
+        if old_live_keys:
+            index.remove_shard_entries(shard_id, old_live_keys)
         storage._delete_file(shard_id)
         index.update_compaction_journal(journal['journal_id'],
             status='completed')

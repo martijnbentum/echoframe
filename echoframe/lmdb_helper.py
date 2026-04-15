@@ -7,8 +7,8 @@ from pathlib import Path
 
 DB_NAMES = {
     'entries_db': b'entries',
-    'by_object_db': b'by_object',
-    'live_by_object_db': b'live_by_object',
+    'by_phraser_db': b'by_phraser',
+    'live_by_phraser_db': b'live_by_phraser',
     'by_shard_db': b'by_shard',
     'by_tag_db': b'by_tag',
     'shard_meta_db': b'shard_meta',
@@ -65,21 +65,42 @@ def scan_prefix_in_txn(txn, db, prefix):
     for key, value in cursor:
         if not key.startswith(prefix):
             break
-        entry_ids.append(value.decode('utf-8'))
+        entry_ids.append(bytes(value))
     return entry_ids
 
 
-def get_metadata(env, entries_db, metadata_cls, entry_id):
+def _normalize_echoframe_key(echoframe_key):
+    if isinstance(echoframe_key, bytes):
+        return echoframe_key
+    if isinstance(echoframe_key, bytearray):
+        return bytes(echoframe_key)
+    if isinstance(echoframe_key, str):
+        return bytes.fromhex(echoframe_key)
+    raise ValueError('echoframe_key must be bytes or hex string')
+
+
+def encode_phraser_key(phraser_key):
+    if isinstance(phraser_key, bytes):
+        return b'b:' + phraser_key
+    if isinstance(phraser_key, bytearray):
+        return b'b:' + bytes(phraser_key)
+    if isinstance(phraser_key, str):
+        return b's:' + phraser_key.encode('utf-8')
+    raise ValueError('phraser_key must be bytes or string')
+
+
+def get_metadata(env, entries_db, metadata_cls, echoframe_key):
     with read_txn(env) as txn:
-        return get_metadata_in_txn(txn, entries_db, metadata_cls, entry_id)
+        return get_metadata_in_txn(txn, entries_db, metadata_cls,
+            echoframe_key)
 
 
-def get_many_metadata(env, entries_db, metadata_cls, entry_ids):
-    if not entry_ids:
+def get_many_metadata(env, entries_db, metadata_cls, echoframe_keys):
+    if not echoframe_keys:
         return []
     with read_txn(env) as txn:
-        return [get_metadata_in_txn(txn, entries_db, metadata_cls, entry_id)
-            for entry_id in entry_ids]
+        return [get_metadata_in_txn(txn, entries_db, metadata_cls,
+            echoframe_key) for echoframe_key in echoframe_keys]
 
 
 def list_metadata(env, entries_db, metadata_cls, include_deleted=False):
@@ -88,8 +109,9 @@ def list_metadata(env, entries_db, metadata_cls, include_deleted=False):
             include_deleted=include_deleted)
 
 
-def get_metadata_in_txn(txn, entries_db, metadata_cls, entry_id):
-    payload = txn.get(entry_id.encode('utf-8'), db=entries_db)
+def get_metadata_in_txn(txn, entries_db, metadata_cls, echoframe_key):
+    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    payload = txn.get(echoframe_key, db=entries_db)
     if payload is None:
         return None
     return metadata_cls.from_dict(json.loads(payload.decode('utf-8')))
@@ -110,28 +132,31 @@ def list_metadata_in_txn(txn, entries_db, metadata_cls,
 
 
 def write_metadata(txn, db_handles, metadata, payload):
-    entry_id = metadata.entry_id.encode('utf-8')
-    object_key = metadata.object_key.encode('utf-8')
-    txn.put(entry_id, payload, db=db_handles['entries_db'])
-    txn.put(object_key, entry_id, db=db_handles['by_object_db'])
-    if metadata.storage_status == 'live':
-        txn.put(object_key, entry_id, db=db_handles['live_by_object_db'])
-    else:
-        txn.delete(object_key, db=db_handles['live_by_object_db'])
+    echoframe_key = metadata.echoframe_key
+    phraser_key = phraser_scan_key(metadata.phraser_key,
+        metadata.echoframe_key)
+    txn.put(echoframe_key, payload, db=db_handles['entries_db'])
+    if metadata.phraser_key not in (None, ''):
+        txn.put(phraser_key, echoframe_key, db=db_handles['by_phraser_db'])
+        if metadata.storage_status == 'live':
+            txn.put(phraser_key, echoframe_key,
+                db=db_handles['live_by_phraser_db'])
+        else:
+            txn.delete(phraser_key, db=db_handles['live_by_phraser_db'])
     touched = set()
     if metadata.shard_id:
-        txn.put(shard_key(metadata.shard_id, metadata.entry_id), entry_id,
-            db=db_handles['by_shard_db'])
+        txn.put(shard_key(metadata.shard_id, metadata.echoframe_key),
+            echoframe_key, db=db_handles['by_shard_db'])
         touched.add(metadata.shard_id)
     for tag in metadata.tags:
-        txn.put(tag_key(tag, metadata.entry_id), entry_id,
+        txn.put(tag_key(tag, metadata.echoframe_key), echoframe_key,
             db=db_handles['by_tag_db'])
     return touched
 
 
 def delete_tag_keys(txn, by_tag_db, metadata):
     for tag in metadata.tags:
-        txn.delete(tag_key(tag, metadata.entry_id), db=by_tag_db)
+        txn.delete(tag_key(tag, metadata.echoframe_key), db=by_tag_db)
 
 
 def delete_shard_keys(txn, by_shard_db, previous, metadata):
@@ -139,13 +164,32 @@ def delete_shard_keys(txn, by_shard_db, previous, metadata):
         return
     if previous.shard_id == metadata.shard_id:
         return
-    txn.delete(shard_key(previous.shard_id, previous.entry_id),
+    txn.delete(shard_key(previous.shard_id, previous.echoframe_key),
         db=by_shard_db)
 
 
-def shard_key(shard_id, entry_id):
-    return f'shard:{shard_id}:{entry_id}'.encode('utf-8')
+def delete_phraser_keys(txn, db_handles, metadata):
+    if metadata.phraser_key in (None, ''):
+        return
+    key = phraser_scan_key(metadata.phraser_key, metadata.echoframe_key)
+    txn.delete(key, db=db_handles['by_phraser_db'])
+    txn.delete(key, db=db_handles['live_by_phraser_db'])
 
 
-def tag_key(tag, entry_id):
-    return f'tag:{tag}:{entry_id}'.encode('utf-8')
+def shard_key(shard_id, echoframe_key):
+    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    return f'shard:{shard_id}:'.encode('utf-8') + echoframe_key
+
+
+def tag_key(tag, echoframe_key):
+    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    return f'tag:{tag}:'.encode('utf-8') + echoframe_key
+
+
+def phraser_scan_prefix(phraser_key):
+    return b'phraser:' + encode_phraser_key(phraser_key) + b':'
+
+
+def phraser_scan_key(phraser_key, echoframe_key):
+    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    return phraser_scan_prefix(phraser_key) + echoframe_key

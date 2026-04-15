@@ -51,6 +51,23 @@ def tag_hash(tag):
     ).digest()
 
 
+# -------- validation --------
+
+def validate_segment_phraser_key(phraser_key):
+    '''Return a validated segment phraser_key as bytes.
+
+    Segment-based echoframe keys embed the raw fixed-width phraser segment
+    key. The value must therefore already be binary and exactly
+    ``PHRASER_KEY_LEN`` bytes long.
+    '''
+    if not isinstance(phraser_key, (bytes, bytearray)):
+        raise ValueError('phraser_key must be bytes for segment-based keys')
+    if len(phraser_key) != PHRASER_KEY_LEN:
+        raise ValueError(
+            f'phraser_key must be exactly {PHRASER_KEY_LEN} bytes')
+    return bytes(phraser_key)
+
+
 # -------- pack --------
 
 def pack_hidden_state_key(model_id, layer, phraser_key, collar):
@@ -60,6 +77,7 @@ def pack_hidden_state_key(model_id, layer, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = OUTPUT_TYPE_RANK_MAP['hidden_state']
     return struct.pack(_HS_FMT, model_id, output_type_id, layer,
                        phraser_key, collar)
@@ -72,6 +90,7 @@ def pack_attention_key(model_id, layer, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = OUTPUT_TYPE_RANK_MAP['attention']
     return struct.pack(_AT_FMT, model_id, output_type_id, layer,
                        phraser_key, collar)
@@ -83,6 +102,7 @@ def pack_codebook_indices_key(model_id, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = OUTPUT_TYPE_RANK_MAP['codebook_indices']
     return struct.pack(_CI_FMT, model_id, output_type_id, phraser_key, collar)
 
@@ -102,6 +122,39 @@ def pack_model_metadata_key(model_name):
     name_hash = model_name_hash(model_name)
     output_type_id = OUTPUT_TYPE_RANK_MAP['model_metadata']
     return struct.pack(_MM_FMT, name_hash, output_type_id)
+
+
+def pack_echoframe_key(output_type, **kwargs):
+    '''Pack one echoframe_key by output type.
+
+    output_type: one of the supported echoframe output types
+    kwargs: required fields for the chosen output type
+    '''
+    if output_type == 'hidden_state':
+        return pack_hidden_state_key(
+            kwargs['model_id'],
+            kwargs['layer'],
+            kwargs['phraser_key'],
+            kwargs['collar'],
+        )
+    if output_type == 'attention':
+        return pack_attention_key(
+            kwargs['model_id'],
+            kwargs['layer'],
+            kwargs['phraser_key'],
+            kwargs['collar'],
+        )
+    if output_type == 'codebook_indices':
+        return pack_codebook_indices_key(
+            kwargs['model_id'],
+            kwargs['phraser_key'],
+            kwargs['collar'],
+        )
+    if output_type == 'codebook_matrix':
+        return pack_codebook_matrix_key(kwargs['model_id'])
+    if output_type == 'model_metadata':
+        return pack_model_metadata_key(kwargs['model_name'])
+    raise ValueError(f'unknown output type: {output_type!r}')
 
 
 # -------- unpack --------
@@ -170,6 +223,62 @@ def unpack_model_metadata_key(key_bytes):
         'model_name_hash': name_hash,
         'output_type':     RANK_OUTPUT_TYPE_MAP[output_type_id],
     }
+
+
+def unpack_echoframe_key(key_bytes):
+    '''Unpack one echoframe_key by inferring its output type.'''
+    output_type = output_type_from_echoframe_key(key_bytes)
+    if output_type == 'hidden_state':
+        return unpack_hidden_state_key(key_bytes)
+    if output_type == 'attention':
+        return unpack_attention_key(key_bytes)
+    if output_type == 'codebook_indices':
+        return unpack_codebook_indices_key(key_bytes)
+    if output_type == 'codebook_matrix':
+        return unpack_codebook_matrix_key(key_bytes)
+    if output_type == 'model_metadata':
+        return unpack_model_metadata_key(key_bytes)
+    raise ValueError(f'unknown output type: {output_type!r}')
+
+
+def output_type_from_echoframe_key(key_bytes):
+    '''Infer the output type from a fixed-width echoframe_key.'''
+    n_bytes = len(key_bytes)
+    if n_bytes in {HIDDEN_STATE_KEY_LEN, ATTENTION_KEY_LEN,
+            CODEBOOK_INDICES_KEY_LEN, CODEBOOK_MATRIX_KEY_LEN}:
+        output_type_id = key_bytes[2]
+    elif n_bytes == MODEL_METADATA_KEY_LEN:
+        output_type_id = key_bytes[MODEL_NAME_HASH_LEN]
+    else:
+        raise ValueError(f'unknown echoframe_key length: {n_bytes}')
+
+    try:
+        output_type = RANK_OUTPUT_TYPE_MAP[output_type_id]
+    except KeyError as exc:
+        raise ValueError(
+            f'unknown output_type_id in echoframe_key: {output_type_id}'
+        ) from exc
+
+    if n_bytes == HIDDEN_STATE_KEY_LEN and output_type not in {
+            'hidden_state', 'attention'}:
+        raise ValueError(
+            f'invalid output_type_id for 28-byte echoframe_key: '
+            f'{output_type_id}')
+    if n_bytes == CODEBOOK_INDICES_KEY_LEN and output_type != (
+            'codebook_indices'):
+        raise ValueError(
+            f'invalid output_type_id for 27-byte echoframe_key: '
+            f'{output_type_id}')
+    if n_bytes == CODEBOOK_MATRIX_KEY_LEN and output_type != (
+            'codebook_matrix'):
+        raise ValueError(
+            f'invalid output_type_id for 3-byte echoframe_key: '
+            f'{output_type_id}')
+    if n_bytes == MODEL_METADATA_KEY_LEN and output_type != 'model_metadata':
+        raise ValueError(
+            f'invalid output_type_id for 9-byte echoframe_key: '
+            f'{output_type_id}')
+    return output_type
 
 
 # -------- secondary scan-key builders --------

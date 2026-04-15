@@ -10,8 +10,9 @@ import numpy as np
 
 from echoframe import Store
 from echoframe.index import LmdbIndex
+from echoframe.metadata import metadata_class_for_output_type
 from echoframe.output_storage import Hdf5ShardStore
-from tests.test_public_api import FakeEnv, FakeH5Module
+from tests.test_public_api import FakeEnv, FakeH5Module, _ensure_model, _pk
 
 
 def _make_store():
@@ -24,15 +25,41 @@ def _make_store():
     return tmpdir, store
 
 
+def _put(store, *, phraser_key, collar, model_name, output_type, layer,
+    data, tags=None):
+    phraser_key = _pk(phraser_key)
+    _ensure_model(store, model_name)
+    key_kwargs = {
+        'output_type': output_type,
+        'model_name': model_name,
+    }
+    if output_type in {'hidden_state', 'attention'}:
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'layer': layer,
+            'collar': collar,
+        })
+    elif output_type == 'codebook_indices':
+        key_kwargs.update({
+            'phraser_key': phraser_key,
+            'collar': collar,
+        })
+    metadata_cls = metadata_class_for_output_type(output_type)
+    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=store.make_echoframe_key(**key_kwargs))
+    return store.put(metadata.echoframe_key, metadata, data)
+
+
 def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='hidden_state', layer=layer, data=data)
 
 
 def _put_codebook(store, phraser_key, collar, model_name, indices, matrix):
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='codebook_indices', layer=0, data=indices)
-    store.put(phraser_key=phraser_key, collar=collar, model_name=model_name,
+    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
         output_type='codebook_matrix', layer=0, data=matrix)
 
 
@@ -41,9 +68,9 @@ class TestLoadEmbeddings(unittest.TestCase):
         tmpdir, store = _make_store()
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 4, data)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 4, data)
 
-            result = store.load_embeddings('phrase-1', 500, 'wav2vec2', 4)
+            result = store.load_embeddings(_pk('phrase-1'), 500, 'wav2vec2', 4)
 
             self.assertEqual(result.echoframe_keys, (result.echoframe_key,))
             self.assertEqual(result.dims, ('frames', 'embed_dim'))
@@ -57,10 +84,10 @@ class TestLoadEmbeddings(unittest.TestCase):
         with tmpdir:
             data_1 = np.arange(6).reshape(2, 3).astype(float)
             data_2 = np.arange(6, 12).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 3, data_1)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 7, data_2)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 3, data_1)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 7, data_2)
 
-            result = store.load_embeddings('phrase-1', 500, 'wav2vec2',
+            result = store.load_embeddings(_pk('phrase-1'), 500, 'wav2vec2',
                 [3, 7])
 
             self.assertEqual(result.echoframe_keys, (
@@ -84,9 +111,9 @@ class TestLoadEmbeddings(unittest.TestCase):
                 [3.0, 4.0, 5.0],
                 [5.0, 6.0, 7.0],
             ])
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 4, data)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 4, data)
 
-            result = store.load_embeddings('phrase-1', 500, 'wav2vec2', 4,
+            result = store.load_embeddings(_pk('phrase-1'), 500, 'wav2vec2', 4,
                 frame_aggregation='mean')
 
             self.assertEqual(result.dims, ('embed_dim',))
@@ -108,10 +135,10 @@ class TestLoadEmbeddings(unittest.TestCase):
                 [9.0, 10.0],
                 [11.0, 12.0],
             ])
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 3, data_1)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 9, data_2)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 3, data_1)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 9, data_2)
 
-            result = store.load_embeddings('phrase-1', 500, 'wav2vec2',
+            result = store.load_embeddings(_pk('phrase-1'), 500, 'wav2vec2',
                 [3, 9], frame_aggregation='centroid')
 
             self.assertEqual(result.dims, ('layers', 'embed_dim'))
@@ -128,35 +155,35 @@ class TestLoadManyEmbeddings(unittest.TestCase):
         with tmpdir:
             data_1 = np.arange(6).reshape(2, 3).astype(float)
             data_2 = np.arange(6, 12).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 3, data_1)
-            _put_hidden_state(store, 'phrase-1', 500, 'wav2vec2', 7, data_2)
-            _put_hidden_state(store, 'phrase-2', 500, 'wav2vec2', 3, data_1)
-            _put_hidden_state(store, 'phrase-2', 500, 'wav2vec2', 7, data_2)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 3, data_1)
+            _put_hidden_state(store, _pk('phrase-1'), 500, 'wav2vec2', 7, data_2)
+            _put_hidden_state(store, _pk('phrase-2'), 500, 'wav2vec2', 3, data_1)
+            _put_hidden_state(store, _pk('phrase-2'), 500, 'wav2vec2', 7, data_2)
 
             calls = []
-            original = store.load_with_echoframe_key
+            original = store.load
 
             def counting_load(echoframe_key):
                 calls.append(echoframe_key)
                 return original(echoframe_key)
 
-            store.load_with_echoframe_key = counting_load
+            store.load = counting_load
 
             result = store.load_many_embeddings([
                 {
-                    'phraser_key': 'phrase-1',
+                    'phraser_key': _pk('phrase-1'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                     'layers': [3, 7],
                 },
                 {
-                    'phraser_key': 'phrase-2',
+                    'phraser_key': _pk('phrase-2'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                     'layers': [3, 7],
                 },
                 {
-                    'phraser_key': 'phrase-1',
+                    'phraser_key': _pk('phrase-1'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                     'layers': [3, 7],
@@ -187,13 +214,17 @@ class TestLoadCodebook(unittest.TestCase):
                 [[1.0, 2.0], [3.0, 4.0]],
                 [[5.0, 6.0], [7.0, 8.0]],
             ])
-            _put_codebook(store, 'phrase-1', 500, 'spidr', indices, matrix)
+            _put_codebook(store, _pk('phrase-1'), 500, 'spidr', indices, matrix)
 
-            result = store.load_codebook('phrase-1', 500, 'spidr')
+            result = store.load_codebook(_pk('phrase-1'), 500, 'spidr')
 
-            metadata = store.find_one(phraser_key='phrase-1', collar=500,
-                model_name='spidr', output_type='codebook_indices', layer=0)
-            self.assertEqual(result.echoframe_key, metadata.entry_id)
+            metadata = store.load_metadata(store.make_echoframe_key(
+                'codebook_indices',
+                model_name='spidr',
+                phraser_key=_pk(_pk('phrase-1')),
+                collar=500,
+            ))
+            self.assertEqual(result.echoframe_key, metadata.echoframe_key)
             self.assertEqual(result.path, store.root)
             self.assertIsNone(result.__dict__.get('_store'))
             self.assertEqual(result.model_architecture, 'spidr')
@@ -213,33 +244,33 @@ class TestLoadManyCodebooks(unittest.TestCase):
             indices_2 = np.array([[1, 0]])
             matrix_1 = np.array([[1.0, 2.0], [3.0, 4.0]])
             matrix_2 = np.array([[5.0, 6.0], [7.0, 8.0]])
-            _put_codebook(store, 'phrase-1', 500, 'wav2vec2', indices_1,
+            _put_codebook(store, _pk('phrase-1'), 500, 'wav2vec2', indices_1,
                 matrix_1)
-            _put_codebook(store, 'phrase-2', 500, 'wav2vec2', indices_2,
+            _put_codebook(store, _pk('phrase-2'), 500, 'wav2vec2', indices_2,
                 matrix_2)
 
             calls = []
-            original = store.load_with_echoframe_key
+            original = store.load
 
             def counting_load(echoframe_key):
                 calls.append(echoframe_key)
                 return original(echoframe_key)
 
-            store.load_with_echoframe_key = counting_load
+            store.load = counting_load
 
             result = store.load_many_codebooks([
                 {
-                    'phraser_key': 'phrase-1',
+                    'phraser_key': _pk('phrase-1'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                 },
                 {
-                    'phraser_key': 'phrase-2',
+                    'phraser_key': _pk('phrase-2'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                 },
                 {
-                    'phraser_key': 'phrase-1',
+                    'phraser_key': _pk('phrase-1'),
                     'collar': 500,
                     'model_name': 'wav2vec2',
                 },
@@ -268,10 +299,10 @@ class TestLoadManyCodebooks(unittest.TestCase):
         with tmpdir:
             indices = np.array([[0, 1]])
             matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            _put_codebook(store, 'phrase-1', 500, 'wav2vec2', indices, matrix)
+            _put_codebook(store, _pk('phrase-1'), 500, 'wav2vec2', indices, matrix)
 
             result = store.load_many_codebooks([{
-                'phraser_key': 'phrase-1',
+                'phraser_key': _pk('phrase-1'),
                 'collar': 500,
                 'model_name': 'wav2vec2',
             }])

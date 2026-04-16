@@ -67,17 +67,8 @@ class Hdf5ShardStore:
             dtype = getattr(dataset, 'dtype', None)
             if dtype is None: dtype = getattr(data, 'dtype', 'unknown')
             dtype = str(dtype)
-        return metadata.__class__(phraser_key=metadata.phraser_key,
-            collar=metadata.collar, model_name=metadata.model_name,
-            output_type=metadata.output_type, layer=metadata.layer,
-            echoframe_key=metadata.echoframe_key,
-            storage_status=metadata.storage_status, shard_id=shard_id,
-            dataset_path=dataset_path, shape=shape, dtype=dtype,
-            tags=metadata.tags, created_at=metadata.created_at,
-            deleted_at=metadata.deleted_at, accessed_at=metadata.accessed_at,
-            model_id=metadata.model_id, local_path=metadata.local_path,
-            huggingface_id=metadata.huggingface_id,
-            language=metadata.language)
+        return self._copy_metadata(metadata, shard_id=shard_id,
+            dataset_path=dataset_path, shape=shape, dtype=dtype)
 
     def load(self, metadata):
         '''Load stored payload data.'''
@@ -130,27 +121,11 @@ class Hdf5ShardStore:
                         del group[dataset_name]
                     created = group.create_dataset(dataset_name,
                         data=dataset)
-                    updated.append(metadata.__class__(
-                        phraser_key=metadata.phraser_key,
-                        collar=metadata.collar,
-                        model_name=metadata.model_name,
-                        output_type=metadata.output_type,
-                        layer=metadata.layer,
-                        echoframe_key=metadata.echoframe_key,
-                        storage_status=metadata.storage_status,
+                    updated.append(self._copy_metadata(metadata,
                         shard_id=target_shard_id,
                         dataset_path=self._dataset_path(metadata),
                         shape=tuple(getattr(created, 'shape', ()) or ()),
-                        dtype=str(getattr(created, 'dtype', 'unknown')),
-                        tags=metadata.tags,
-                        created_at=metadata.created_at,
-                        deleted_at=metadata.deleted_at,
-                        accessed_at=metadata.accessed_at,
-                        model_id=metadata.model_id,
-                        local_path=metadata.local_path,
-                        huggingface_id=metadata.huggingface_id,
-                        language=metadata.language,
-                    ))
+                        dtype=str(getattr(created, 'dtype', 'unknown'))))
 
         if delete_source:
             self._delete_file(shard_id)
@@ -200,6 +175,11 @@ class Hdf5ShardStore:
 
     def _dataset_path(self, metadata):
         return f'/layer_{metadata.layer:04d}/{metadata.format_echoframe_key()}'
+
+    def _copy_metadata(self, metadata, **updates):
+        data = metadata.to_dict()
+        data.update(updates)
+        return metadata.__class__.from_dict(data)
 
     def _file_size(self, file_path):
         return file_path.stat().st_size

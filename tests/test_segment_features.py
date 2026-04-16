@@ -24,7 +24,12 @@ from echoframe.segment_features import (
     get_embeddings_batch,
     segment_to_echoframe_key,
 )
-from tests.test_public_api import FakeEnv, FakeH5Module, _ensure_model, _pk
+from tests.helpers import (
+    ensure_model as _ensure_model,
+    FakeEnv,
+    FakeH5Module,
+    pk as _pk,
+)
 
 
 def _make_store():

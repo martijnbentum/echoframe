@@ -1,129 +1,241 @@
-'''Store-owned model registry for echoframe.
-
-Persists model_metadata records using the canonical binary key from the
-schema plan. Model ids are store-internal and assigned by the registry.
-
-Key layout: 8-byte model_name_hash || uint8 output_type_id (9 bytes total).
-Value: JSON payload with model_name, model_id, and created_at.
-'''
+'''Store-owned model registry backed by config.json.'''
 
 import json
-from datetime import datetime, timezone
-
-from . import lmdb_helper
-from .key_helper import pack_model_metadata_key
-
-_REGISTRY_DB = b'model_registry'
+from pathlib import Path
 
 
 class ModelRegistry:
-    '''Persist and query model_metadata records in LMDB.'''
+    '''Persist and query model metadata in a store config file.'''
 
-    def __init__(self, env):
-        self.env = env
-        self.db = env.open_db(_REGISTRY_DB)
+    def __init__(self, config_path):
+        self.config_path = Path(config_path)
 
-    def register(self, model_name):
-        '''Register one model and persist a model_metadata record.
+    def register_model(self, model_name, local_path=None, huggingface_id=None,
+        language=None, size=None):
+        '''Register one model and persist it in config.json.'''
+        metadata = ModelMetadata(model_name, model_id=None,
+            local_path=local_path, huggingface_id=huggingface_id,
+            language=language, size=size)
+        config = self.read_config()
+        if check_model_name_conflict(config, metadata):
+            message = f'model_name already registered: {model_name!r}'
+            raise ValueError(message)
+        metadata.model_id = _next_model_id(config['models'].values())
+        config['models'][model_name] = metadata
+        self.write_config(config)
+        return metadata
 
-        model_name:   str — must be a non-empty string
-        Returns the stored record dict with model_name, model_id, created_at.
-        Raises ValueError if model_name is invalid or already registered.
-        '''
-        _validate_model_name(model_name)
-        key = pack_model_metadata_key(model_name)
-        with lmdb_helper.write_txn(self.env) as txn:
-            if txn.get(key, db=self.db) is not None:
-                raise ValueError(
-                    f'model_name already registered: {model_name!r}')
-            model_id = _next_model_id(txn, self.db)
-            record = _make_record(model_name, model_id)
-            txn.put(key, _dump(record), db=self.db)
-        return record
+    @property
+    def model_metadatas(self):
+        '''Return all registered model metadata objects.'''
+        config = self.read_config()
+        return list(config['models'].values())
 
-    def get(self, model_name):
-        '''Return the model_metadata record for model_name, or None.'''
-        key = pack_model_metadata_key(model_name)
-        with lmdb_helper.read_txn(self.env) as txn:
-            value = txn.get(key, db=self.db)
-        if value is None:
-            return None
-        return json.loads(value.decode('utf-8'))
+    def load_model_metadata(self, model_name):
+        '''Return the model metadata object for model_name, or None.'''
+        config = self.read_config()
+        return config['models'].get(model_name)
 
-    def import_seeds(self, path, _loader=None):
-        '''Import model definitions from a seed file.
+    def register_models_from_file(self, path):
+        '''Import model definitions from a JSON file into config.json.'''
+        metadata_list = load_model_seed_file(path)
+        config = self.read_config()
+        conflicts = check_model_names_conflict(config, metadata_list)
+        if conflicts:
+            names = ', '.join(repr(metadata.model_name)
+                for metadata in conflicts)
+            message = f'model names already registered in store: {names}'
+            raise ValueError(message)
 
-        Validates the entire seed file and checks for name conflicts with the
-        store before writing anything. All records are written in one
-        transaction — if any model name already exists the import fails and
-        nothing is written.
-
-        path:      path-like pointing to a JSON seed file
-        _loader:   optional callable(path) → list of dicts (for testing)
-        Returns list of stored record dicts.
-        Raises ValueError for invalid seed files or any name conflict.
-        '''
-        if _loader is None:
-            from .model_registry_loader import load_seed_file as _loader
-        seeds = _loader(path)
-
-        with lmdb_helper.write_txn(self.env) as txn:
-            conflicts = [
-                seed['model_name']
-                for seed in seeds
-                if txn.get(
-                    pack_model_metadata_key(seed['model_name']),
-                    db=self.db) is not None
-            ]
-            if conflicts:
-                names = ', '.join(repr(n) for n in conflicts)
-                raise ValueError(
-                    f'model names already registered in store: {names}')
-
-            next_id = _next_model_id(txn, self.db)
-            stored = []
-            for seed in seeds:
-                model_name = seed['model_name']
-                record = _make_record(model_name, next_id)
-                txn.put(pack_model_metadata_key(model_name),
-                        _dump(record), db=self.db)
-                stored.append(record)
-                next_id += 1
+        next_id = _next_model_id(config['models'].values())
+        stored = []
+        for metadata in metadata_list:
+            metadata.model_id = next_id
+            config['models'][metadata.model_name] = metadata
+            stored.append(metadata)
+            next_id += 1
+        self.write_config(config)
         return stored
 
+    def read_config_dict(self):
+        '''Return the raw serialized config dictionary.'''
+        if not self.config_path.exists():
+            return config_to_dict(_default_config())
+        data = json.loads(self.config_path.read_text())
+        config = config_from_dict(data)
+        return config_to_dict(config)
 
-# -------- helpers --------
+    def read_config(self):
+        '''Return the validated in-memory config object graph.'''
+        if not self.config_path.exists():
+            return _default_config()
+        data = json.loads(self.config_path.read_text())
+        return config_from_dict(data)
+
+    def write_config(self, config):
+        '''Write one validated in-memory config object graph.'''
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(config_to_dict(config), indent=2, sort_keys=True)
+        payload += '\n'
+        tmp_path = self.config_path.with_suffix('.tmp')
+        tmp_path.write_text(payload)
+        tmp_path.replace(self.config_path)
+
+
+class ModelMetadata:
+    '''Small validated model metadata record.'''
+
+    def __init__(self, model_name, model_id=None, local_path=None,
+        huggingface_id=None, language=None, size=None):
+        self.model_name = model_name
+        self.model_id = model_id
+        self.local_path = local_path
+        self.huggingface_id = huggingface_id
+        self.language = language
+        self.size = size
+        self._validate()
+
+    def _validate(self):
+        _validate_model_name(self.model_name)
+        _validate_model_id(self.model_id)
+        _validate_optional_string(self.local_path, 'local_path')
+        _validate_optional_string(self.huggingface_id, 'huggingface_id')
+        _validate_optional_string(self.language, 'language')
+        _validate_optional_size(self.size)
+
+    def to_dict(self):
+        return {
+            'model_id': self.model_id,
+            'local_path': self.local_path,
+            'huggingface_id': self.huggingface_id,
+            'language': self.language,
+            'size': self.size,
+            'model_name': self.model_name,
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(model_name=data.get('model_name'),
+            model_id=data.get('model_id'),
+            local_path=data.get('local_path'),
+            huggingface_id=data.get('huggingface_id'),
+            language=data.get('language'), size=data.get('size'))
+
+
+def _default_config():
+    return {
+        'models': {},
+    }
+
+
+def config_from_dict(data):
+    if not isinstance(data, dict):
+        raise ValueError('config.json must contain a JSON object')
+    config = _default_config()
+    raw_models = data.get('models', {})
+    if not isinstance(raw_models, dict):
+        raise ValueError('config.json models must be a JSON object')
+    models = {}
+    for model_name, record in raw_models.items():
+        if not isinstance(record, dict):
+            raise ValueError('config.json model records must be JSON objects')
+        record = dict(record)
+        record['model_name'] = model_name
+        models[model_name] = ModelMetadata.from_dict(record)
+    config['models'] = models
+    return config
+
+
+def config_to_dict(config):
+    return {
+        'models': {
+            model_name: metadata.to_dict()
+            for model_name, metadata in config['models'].items()
+        },
+    }
+
+
+def _next_model_id(model_metadatas):
+    max_id = -1
+    for metadata in model_metadatas:
+        candidate = metadata.model_id if metadata.model_id is not None else -1
+        if candidate > max_id:
+            max_id = candidate
+    return max_id + 1
+
+
+def check_model_name_conflict(config, metadata):
+    return metadata.model_name in config['models']
+
+
+def check_model_names_conflict(config, metadata_list):
+    conflicts = [
+        metadata for metadata in metadata_list
+        if check_model_name_conflict(config, metadata)
+    ]
+    if not conflicts:
+        return None
+    return conflicts
+
 
 def _validate_model_name(model_name):
     if not isinstance(model_name, str) or not model_name.strip():
         raise ValueError('model_name must be a non-empty string')
 
 
-def _next_model_id(txn, db):
-    '''Return the next available model_id (max existing + 1, starting at 0).'''
-    max_id = -1
-    cursor = txn.cursor(db=db)
-    if not cursor.set_range(b''):
-        return 0
-    for _, value in cursor:
-        record = json.loads(value.decode('utf-8'))
-        candidate = record.get('model_id', -1)
-        if candidate > max_id:
-            max_id = candidate
-    return max_id + 1
+def _validate_model_id(model_id):
+    if model_id is None:
+        return
+    if not isinstance(model_id, int) or model_id < 0:
+        raise ValueError('model_id must be a non-negative integer')
 
 
-def _make_record(model_name, model_id):
-    return {
-        'model_name': model_name,
-        'model_id': model_id,
-        'created_at': _utc_now(),
-    }
+def _validate_optional_string(value, field_name):
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'{field_name} must be a non-empty string')
 
 
-def _dump(record):
-    return json.dumps(record, sort_keys=True).encode('utf-8')
+def _validate_optional_size(size):
+    if size is None:
+        return
+    if isinstance(size, bool):
+        raise ValueError('size must not be a boolean')
+    if not isinstance(size, (int, float, str)):
+        raise ValueError('size must be a string or number')
 
 
-def _utc_now():
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def load_model_seed_file(path):
+    path = Path(path)
+    with open(path) as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError(
+            f'model file must contain a JSON list, got '
+            f'{type(data).__name__!r}')
+
+    seen_names = set()
+    records = []
+    for i, record in enumerate(data):
+        if not isinstance(record, dict):
+            raise ValueError(
+                f'record {i} must be a dict, got '
+                f'{type(record).__name__!r}')
+        model_name = record.get('model_name')
+        if model_name is None:
+            raise ValueError(
+                f'record {i} is missing required field: \'model_name\'')
+        metadata = ModelMetadata(
+            model_name=model_name, model_id=None,
+            local_path=record.get('local_path'),
+            huggingface_id=record.get('huggingface_id'),
+            language=record.get('language'),
+            size=record.get('size'))
+        if model_name in seen_names:
+            raise ValueError(
+                f'duplicate model_name in model file: {model_name!r}')
+        seen_names.add(model_name)
+        records.append(metadata)
+    return records

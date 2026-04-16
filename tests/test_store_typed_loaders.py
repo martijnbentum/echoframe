@@ -8,47 +8,17 @@ import unittest
 
 import numpy as np
 
-from echoframe import Store
-from echoframe.index import LmdbIndex
-from echoframe.metadata import metadata_class_for_output_type
-from echoframe.output_storage import Hdf5ShardStore
-from tests.test_public_api import FakeEnv, FakeH5Module, _ensure_model, _pk
+from tests.helpers import (
+    make_fake_store,
+    pk as _pk,
+    put as _put,
+)
 
 
 def _make_store():
     tmpdir = tempfile.TemporaryDirectory()
-    index = LmdbIndex(Path(tmpdir.name) / 'index', env=FakeEnv(),
-        shards_root=Path(tmpdir.name) / 'shards')
-    storage = Hdf5ShardStore(Path(tmpdir.name) / 'shards',
-        h5_module=FakeH5Module())
-    store = Store(tmpdir.name, index=index, storage=storage)
+    store = make_fake_store(tmpdir.name)
     return tmpdir, store
-
-
-def _put(store, *, phraser_key, collar, model_name, output_type, layer,
-    data, tags=None):
-    phraser_key = _pk(phraser_key)
-    _ensure_model(store, model_name)
-    key_kwargs = {
-        'output_type': output_type,
-        'model_name': model_name,
-    }
-    if output_type in {'hidden_state', 'attention'}:
-        key_kwargs.update({
-            'phraser_key': phraser_key,
-            'layer': layer,
-            'collar': collar,
-        })
-    elif output_type == 'codebook_indices':
-        key_kwargs.update({
-            'phraser_key': phraser_key,
-            'collar': collar,
-        })
-    metadata_cls = metadata_class_for_output_type(output_type)
-    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=layer, tags=tags,
-        echoframe_key=store.make_echoframe_key(**key_kwargs))
-    return store.put(metadata.echoframe_key, metadata, data)
 
 
 def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):

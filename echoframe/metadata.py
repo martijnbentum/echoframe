@@ -1,37 +1,47 @@
 '''Metadata records for stored model outputs.'''
 
 from datetime import datetime, timezone
+from functools import partial
 from hashlib import sha1
-from pprint import pformat
+
+from .util_formatting import format_pretty_dict, truncate_text
 
 
-class EchoframeMetadata:
-    '''Shared metadata base for echoframe output records.'''
+SEGMENT_OUTPUT_TYPES = {
+    'hidden_state',
+    'attention',
+    'codebook_indices',
+    'codebook_matrix',
+}
 
-    OUTPUT_TYPE = None
 
-    def __new__(cls, *args, **kwargs):
-        if cls is EchoframeMetadata:
-            output_type = _extract_output_type(args, kwargs)
-            metadata_cls = METADATA_CLASS_BY_OUTPUT_TYPE.get(output_type)
-            if metadata_cls is not None:
-                return super().__new__(metadata_cls)
-        return super().__new__(cls)
+OUTPUT_TYPES = SEGMENT_OUTPUT_TYPES | {'model_metadata'}
 
-    def __init__(self, phraser_key, collar, model_name, output_type, layer,
-        storage_status='live', shard_id=None, dataset_path=None, shape=None,
-        dtype=None, tags=None, created_at=None, deleted_at=None,
-        accessed_at=None, model_id=None, local_path=None,
-        huggingface_id=None, language=None, echoframe_key=None):
-        self.output_type = self._resolve_output_type(output_type)
-        self.phraser_key = phraser_key
-        self.collar = collar
+
+STABLE_METADATA_FIELDS = (
+    'model_name',
+    'output_type',
+    'storage_status',
+    'shard_id',
+    'dataset_path',
+    'shape',
+    'dtype',
+    'tags',
+    'created_at',
+    'deleted_at',
+    'accessed_at',
+)
+
+
+class _BaseMetadata:
+    '''Shared metadata behavior for echoframe records.'''
+
+    def __init__(self, model_name, output_type, storage_status='live',
+        shard_id=None, dataset_path=None, shape=None, dtype=None, tags=None,
+        created_at=None, deleted_at=None, accessed_at=None,
+        echoframe_key=None):
         self.model_name = model_name
-        self.layer = layer
-        self.model_id = model_id
-        self.local_path = local_path
-        self.huggingface_id = huggingface_id
-        self.language = language
+        self.output_type = output_type
         self.storage_status = storage_status
         self.shard_id = shard_id
         self.dataset_path = dataset_path
@@ -43,20 +53,7 @@ class EchoframeMetadata:
         self.accessed_at = accessed_at
         self._echoframe_key = echoframe_key
         self._store = None
-        self._phraser_object = None
-        self._phraser_object_loaded = False
         self._validate()
-
-    def _resolve_output_type(self, output_type):
-        if self.OUTPUT_TYPE is None:
-            return output_type
-        if output_type is None:
-            return self.OUTPUT_TYPE
-        if output_type != self.OUTPUT_TYPE:
-            raise ValueError(
-                f'output_type must be {self.OUTPUT_TYPE!r} for '
-                f'{self.__class__.__name__}')
-        return output_type
 
     def _validate(self):
         if self.output_type not in OUTPUT_TYPES:
@@ -77,19 +74,19 @@ class EchoframeMetadata:
         self._validate_specific()
 
     def _validate_specific(self):
-        '''Validate output-type-specific fields.'''
+        '''Validate record-specific fields.'''
 
     def __repr__(self):
         limit = 80
         tags = ','.join(self.tags) if self.tags else '-'
         body = self._repr_body() + f'status={self.storage_status}, tags={tags}'
-        return 'MD(' + _truncate_text(body, limit) + ')'
+        return 'MD(' + truncate_text(body, limit) + ')'
 
     def _repr_body(self):
-        return f'model={self.model_name}, layer={self.layer}, '
+        return f'type={self.output_type}, model={self.model_name}, '
 
     def __str__(self):
-        return pformat(self._display_dict(), sort_dicts=False, width=80)
+        return format_pretty_dict(self._display_dict())
 
     def bind_store(self, store):
         '''Attach a store for convenience payload loading.'''
@@ -147,8 +144,23 @@ class EchoframeMetadata:
         return metadata.bind_store(self._store)
 
     def _display_dict(self):
-        data = {'echoframe_key_hex': self.format_echoframe_key()}
-        data.update(self._display_identity_dict())
+        data = self._display_header_dict()
+        data.update(self._display_specific_dict())
+        data.update(self._display_storage_dict())
+        return data
+
+    def _display_header_dict(self):
+        return {
+            'echoframe_key_hex': self.format_echoframe_key(),
+            'model_name': self.model_name,
+            'output_type': self.output_type,
+        }
+
+    def _display_specific_dict(self):
+        return {}
+
+    def _display_storage_dict(self):
+        data = {}
         if self.storage_status != 'live':
             data['storage_status'] = self.storage_status
         if self.shard_id is not None:
@@ -161,8 +173,6 @@ class EchoframeMetadata:
             data['dtype'] = self.dtype
         if self.tags:
             data['tags'] = self.tags
-        if self.phraser_object is not None:
-            data['phraser_object'] = repr(self.phraser_object)
         if self.created_at is not None:
             data['created_at'] = self.created_at
         if self.deleted_at is not None:
@@ -171,24 +181,115 @@ class EchoframeMetadata:
             data['accessed_at'] = self.accessed_at
         return data
 
-    def _display_identity_dict(self):
-        raise NotImplementedError
-
     def to_dict(self):
         '''Serialize to a JSON-friendly dictionary.'''
-        data = {'phraser_key': self.phraser_key, 'collar': self.collar,
-            'model_name': self.model_name, 'model_id': self.model_id,
-            'output_type': self.output_type, 'layer': self.layer,
-            'local_path': self.local_path,
-            'huggingface_id': self.huggingface_id,
-            'language': self.language,
+        data = {
+            'model_name': self.model_name,
+            'output_type': self.output_type,
             'echoframe_key_hex': self.echoframe_key.hex(),
             'storage_status': self.storage_status,
-            'shard_id': self.shard_id, 'dataset_path': self.dataset_path,
-            'shape': self.shape, 'dtype': self.dtype, 'tags': self.tags,
+            'shard_id': self.shard_id,
+            'dataset_path': self.dataset_path,
+            'shape': self.shape,
+            'dtype': self.dtype,
+            'tags': self.tags,
             'created_at': self.created_at,
             'deleted_at': self.deleted_at,
-            'accessed_at': self.accessed_at}
+            'accessed_at': self.accessed_at,
+        }
+        data.update(self._to_dict_specific())
+        return data
+
+    def _to_dict_specific(self):
+        return {}
+
+
+class EchoframeMetadata(_BaseMetadata):
+    '''Metadata for one stored segment-scoped output.'''
+
+    def __init__(self, phraser_key, collar, model_name, output_type, layer=0,
+        model_id=None, storage_status='live', shard_id=None,
+        dataset_path=None, shape=None, dtype=None, tags=None,
+        created_at=None, deleted_at=None, accessed_at=None,
+        echoframe_key=None):
+        self.phraser_key = phraser_key
+        self.collar = collar
+        self.layer = layer
+        self.model_id = model_id
+        self._phraser_object = None
+        self._phraser_object_loaded = False
+        super().__init__(model_name=model_name, output_type=output_type,
+            storage_status=storage_status, shard_id=shard_id,
+            dataset_path=dataset_path, shape=shape, dtype=dtype, tags=tags,
+            created_at=created_at, deleted_at=deleted_at,
+            accessed_at=accessed_at, echoframe_key=echoframe_key)
+
+    def _validate_specific(self):
+        if self.output_type not in SEGMENT_OUTPUT_TYPES:
+            message = 'segment metadata output_type must be one of '
+            message += f'{sorted(SEGMENT_OUTPUT_TYPES)}'
+            raise ValueError(message)
+        if not self.phraser_key:
+            raise ValueError('phraser_key must not be empty')
+        if self.collar < 0:
+            raise ValueError('collar must be >= 0')
+        if self.layer < 0:
+            raise ValueError('layer must be >= 0')
+        if self.output_type in {'codebook_indices', 'codebook_matrix'}:
+            if self.layer != 0:
+                raise ValueError(
+                    'codebook output types require layer to be exactly 0')
+
+    def _repr_body(self):
+        return f'model={self.model_name}, layer={self.layer}, '
+
+    def _fallback_key_components(self):
+        return [
+            text_key_component(self.phraser_key),
+            self.model_name,
+            self.output_type,
+            f'{self.layer:04d}',
+            f'{self.collar:09d}',
+        ]
+
+    def _display_header_dict(self):
+        data = {
+            'echoframe_key_hex': self.format_echoframe_key(),
+            'phraser_key': self.phraser_key,
+            'collar': self.collar,
+            'model_name': self.model_name,
+            'output_type': self.output_type,
+            'layer': self.layer,
+        }
+        if self.model_id is not None:
+            data['model_id'] = self.model_id
+        return data
+
+    def _display_dict(self):
+        data = self._display_header_dict()
+        data.update(self._display_specific_dict())
+        storage = super()._display_storage_dict()
+        created_at = storage.pop('created_at', None)
+        deleted_at = storage.pop('deleted_at', None)
+        accessed_at = storage.pop('accessed_at', None)
+        data.update(storage)
+        if self.phraser_object is not None:
+            data['phraser_object'] = repr(self.phraser_object)
+        if created_at is not None:
+            data['created_at'] = created_at
+        if deleted_at is not None:
+            data['deleted_at'] = deleted_at
+        if accessed_at is not None:
+            data['accessed_at'] = accessed_at
+        return data
+
+    def _to_dict_specific(self):
+        data = {
+            'phraser_key': self.phraser_key,
+            'collar': self.collar,
+            'layer': self.layer,
+            'model_id': self.model_id,
+        }
         if isinstance(self.phraser_key, bytes):
             data['phraser_key'] = None
             data['phraser_key_hex'] = self.phraser_key.hex()
@@ -218,124 +319,45 @@ class EchoframeMetadata:
 
     @classmethod
     def from_dict(cls, data):
-        '''Create an instance from serialized data.'''
+        '''Create one metadata record from serialized data.'''
         data = dict(data)
         key_hex = data.pop('echoframe_key_hex', None)
         if key_hex is not None:
             data['echoframe_key'] = bytes.fromhex(key_hex)
+        if data.get('output_type') == 'model_metadata':
+            return ModelMetadata.from_dict(data)
         phraser_key_hex = data.pop('phraser_key_hex', None)
         if phraser_key_hex is not None:
             data['phraser_key'] = bytes.fromhex(phraser_key_hex)
-        metadata_cls = cls
-        if cls is EchoframeMetadata:
-            metadata_cls = metadata_class_for_output_type(data['output_type'])
-        return metadata_cls(**data)
+        return cls(**data)
 
 
-class _PhraserKeyMetadata(EchoframeMetadata):
-    '''Shared metadata behavior for phraser-key-based outputs.'''
+class ModelMetadata(_BaseMetadata):
+    '''Metadata for one registered model.'''
 
-    def _validate_specific(self):
-        if not self.phraser_key:
-            raise ValueError('phraser_key must not be empty')
-        if self.collar < 0:
-            raise ValueError('collar must be >= 0')
-        if self.layer < 0:
-            raise ValueError('layer must be >= 0')
-
-    def _fallback_key_components(self):
-        return [
-            text_key_component(self.phraser_key),
-            self.model_name,
-            self.output_type,
-            f'{self.layer:04d}',
-            f'{self.collar:09d}',
-        ]
-
-    def _display_identity_dict(self):
-        data = {
-            'phraser_key': self.phraser_key,
-            'collar': self.collar,
-            'model_name': self.model_name,
-            'output_type': self.output_type,
-            'layer': self.layer,
-        }
-        if self.model_id is not None:
-            data['model_id'] = self.model_id
-        return data
-
-
-class HiddenStateMetadata(_PhraserKeyMetadata):
-    OUTPUT_TYPE = 'hidden_state'
-
-    def __init__(self, phraser_key, collar, model_name, output_type=None,
-        layer=0, **kwargs):
-        super().__init__(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, output_type=output_type, layer=layer,
-            **kwargs)
-
-
-class AttentionMetadata(_PhraserKeyMetadata):
-    OUTPUT_TYPE = 'attention'
-
-    def __init__(self, phraser_key, collar, model_name, output_type=None,
-        layer=0, **kwargs):
-        super().__init__(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, output_type=output_type, layer=layer,
-            **kwargs)
-
-
-class CodebookIndicesMetadata(_PhraserKeyMetadata):
-    OUTPUT_TYPE = 'codebook_indices'
-
-    def __init__(self, phraser_key, collar, model_name, output_type=None,
-        layer=0, **kwargs):
-        super().__init__(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, output_type=output_type, layer=layer,
-            **kwargs)
-
-    def _validate_specific(self):
-        super()._validate_specific()
-        if self.layer != 0:
-            raise ValueError(
-                'codebook output types require layer to be exactly 0')
-
-
-class CodebookMatrixMetadata(_PhraserKeyMetadata):
-    OUTPUT_TYPE = 'codebook_matrix'
-
-    def __init__(self, phraser_key, collar, model_name, output_type=None,
-        layer=0, **kwargs):
-        super().__init__(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, output_type=output_type, layer=layer,
-            **kwargs)
-
-    def _validate_specific(self):
-        super()._validate_specific()
-        if self.layer != 0:
-            raise ValueError(
-                'codebook output types require layer to be exactly 0')
-
-
-class ModelMetadata(EchoframeMetadata):
-    OUTPUT_TYPE = 'model_metadata'
-
-    def __init__(self, model_name, output_type=None, model_id=None,
-        local_path=None, huggingface_id=None, language=None,
-        storage_status='live', shard_id=None, dataset_path=None, shape=None,
-        dtype=None, tags=None, created_at=None, deleted_at=None,
-        accessed_at=None, phraser_key=None, collar=None, layer=None,
-        echoframe_key=None):
-        super().__init__(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, output_type=output_type, layer=layer,
+    def __init__(self, model_name, output_type='model_metadata',
+        model_id=None, local_path=None, huggingface_id=None, language=None,
+        size=None, storage_status='live', shard_id=None, dataset_path=None,
+        shape=None, dtype=None, tags=None, created_at=None, deleted_at=None,
+        accessed_at=None, echoframe_key=None, phraser_key=None, collar=None,
+        layer=None):
+        self.model_id = model_id
+        self.local_path = local_path
+        self.huggingface_id = huggingface_id
+        self.language = language
+        self.size = size
+        self.phraser_key = phraser_key
+        self.collar = collar
+        self.layer = layer
+        super().__init__(model_name=model_name, output_type=output_type,
             storage_status=storage_status, shard_id=shard_id,
             dataset_path=dataset_path, shape=shape, dtype=dtype, tags=tags,
             created_at=created_at, deleted_at=deleted_at,
-            accessed_at=accessed_at, model_id=model_id,
-            local_path=local_path, huggingface_id=huggingface_id,
-            language=language, echoframe_key=echoframe_key)
+            accessed_at=accessed_at, echoframe_key=echoframe_key)
 
     def _validate_specific(self):
+        if self.output_type != 'model_metadata':
+            raise ValueError("model metadata output_type must be 'model_metadata'")
         if self.phraser_key not in (None, ''):
             raise ValueError('model_metadata does not use phraser_key')
         if self.collar not in (None, 0):
@@ -343,17 +365,11 @@ class ModelMetadata(EchoframeMetadata):
         if self.layer not in (None, 0):
             raise ValueError('model_metadata does not use layer')
 
-    def _repr_body(self):
-        return f'type={self.output_type}, model={self.model_name}, '
-
     def _fallback_key_components(self):
         return [self.model_name, self.output_type]
 
-    def _display_identity_dict(self):
-        data = {
-            'model_name': self.model_name,
-            'output_type': self.output_type,
-        }
+    def _display_specific_dict(self):
+        data = {}
         if self.model_id is not None:
             data['model_id'] = self.model_id
         if self.local_path is not None:
@@ -362,49 +378,39 @@ class ModelMetadata(EchoframeMetadata):
             data['huggingface_id'] = self.huggingface_id
         if self.language is not None:
             data['language'] = self.language
+        if self.size is not None:
+            data['size'] = self.size
         return data
 
+    def _to_dict_specific(self):
+        return {
+            'model_id': self.model_id,
+            'local_path': self.local_path,
+            'huggingface_id': self.huggingface_id,
+            'language': self.language,
+            'size': self.size,
+            'phraser_key': self.phraser_key,
+            'collar': self.collar,
+            'layer': self.layer,
+        }
 
-METADATA_CLASS_BY_OUTPUT_TYPE = {
-    'hidden_state': HiddenStateMetadata,
-    'attention': AttentionMetadata,
-    'codebook_indices': CodebookIndicesMetadata,
-    'codebook_matrix': CodebookMatrixMetadata,
-    'model_metadata': ModelMetadata,
-}
-
-
-OUTPUT_TYPES = set(METADATA_CLASS_BY_OUTPUT_TYPE)
-
-
-STABLE_METADATA_FIELDS = (
-    'phraser_key',
-    'collar',
-    'model_name',
-    'model_id',
-    'output_type',
-    'layer',
-    'local_path',
-    'huggingface_id',
-    'language',
-    'storage_status',
-    'shard_id',
-    'dataset_path',
-    'shape',
-    'dtype',
-    'tags',
-    'created_at',
-    'deleted_at',
-    'accessed_at',
-)
+    @classmethod
+    def from_dict(cls, data):
+        data = dict(data)
+        key_hex = data.pop('echoframe_key_hex', None)
+        if key_hex is not None:
+            data['echoframe_key'] = bytes.fromhex(key_hex)
+        return cls(**data)
 
 
 def metadata_class_for_output_type(output_type):
     '''Return the metadata class for one output type.'''
-    if output_type not in METADATA_CLASS_BY_OUTPUT_TYPE:
+    if output_type not in OUTPUT_TYPES:
         message = f'output_type must be one of {sorted(OUTPUT_TYPES)}'
         raise ValueError(message)
-    return METADATA_CLASS_BY_OUTPUT_TYPE[output_type]
+    if output_type == 'model_metadata':
+        return ModelMetadata
+    return partial(EchoframeMetadata, output_type=output_type)
 
 
 def filter_metadata(records, model_name=None, output_type=None, layer=None,
@@ -417,11 +423,13 @@ def filter_metadata(records, model_name=None, output_type=None, layer=None,
         items = [record for record in items
             if record.output_type == output_type]
     if layer is not None:
-        items = [record for record in items if record.layer == layer]
+        items = [record for record in items if getattr(record, 'layer', None)
+            == layer]
     items.sort(key=lambda record: (
-        -1 if record.collar is None else record.collar,
+        -1 if getattr(record, 'collar', None) is None else record.collar,
         record.output_type,
-        record.layer if record.layer is not None else -1,
+        getattr(record, 'layer', None)
+            if getattr(record, 'layer', None) is not None else -1,
         record.model_name or '',
     ))
 
@@ -433,7 +441,8 @@ def filter_metadata(records, model_name=None, output_type=None, layer=None,
     if not items:
         return []
     if match == 'exact':
-        return [record for record in items if record.collar == collar]
+        return [record for record in items
+            if getattr(record, 'collar', None) == collar]
     if match == 'min':
         for record in items:
             if record.collar >= collar:
@@ -475,23 +484,6 @@ def text_key_component(value):
     if isinstance(value, bytes):
         return value.hex()
     return value
-
-
-def _truncate_text(text, max_length):
-    '''Return text clipped to max_length with a trailing ellipsis.'''
-    if len(text) <= max_length:
-        return text
-    if max_length <= 3:
-        return text[:max_length]
-    return text[:max_length - 3] + '...'
-
-
-def _extract_output_type(args, kwargs):
-    if 'output_type' in kwargs:
-        return kwargs['output_type']
-    if len(args) >= 4:
-        return args[3]
-    return None
 
 
 _VALID_MATCHES = {'exact', 'min', 'max', 'nearest'}

@@ -207,56 +207,39 @@ class TestPackUnpackModelMetadata(unittest.TestCase):
 
 class TestPackDispatch(unittest.TestCase):
 
-    def test_pack_dispatch_hidden_state(self):
-        key = pack_echoframe_key(
-            'hidden_state',
-            model_id=MODEL_ID,
-            layer=LAYER,
-            phraser_key=SAMPLE_PHRASER_KEY,
-            collar=COLLAR,
-        )
-        self.assertEqual(
-            key,
-            pack_hidden_state_key(
-                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR),
-        )
-
-    def test_pack_dispatch_attention(self):
-        key = pack_echoframe_key(
-            'attention',
-            model_id=MODEL_ID,
-            layer=LAYER,
-            phraser_key=SAMPLE_PHRASER_KEY,
-            collar=COLLAR,
-        )
-        self.assertEqual(
-            key,
-            pack_attention_key(
-                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR),
-        )
-
-    def test_pack_dispatch_codebook_indices(self):
-        key = pack_echoframe_key(
-            'codebook_indices',
-            model_id=MODEL_ID,
-            phraser_key=SAMPLE_PHRASER_KEY,
-            collar=COLLAR,
-        )
-        self.assertEqual(
-            key,
-            pack_codebook_indices_key(MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR),
-        )
-
-    def test_pack_dispatch_codebook_matrix(self):
-        key = pack_echoframe_key('codebook_matrix', model_id=MODEL_ID)
-        self.assertEqual(key, pack_codebook_matrix_key(MODEL_ID))
-
-    def test_pack_dispatch_model_metadata(self):
-        key = pack_echoframe_key(
-            'model_metadata',
-            model_name='bert-base-uncased',
-        )
-        self.assertEqual(key, pack_model_metadata_key('bert-base-uncased'))
+    def test_pack_dispatch_matches_specialized_packer(self):
+        cases = [
+            ('hidden_state', {
+                'model_id': MODEL_ID,
+                'layer': LAYER,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, pack_hidden_state_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('attention', {
+                'model_id': MODEL_ID,
+                'layer': LAYER,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, pack_attention_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_indices', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, pack_codebook_indices_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_matrix', {
+                'model_id': MODEL_ID,
+            }, pack_codebook_matrix_key(MODEL_ID)),
+            ('model_metadata', {
+                'model_name': 'bert-base-uncased',
+            }, pack_model_metadata_key('bert-base-uncased')),
+        ]
+        for output_type, kwargs, expected in cases:
+            with self.subTest(output_type=output_type):
+                key = pack_echoframe_key(output_type, **kwargs)
+                self.assertEqual(key, expected)
 
     def test_pack_dispatch_unknown_output_type_raises(self):
         with self.assertRaises(ValueError):
@@ -265,49 +248,42 @@ class TestPackDispatch(unittest.TestCase):
 
 class TestUnpackDispatch(unittest.TestCase):
 
-    def test_unpack_dispatch_hidden_state(self):
-        key = pack_hidden_state_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
-            COLLAR)
-        fields = unpack_echoframe_key(key)
-        self.assertEqual(fields['output_type'], 'hidden_state')
-
-    def test_unpack_dispatch_attention(self):
-        key = pack_attention_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
-            COLLAR)
-        fields = unpack_echoframe_key(key)
-        self.assertEqual(fields['output_type'], 'attention')
-
-    def test_unpack_dispatch_codebook_indices(self):
-        key = pack_codebook_indices_key(MODEL_ID, SAMPLE_PHRASER_KEY,
-            COLLAR)
-        fields = unpack_echoframe_key(key)
-        self.assertEqual(fields['output_type'], 'codebook_indices')
-
-    def test_unpack_dispatch_codebook_matrix(self):
-        key = pack_codebook_matrix_key(MODEL_ID)
-        fields = unpack_echoframe_key(key)
-        self.assertEqual(fields['output_type'], 'codebook_matrix')
-
-    def test_unpack_dispatch_model_metadata(self):
-        key = pack_model_metadata_key('bert-base-uncased')
-        fields = unpack_echoframe_key(key)
-        self.assertEqual(fields['output_type'], 'model_metadata')
+    def test_unpack_dispatch_reports_correct_output_type(self):
+        cases = [
+            ('hidden_state', pack_hidden_state_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('attention', pack_attention_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_indices', pack_codebook_indices_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
+            ('model_metadata',
+                pack_model_metadata_key('bert-base-uncased')),
+        ]
+        for output_type, key in cases:
+            with self.subTest(output_type=output_type):
+                fields = unpack_echoframe_key(key)
+                self.assertEqual(fields['output_type'], output_type)
 
 
 class TestOutputTypeInference(unittest.TestCase):
 
-    def test_output_type_from_hidden_state_key(self):
-        key = pack_hidden_state_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
-            COLLAR)
-        self.assertEqual(
-            output_type_from_echoframe_key(key),
-            'hidden_state',
-        )
-
-    def test_output_type_from_attention_key(self):
-        key = pack_attention_key(MODEL_ID, LAYER, SAMPLE_PHRASER_KEY,
-            COLLAR)
-        self.assertEqual(output_type_from_echoframe_key(key), 'attention')
+    def test_output_type_from_key(self):
+        cases = [
+            ('hidden_state', pack_hidden_state_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('attention', pack_attention_key(
+                MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_indices', pack_codebook_indices_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
+            ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
+            ('model_metadata',
+                pack_model_metadata_key('bert-base-uncased')),
+        ]
+        for output_type, key in cases:
+            with self.subTest(output_type=output_type):
+                self.assertEqual(output_type_from_echoframe_key(key),
+                    output_type)
 
     def test_output_type_from_unknown_length_raises(self):
         with self.assertRaises(ValueError):

@@ -10,6 +10,7 @@ from .key_helper import pack_echoframe_key
 from .metadata import (
     EchoframeMetadata,
     filter_metadata,
+    ModelMetadata,
     metadata_class_for_output_type,
     utc_now,
 )
@@ -37,11 +38,12 @@ class Store:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         shards_root = self.root / 'shards'
+        self.config_path = self.root / 'config.json'
         self.index = index or LmdbIndex(self.root / 'index.lmdb',
             shards_root=shards_root)
         self.storage = storage or Hdf5ShardStore(shards_root,
             max_shard_size_bytes=max_shard_size_bytes)
-        self.registry = ModelRegistry(self.index.env)
+        self.registry = ModelRegistry(self.config_path)
 
     def _bind_metadata(self, metadata):
         if metadata is None:
@@ -61,30 +63,33 @@ class Store:
             model_name=model_name, layer=layer, tags=tags,
             echoframe_key=echoframe_key)
 
-    def register_model(self, model_name):
+    def register_model(self, model_name, local_path=None,
+        huggingface_id=None, language=None, size=None):
         '''Register one model in the store registry.
 
         model_name:   str model identifier
-        Returns a dict with model_name, model_id, and created_at.
+        Returns a ModelMetadata object.
         Raises ValueError if model_name is already registered.
         '''
-        return self.registry.register(model_name)
+        return self.registry.register_model(model_name,
+            local_path=local_path, huggingface_id=huggingface_id,
+            language=language, size=size)
 
-    def import_model_seeds(self, path):
-        '''Import model definitions from a JSON seed file.
+    def import_models(self, path):
+        '''Import model definitions from a JSON file.
 
         Validates the entire file before writing anything. Raises ValueError
         if any model name already exists in the store.
-        Returns a list of stored record dicts.
+        Returns a list of ModelMetadata objects.
         '''
-        return self.registry.import_seeds(path)
+        return self.registry.register_models_from_file(path)
 
     def get_model_metadata(self, model_name):
         '''Look up a model_metadata record by model name.
 
-        Returns a dict with model_name, model_id, and created_at, or None.
+        Returns a ModelMetadata object, or None.
         '''
-        return self.registry.get(model_name)
+        return self.registry.load_model_metadata(model_name)
 
     def make_echoframe_key(self, output_type, *, model_name, phraser_key=None,
         layer=None, collar=None):
@@ -92,12 +97,12 @@ class Store:
         if output_type == 'model_metadata':
             return pack_echoframe_key(output_type='model_metadata',
                 model_name=model_name)
-        record = self.registry.get(model_name)
+        record = self.registry.load_model_metadata(model_name)
         if record is None:
             raise ValueError(f'model_name is not registered: {model_name!r}')
         kwargs = {
             'output_type': output_type,
-            'model_id': record['model_id'],
+            'model_id': record.model_id,
         }
         if output_type in {'hidden_state', 'attention'}:
             kwargs.update({
@@ -122,7 +127,7 @@ class Store:
         Canonical form:
             store.put(echoframe_key, metadata, data)
         '''
-        if not isinstance(metadata, EchoframeMetadata):
+        if not isinstance(metadata, (EchoframeMetadata, ModelMetadata)):
             raise ValueError('metadata must be an EchoframeMetadata')
         if metadata.output_type != 'model_metadata' and data is None:
             raise ValueError('data must not be None for this output type')
@@ -140,7 +145,7 @@ class Store:
         for item in items:
             metadata = item['metadata']
             echoframe_key = item['echoframe_key']
-            if not isinstance(metadata, EchoframeMetadata):
+            if not isinstance(metadata, (EchoframeMetadata, ModelMetadata)):
                 raise ValueError('metadata must be an EchoframeMetadata')
             if bytes(echoframe_key) != metadata.echoframe_key:
                 raise ValueError(

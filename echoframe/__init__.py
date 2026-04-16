@@ -3,12 +3,8 @@
 from .codebooks import Codebook, TokenCodebooks
 from .embeddings import Embeddings, TokenEmbeddings
 from .metadata import (
-    AttentionMetadata,
-    CodebookIndicesMetadata,
-    CodebookMatrixMetadata,
     EchoframeMetadata,
     filter_metadata,
-    HiddenStateMetadata,
     ModelMetadata,
     OUTPUT_TYPES,
     STABLE_METADATA_FIELDS,
@@ -23,10 +19,6 @@ __all__ = [
     'Store',
     'OUTPUT_TYPES',
     'EchoframeMetadata',
-    'HiddenStateMetadata',
-    'AttentionMetadata',
-    'CodebookIndicesMetadata',
-    'CodebookMatrixMetadata',
     'ModelMetadata',
     'STABLE_METADATA_FIELDS',
     'filter_metadata',

@@ -35,25 +35,23 @@ class TestRankMaps(unittest.TestCase):
 
 class TestKeyFmt(unittest.TestCase):
 
-    def test_hidden_state_fmt(self):
-        fmt = make_key_fmt('hidden_state')
-        self.assertTrue(fmt.startswith('>'))
-        self.assertEqual(struct.calcsize(fmt), 28)
+    def test_fmt_sizes_match_expected_layouts(self):
+        cases = {
+            'hidden_state': 28,
+            'attention': 28,
+            'codebook_indices': 27,
+            'codebook_matrix': 3,
+            'model_metadata': 9,
+        }
+        for output_type, expected_size in cases.items():
+            with self.subTest(output_type=output_type):
+                fmt = make_key_fmt(output_type)
+                self.assertTrue(fmt.startswith('>'))
+                self.assertEqual(struct.calcsize(fmt), expected_size)
 
     def test_attention_fmt_matches_hidden_state(self):
-        self.assertEqual(make_key_fmt('attention'), make_key_fmt('hidden_state'))
-
-    def test_codebook_indices_fmt(self):
-        fmt = make_key_fmt('codebook_indices')
-        self.assertEqual(struct.calcsize(fmt), 27)
-
-    def test_codebook_matrix_fmt(self):
-        fmt = make_key_fmt('codebook_matrix')
-        self.assertEqual(struct.calcsize(fmt), 3)
-
-    def test_model_metadata_fmt(self):
-        fmt = make_key_fmt('model_metadata')
-        self.assertEqual(struct.calcsize(fmt), 9)
+        self.assertEqual(make_key_fmt('attention'),
+            make_key_fmt('hidden_state'))
 
     def test_unknown_output_type_raises(self):
         with self.assertRaises(ValueError):
@@ -63,11 +61,16 @@ class TestKeyFmt(unittest.TestCase):
 class TestKeyLen(unittest.TestCase):
 
     def test_key_lengths(self):
-        self.assertEqual(key_len('hidden_state'), 28)
-        self.assertEqual(key_len('attention'), 28)
-        self.assertEqual(key_len('codebook_indices'), 27)
-        self.assertEqual(key_len('codebook_matrix'), 3)
-        self.assertEqual(key_len('model_metadata'), 9)
+        cases = {
+            'hidden_state': 28,
+            'attention': 28,
+            'codebook_indices': 27,
+            'codebook_matrix': 3,
+            'model_metadata': 9,
+        }
+        for output_type, expected_length in cases.items():
+            with self.subTest(output_type=output_type):
+                self.assertEqual(key_len(output_type), expected_length)
 
 
 class TestConstants(unittest.TestCase):

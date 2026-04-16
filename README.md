@@ -238,6 +238,21 @@ journal = store.compaction_journal()
 stats = store.shard_stats()
 ```
 
+## Store Config
+
+Each store keeps a `config.json` file next to `index.lmdb`. It stores:
+
+- registered model metadata keyed by `model_name`
+
+Registered model metadata records contain:
+
+- `model_id`
+- `local_path`
+- `huggingface_id`
+- `language`
+- `size`
+- `model_name`
+
 ## Metadata Contract
 
 `EchoframeMetadata` contains internal and operational fields, but the stable

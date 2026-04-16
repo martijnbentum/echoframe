@@ -208,7 +208,7 @@ class TestPackDispatch(unittest.TestCase):
 
     def test_pack_dispatch_unknown_output_type_raises(self):
         with self.assertRaises(ValueError):
-            pack_echoframe_key('unknown_type')
+            pack_echoframe_key('unknown_type', MODEL_ID)
 
 
 class TestUnpackDispatch(unittest.TestCase):

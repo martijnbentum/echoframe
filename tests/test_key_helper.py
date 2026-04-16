@@ -99,11 +99,11 @@ class TestPackUnpackHiddenState(unittest.TestCase):
 
     def test_pack_returns_correct_length(self):
         self.assertEqual(len(self.key), HIDDEN_STATE_KEY_LEN)
-        self.assertEqual(len(self.key), 28)
+        self.assertEqual(len(self.key), 30)
 
     def test_pack_is_big_endian(self):
-        model_id_bytes = self.key[:2]
-        self.assertEqual(struct.unpack('>H', model_id_bytes)[0], MODEL_ID)
+        model_id_bytes = self.key[:4]
+        self.assertEqual(struct.unpack('>I', model_id_bytes)[0], MODEL_ID)
 
     def test_unpack_roundtrip(self):
         fields = unpack_hidden_state_key(self.key)
@@ -122,7 +122,7 @@ class TestPackUnpackAttention(unittest.TestCase):
 
     def test_pack_returns_correct_length(self):
         self.assertEqual(len(self.key), ATTENTION_KEY_LEN)
-        self.assertEqual(len(self.key), 28)
+        self.assertEqual(len(self.key), 30)
 
     def test_unpack_roundtrip(self):
         fields = unpack_attention_key(self.key)
@@ -148,7 +148,7 @@ class TestPackUnpackCodebookIndices(unittest.TestCase):
 
     def test_pack_returns_correct_length(self):
         self.assertEqual(len(self.key), CODEBOOK_INDICES_KEY_LEN)
-        self.assertEqual(len(self.key), 27)
+        self.assertEqual(len(self.key), 29)
 
     def test_unpack_roundtrip(self):
         fields = unpack_codebook_indices_key(self.key)
@@ -165,7 +165,7 @@ class TestPackUnpackCodebookMatrix(unittest.TestCase):
 
     def test_pack_returns_correct_length(self):
         self.assertEqual(len(self.key), CODEBOOK_MATRIX_KEY_LEN)
-        self.assertEqual(len(self.key), 3)
+        self.assertEqual(len(self.key), 5)
 
     def test_unpack_roundtrip(self):
         fields = unpack_codebook_matrix_key(self.key)

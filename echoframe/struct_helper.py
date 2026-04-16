@@ -4,7 +4,7 @@ Defines the output type rank map and struct format strings for all
 echoframe_key layouts. All formats are big-endian and fixed-width.
 
 Field widths:
-    model_id:         uint16  (2 bytes)
+    model_id:         uint32  (4 bytes)
     output_type_id:   uint8   (1 byte)
     layer:            uint8   (1 byte)
     collar:           uint16  (2 bytes)
@@ -33,20 +33,20 @@ def make_key_fmt(output_type):
     '''Return the struct fmt string for the given output type echoframe_key.
 
     hidden_state / attention:
-        uint16 model_id, uint8 output_type_id, uint8 layer,
+        uint32 model_id, uint8 output_type_id, uint8 layer,
         22-byte phraser_key, uint16 collar
     codebook_indices:
-        uint16 model_id, uint8 output_type_id,
+        uint32 model_id, uint8 output_type_id,
         22-byte phraser_key, uint16 collar
     codebook_matrix:
-        uint16 model_id, uint8 output_type_id
+        uint32 model_id, uint8 output_type_id
     '''
     if output_type in ('hidden_state', 'attention'):
-        return f'>HBB{PHRASER_KEY_LEN}sH'
+        return f'>IBB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_indices':
-        return f'>HB{PHRASER_KEY_LEN}sH'
+        return f'>IB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_matrix':
-        return '>HB'
+        return '>IB'
     raise ValueError(f'unknown output type: {output_type!r}')
 
 

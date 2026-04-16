@@ -23,10 +23,10 @@ _AT_FMT  = struct_helper.make_key_fmt('attention')
 _CI_FMT  = struct_helper.make_key_fmt('codebook_indices')
 _CM_FMT  = struct_helper.make_key_fmt('codebook_matrix')
 
-HIDDEN_STATE_KEY_LEN      = struct.calcsize(_HS_FMT)   # 28
-ATTENTION_KEY_LEN         = struct.calcsize(_AT_FMT)   # 28
-CODEBOOK_INDICES_KEY_LEN  = struct.calcsize(_CI_FMT)   # 27
-CODEBOOK_MATRIX_KEY_LEN   = struct.calcsize(_CM_FMT)   # 3
+HIDDEN_STATE_KEY_LEN      = struct.calcsize(_HS_FMT)   # 30
+ATTENTION_KEY_LEN         = struct.calcsize(_AT_FMT)   # 30
+CODEBOOK_INDICES_KEY_LEN  = struct.calcsize(_CI_FMT)   # 29
+CODEBOOK_MATRIX_KEY_LEN   = struct.calcsize(_CM_FMT)   # 5
 
 
 # -------- hashing --------
@@ -70,7 +70,7 @@ def validate_segment_phraser_key(phraser_key):
 
 def pack_hidden_state_key(model_id, layer, phraser_key, collar):
     '''Pack an echoframe_key for a hidden_state record.
-    model_id:     int  (uint16)
+    model_id:     int  (uint32)
     layer:        int  (uint8)
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
@@ -83,7 +83,7 @@ def pack_hidden_state_key(model_id, layer, phraser_key, collar):
 
 def pack_attention_key(model_id, layer, phraser_key, collar):
     '''Pack an echoframe_key for an attention record.
-    model_id:     int  (uint16)
+    model_id:     int  (uint32)
     layer:        int  (uint8)
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
@@ -96,7 +96,7 @@ def pack_attention_key(model_id, layer, phraser_key, collar):
 
 def pack_codebook_indices_key(model_id, phraser_key, collar):
     '''Pack an echoframe_key for a codebook_indices record.
-    model_id:     int  (uint16)
+    model_id:     int  (uint32)
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
@@ -107,7 +107,7 @@ def pack_codebook_indices_key(model_id, phraser_key, collar):
 
 def pack_codebook_matrix_key(model_id):
     '''Pack an echoframe_key for a codebook_matrix record.
-    model_id:   int  (uint16)
+    model_id:   int  (uint32)
     '''
     output_type_id = OUTPUT_TYPE_RANK_MAP['codebook_matrix']
     return struct.pack(_CM_FMT, model_id, output_type_id)
@@ -220,7 +220,7 @@ def output_type_from_echoframe_key(key_bytes):
     n_bytes = len(key_bytes)
     if n_bytes in {HIDDEN_STATE_KEY_LEN, ATTENTION_KEY_LEN,
             CODEBOOK_INDICES_KEY_LEN, CODEBOOK_MATRIX_KEY_LEN}:
-        output_type_id = key_bytes[2]
+        output_type_id = key_bytes[4]
     else:
         raise ValueError(f'unknown echoframe_key length: {n_bytes}')
 
@@ -234,17 +234,17 @@ def output_type_from_echoframe_key(key_bytes):
     if n_bytes == HIDDEN_STATE_KEY_LEN and output_type not in {
             'hidden_state', 'attention'}:
         raise ValueError(
-            f'invalid output_type_id for 28-byte echoframe_key: '
+            f'invalid output_type_id for 30-byte echoframe_key: '
             f'{output_type_id}')
     if n_bytes == CODEBOOK_INDICES_KEY_LEN and output_type != (
             'codebook_indices'):
         raise ValueError(
-            f'invalid output_type_id for 27-byte echoframe_key: '
+            f'invalid output_type_id for 29-byte echoframe_key: '
             f'{output_type_id}')
     if n_bytes == CODEBOOK_MATRIX_KEY_LEN and output_type != (
             'codebook_matrix'):
         raise ValueError(
-            f'invalid output_type_id for 3-byte echoframe_key: '
+            f'invalid output_type_id for 5-byte echoframe_key: '
             f'{output_type_id}')
     return output_type
 

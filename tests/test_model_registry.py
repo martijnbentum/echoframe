@@ -15,6 +15,7 @@ from echoframe.model_registry import (
     load_model_seed_file,
 )
 from echoframe.store import Store
+from tests.helpers import pk as _pk
 
 
 def _make_store(tmp_dir):
@@ -35,10 +36,15 @@ def _write_model_file(tmp_dir, data):
 
 def _put(store, phraser_key, collar, model_name, output_type, layer, data,
     tags=None):
+    phraser_key = _pk(phraser_key)
     metadata_cls = metadata_class_for_output_type(output_type)
+    echoframe_key = store.make_echoframe_key(output_type,
+        model_name=model_name, phraser_key=phraser_key, layer=layer,
+        collar=collar)
     metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=layer, tags=tags)
-    return store.put(metadata.echoframe_key, metadata, data)
+        model_name=model_name, layer=layer, tags=tags,
+        echoframe_key=echoframe_key)
+    return store.put(echoframe_key, metadata, data)
 
 
 class TestRegisterModel(unittest.TestCase):
@@ -405,16 +411,17 @@ class TestExistingStoreUnchanged(unittest.TestCase):
         import numpy as np
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
+            store.register_model('bert')
             data = np.zeros((4, 8), dtype='float32')
             _put(store, 'pk_abc', 0, 'bert', 'hidden_state', 0, data)
-            results = store.find_phraser('pk_abc')
+            results = store.find_phraser(_pk('pk_abc'))
         self.assertEqual(len(results), 1)
 
     def test_registry_does_not_affect_artifact_entries(self):
         import numpy as np
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            store.register_model('bert-base-uncased')
+            store.register_model('bert')
             data = np.zeros((4, 8), dtype='float32')
             _put(store, 'pk_abc', 0, 'bert', 'hidden_state', 0, data)
             entries = store.list_entries()

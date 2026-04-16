@@ -37,10 +37,10 @@ class TestKeyFmt(unittest.TestCase):
 
     def test_fmt_sizes_match_expected_layouts(self):
         cases = {
-            'hidden_state': 28,
-            'attention': 28,
-            'codebook_indices': 27,
-            'codebook_matrix': 3,
+            'hidden_state': 30,
+            'attention': 30,
+            'codebook_indices': 29,
+            'codebook_matrix': 5,
         }
         for output_type, expected_size in cases.items():
             with self.subTest(output_type=output_type):
@@ -61,10 +61,10 @@ class TestKeyLen(unittest.TestCase):
 
     def test_key_lengths(self):
         cases = {
-            'hidden_state': 28,
-            'attention': 28,
-            'codebook_indices': 27,
-            'codebook_matrix': 3,
+            'hidden_state': 30,
+            'attention': 30,
+            'codebook_indices': 29,
+            'codebook_matrix': 5,
         }
         for output_type, expected_length in cases.items():
             with self.subTest(output_type=output_type):

@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 from functools import partial
-from hashlib import sha1
 
 from .util_formatting import format_pretty_dict, truncate_text
 
@@ -101,25 +100,19 @@ class _BaseMetadata:
 
     @property
     def echoframe_key(self):
-        '''Canonical raw binary echoframe key when provided.
-
-        Detached/manual metadata instances fall back to a deterministic
-        printable-only key shape until a real echoframe_key is assigned.
-        '''
+        '''Canonical raw binary echoframe key for stored metadata.'''
         if self._echoframe_key is None:
-            self._echoframe_key = self._fallback_echoframe_key()
+            raise ValueError('metadata does not have an echoframe_key')
         return self._echoframe_key
+
+    @property
+    def has_echoframe_key(self):
+        '''Return whether one canonical echoframe key is available.'''
+        return self._echoframe_key is not None
 
     def format_echoframe_key(self):
         '''Return a printable hex string for the binary echoframe key.'''
         return self.echoframe_key.hex()
-
-    def _fallback_echoframe_key(self):
-        text = ':'.join(self._fallback_key_components())
-        return sha1(text.encode('utf-8')).digest()
-
-    def _fallback_key_components(self):
-        raise NotImplementedError
 
     def mark_deleted(self):
         '''Return a tombstoned copy.'''
@@ -150,11 +143,13 @@ class _BaseMetadata:
         return data
 
     def _display_header_dict(self):
-        return {
-            'echoframe_key_hex': self.format_echoframe_key(),
+        data = {
             'model_name': self.model_name,
             'output_type': self.output_type,
         }
+        if self.has_echoframe_key:
+            data['echoframe_key_hex'] = self.format_echoframe_key()
+        return data
 
     def _display_specific_dict(self):
         return {}
@@ -186,7 +181,6 @@ class _BaseMetadata:
         data = {
             'model_name': self.model_name,
             'output_type': self.output_type,
-            'echoframe_key_hex': self.echoframe_key.hex(),
             'storage_status': self.storage_status,
             'shard_id': self.shard_id,
             'dataset_path': self.dataset_path,
@@ -197,6 +191,8 @@ class _BaseMetadata:
             'deleted_at': self.deleted_at,
             'accessed_at': self.accessed_at,
         }
+        if self.has_echoframe_key:
+            data['echoframe_key_hex'] = self.echoframe_key.hex()
         data.update(self._to_dict_specific())
         return data
 
@@ -243,24 +239,16 @@ class EchoframeMetadata(_BaseMetadata):
     def _repr_body(self):
         return f'model={self.model_name}, layer={self.layer}, '
 
-    def _fallback_key_components(self):
-        return [
-            text_key_component(self.phraser_key),
-            self.model_name,
-            self.output_type,
-            f'{self.layer:04d}',
-            f'{self.collar:09d}',
-        ]
-
     def _display_header_dict(self):
         data = {
-            'echoframe_key_hex': self.format_echoframe_key(),
             'phraser_key': self.phraser_key,
             'collar': self.collar,
             'model_name': self.model_name,
             'output_type': self.output_type,
             'layer': self.layer,
         }
+        if self.has_echoframe_key:
+            data['echoframe_key_hex'] = self.format_echoframe_key()
         if self.model_id is not None:
             data['model_id'] = self.model_id
         return data
@@ -402,13 +390,6 @@ def normalize_tags(tags):
             raise ValueError("tags must not contain ':'")
         values.append(value)
     return sorted(set(values))
-
-
-def text_key_component(value):
-    '''Return a stable text form for key components used in fallback keys.'''
-    if isinstance(value, bytes):
-        return value.hex()
-    return value
 
 
 _VALID_MATCHES = {'exact', 'min', 'max', 'nearest'}

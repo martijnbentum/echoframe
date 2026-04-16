@@ -34,12 +34,13 @@ class TestStorageRuntime(unittest.TestCase):
             storage = Hdf5ShardStore(Path(tmpdir), h5_module=FakeH5Module())
             metadata = EchoframeMetadata(phraser_key='phrase-1', collar=100,
                 model_name='model name', output_type='hidden_state', layer=2,
-                created_at='2024-01-01T00:00:00+00:00')
+                created_at='2024-01-01T00:00:00+00:00',
+                echoframe_key=b'\x01\x02')
             stored = storage.store_with_shard(metadata, data=[[1, 2]],
                 shard_id='manual_0001')
             self.assertEqual(stored.shard_id, 'manual_0001')
             self.assertEqual(stored.dataset_path,
-                f'/layer_0002/{metadata.format_echoframe_key()}')
+                '/layer_0002/0102')
             self.assertEqual(storage.shard_size('manual_0001'),
                 (Path(tmpdir) / 'manual_0001.h5').stat().st_size)
             replaced = storage.compact_shard('manual_0001', [stored])

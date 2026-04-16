@@ -359,8 +359,13 @@ class TestStoreIo(unittest.TestCase):
             shard_id='wav2vec2_hidden_state_0001',
             dataset_path='/layer_0007/entry', shape=[2, 3], dtype='float32',
             tags=[' b ', 'a', 'a'])
-        self.assertEqual(metadata.format_echoframe_key(),
-            metadata.echoframe_key.hex())
+        self.assertFalse(metadata.has_echoframe_key)
+        with self.assertRaisesRegex(ValueError,
+            'metadata does not have an echoframe_key'):
+            metadata.echoframe_key
+        with self.assertRaisesRegex(ValueError,
+            'metadata does not have an echoframe_key'):
+            metadata.format_echoframe_key()
         self.assertEqual(metadata.tags, ['a', 'b'])
         self.assertEqual(metadata.shape, (2, 3))
         self.assertIsNotNone(metadata.created_at)
@@ -385,15 +390,20 @@ class TestStoreIo(unittest.TestCase):
         with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
             self.assertIs(metadata.phraser_object, phraser_object)
             self.assertEqual(metadata.label, 'hello')
-        restored = EchoframeMetadata.from_dict(metadata.to_dict())
-        self.assertEqual(restored.to_dict(), metadata.to_dict())
+        serialized = metadata.to_dict()
+        self.assertNotIn('echoframe_key_hex', serialized)
+        restored = EchoframeMetadata.from_dict(serialized)
+        self.assertEqual(restored.to_dict(), serialized)
+        self.assertFalse(restored.has_echoframe_key)
         updated = metadata.with_tags(['z', 'a'])
         self.assertEqual(updated.tags, ['a', 'z'])
         self.assertEqual(updated.created_at, metadata.created_at)
+        self.assertFalse(updated.has_echoframe_key)
         deleted = metadata.mark_deleted()
         self.assertEqual(deleted.storage_status, 'deleted')
         self.assertEqual(deleted.created_at, metadata.created_at)
         self.assertIsNotNone(deleted.deleted_at)
+        self.assertFalse(deleted.has_echoframe_key)
 
     def test_store_metadata_are_bound_and_can_load_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

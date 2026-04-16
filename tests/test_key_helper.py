@@ -12,13 +12,11 @@ from echoframe.key_helper import (
     pack_attention_key,
     pack_codebook_indices_key,
     pack_codebook_matrix_key,
-    pack_model_metadata_key,
     pack_echoframe_key,
     unpack_hidden_state_key,
     unpack_attention_key,
     unpack_codebook_indices_key,
     unpack_codebook_matrix_key,
-    unpack_model_metadata_key,
     unpack_echoframe_key,
     output_type_from_echoframe_key,
     make_tag_scan_key,
@@ -29,7 +27,6 @@ from echoframe.key_helper import (
     ATTENTION_KEY_LEN,
     CODEBOOK_INDICES_KEY_LEN,
     CODEBOOK_MATRIX_KEY_LEN,
-    MODEL_METADATA_KEY_LEN,
 )
 from echoframe.struct_helper import OUTPUT_TYPE_RANK_MAP
 
@@ -176,35 +173,6 @@ class TestPackUnpackCodebookMatrix(unittest.TestCase):
         self.assertEqual(fields['output_type'], 'codebook_matrix')
 
 
-class TestPackUnpackModelMetadata(unittest.TestCase):
-
-    def setUp(self):
-        self.model_name = 'bert-base-uncased'
-        self.key = pack_model_metadata_key(self.model_name)
-
-    def test_pack_returns_correct_length(self):
-        self.assertEqual(len(self.key), MODEL_METADATA_KEY_LEN)
-        self.assertEqual(len(self.key), 9)
-
-    def test_unpack_roundtrip(self):
-        fields = unpack_model_metadata_key(self.key)
-        self.assertEqual(fields['model_name_hash'],
-                         model_name_hash(self.model_name))
-        self.assertEqual(fields['output_type'], 'model_metadata')
-
-    def test_same_name_produces_same_key(self):
-        self.assertEqual(
-            pack_model_metadata_key(self.model_name),
-            pack_model_metadata_key(self.model_name),
-        )
-
-    def test_different_names_produce_different_keys(self):
-        self.assertNotEqual(
-            pack_model_metadata_key('bert-base-uncased'),
-            pack_model_metadata_key('wav2vec2-base'),
-        )
-
-
 class TestPackDispatch(unittest.TestCase):
 
     def test_pack_dispatch_matches_specialized_packer(self):
@@ -232,9 +200,6 @@ class TestPackDispatch(unittest.TestCase):
             ('codebook_matrix', {
                 'model_id': MODEL_ID,
             }, pack_codebook_matrix_key(MODEL_ID)),
-            ('model_metadata', {
-                'model_name': 'bert-base-uncased',
-            }, pack_model_metadata_key('bert-base-uncased')),
         ]
         for output_type, kwargs, expected in cases:
             with self.subTest(output_type=output_type):
@@ -257,8 +222,6 @@ class TestUnpackDispatch(unittest.TestCase):
             ('codebook_indices', pack_codebook_indices_key(
                 MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
-            ('model_metadata',
-                pack_model_metadata_key('bert-base-uncased')),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):
@@ -277,8 +240,6 @@ class TestOutputTypeInference(unittest.TestCase):
             ('codebook_indices', pack_codebook_indices_key(
                 MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
-            ('model_metadata',
-                pack_model_metadata_key('bert-base-uncased')),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):

@@ -10,11 +10,10 @@ from .key_helper import pack_echoframe_key
 from .metadata import (
     EchoframeMetadata,
     filter_metadata,
-    ModelMetadata,
     metadata_class_for_output_type,
     utc_now,
 )
-from .model_registry import ModelRegistry
+from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .typed_loaders import (
     load_codebook as _load_codebook,
@@ -94,9 +93,6 @@ class Store:
     def make_echoframe_key(self, output_type, *, model_name, phraser_key=None,
         layer=None, collar=None):
         '''Build a canonical echoframe_key from user-facing parameters.'''
-        if output_type == 'model_metadata':
-            return pack_echoframe_key(output_type='model_metadata',
-                model_name=model_name)
         record = self.registry.load_model_metadata(model_name)
         if record is None:
             raise ValueError(f'model_name is not registered: {model_name!r}')
@@ -127,9 +123,9 @@ class Store:
         Canonical form:
             store.put(echoframe_key, metadata, data)
         '''
-        if not isinstance(metadata, (EchoframeMetadata, ModelMetadata)):
+        if not isinstance(metadata, EchoframeMetadata):
             raise ValueError('metadata must be an EchoframeMetadata')
-        if metadata.output_type != 'model_metadata' and data is None:
+        if data is None:
             raise ValueError('data must not be None for this output type')
         if bytes(echoframe_key) != metadata.echoframe_key:
             raise ValueError(
@@ -145,12 +141,12 @@ class Store:
         for item in items:
             metadata = item['metadata']
             echoframe_key = item['echoframe_key']
-            if not isinstance(metadata, (EchoframeMetadata, ModelMetadata)):
+            if not isinstance(metadata, EchoframeMetadata):
                 raise ValueError('metadata must be an EchoframeMetadata')
             if bytes(echoframe_key) != metadata.echoframe_key:
                 raise ValueError(
                     'metadata.echoframe_key must match the item key')
-            if metadata.output_type != 'model_metadata' and item['data'] is None:
+            if item['data'] is None:
                 raise ValueError('data must not be None for this output type')
             prepared.append({
                 'metadata': metadata,

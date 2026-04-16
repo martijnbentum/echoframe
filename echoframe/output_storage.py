@@ -37,10 +37,6 @@ class Hdf5ShardStore:
 
     def store(self, metadata, data):
         '''Store payload data and return updated metadata.'''
-        if metadata.output_type == 'model_metadata':
-            if data is not None:
-                raise ValueError('model_metadata does not use HDF5 payload data')
-            return metadata
         shard_id = self._active_shard_id(model_name=metadata.model_name,
             output_type=metadata.output_type)
         return self.store_with_shard(metadata, data=data, shard_id=shard_id)

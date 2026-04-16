@@ -10,11 +10,11 @@ import struct
 
 from . import struct_helper
 from .struct_helper import (
-    OUTPUT_TYPE_RANK_MAP,
-    RANK_OUTPUT_TYPE_MAP,
     MODEL_NAME_HASH_LEN,
+    OUTPUT_TYPE_RANK_MAP,
     TAG_HASH_LEN,
     PHRASER_KEY_LEN,
+    RANK_OUTPUT_TYPE_MAP,
 )
 
 # pre-computed fmt strings and lengths
@@ -22,13 +22,11 @@ _HS_FMT  = struct_helper.make_key_fmt('hidden_state')
 _AT_FMT  = struct_helper.make_key_fmt('attention')
 _CI_FMT  = struct_helper.make_key_fmt('codebook_indices')
 _CM_FMT  = struct_helper.make_key_fmt('codebook_matrix')
-_MM_FMT  = struct_helper.make_key_fmt('model_metadata')
 
 HIDDEN_STATE_KEY_LEN      = struct.calcsize(_HS_FMT)   # 28
 ATTENTION_KEY_LEN         = struct.calcsize(_AT_FMT)   # 28
 CODEBOOK_INDICES_KEY_LEN  = struct.calcsize(_CI_FMT)   # 27
 CODEBOOK_MATRIX_KEY_LEN   = struct.calcsize(_CM_FMT)   # 3
-MODEL_METADATA_KEY_LEN    = struct.calcsize(_MM_FMT)   # 9
 
 
 # -------- hashing --------
@@ -115,15 +113,6 @@ def pack_codebook_matrix_key(model_id):
     return struct.pack(_CM_FMT, model_id, output_type_id)
 
 
-def pack_model_metadata_key(model_name):
-    '''Pack an echoframe_key for a model_metadata record.
-    model_name:   str
-    '''
-    name_hash = model_name_hash(model_name)
-    output_type_id = OUTPUT_TYPE_RANK_MAP['model_metadata']
-    return struct.pack(_MM_FMT, name_hash, output_type_id)
-
-
 def pack_echoframe_key(output_type, **kwargs):
     '''Pack one echoframe_key by output type.
 
@@ -152,8 +141,6 @@ def pack_echoframe_key(output_type, **kwargs):
         )
     if output_type == 'codebook_matrix':
         return pack_codebook_matrix_key(kwargs['model_id'])
-    if output_type == 'model_metadata':
-        return pack_model_metadata_key(kwargs['model_name'])
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
@@ -214,17 +201,6 @@ def unpack_codebook_matrix_key(key_bytes):
     }
 
 
-def unpack_model_metadata_key(key_bytes):
-    '''Unpack a model_metadata echoframe_key into its component fields.
-    Returns dict with model_name_hash, output_type.
-    '''
-    name_hash, output_type_id = struct.unpack(_MM_FMT, key_bytes)
-    return {
-        'model_name_hash': name_hash,
-        'output_type':     RANK_OUTPUT_TYPE_MAP[output_type_id],
-    }
-
-
 def unpack_echoframe_key(key_bytes):
     '''Unpack one echoframe_key by inferring its output type.'''
     output_type = output_type_from_echoframe_key(key_bytes)
@@ -236,8 +212,6 @@ def unpack_echoframe_key(key_bytes):
         return unpack_codebook_indices_key(key_bytes)
     if output_type == 'codebook_matrix':
         return unpack_codebook_matrix_key(key_bytes)
-    if output_type == 'model_metadata':
-        return unpack_model_metadata_key(key_bytes)
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
@@ -247,8 +221,6 @@ def output_type_from_echoframe_key(key_bytes):
     if n_bytes in {HIDDEN_STATE_KEY_LEN, ATTENTION_KEY_LEN,
             CODEBOOK_INDICES_KEY_LEN, CODEBOOK_MATRIX_KEY_LEN}:
         output_type_id = key_bytes[2]
-    elif n_bytes == MODEL_METADATA_KEY_LEN:
-        output_type_id = key_bytes[MODEL_NAME_HASH_LEN]
     else:
         raise ValueError(f'unknown echoframe_key length: {n_bytes}')
 
@@ -273,10 +245,6 @@ def output_type_from_echoframe_key(key_bytes):
             'codebook_matrix'):
         raise ValueError(
             f'invalid output_type_id for 3-byte echoframe_key: '
-            f'{output_type_id}')
-    if n_bytes == MODEL_METADATA_KEY_LEN and output_type != 'model_metadata':
-        raise ValueError(
-            f'invalid output_type_id for 9-byte echoframe_key: '
             f'{output_type_id}')
     return output_type
 

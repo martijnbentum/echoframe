@@ -20,7 +20,6 @@ OUTPUT_TYPE_RANK_MAP = {
     'attention':        1,
     'codebook_indices': 2,
     'codebook_matrix':  3,
-    'model_metadata':   4,
 }
 
 RANK_OUTPUT_TYPE_MAP = {v: k for k, v in OUTPUT_TYPE_RANK_MAP.items()}
@@ -41,8 +40,6 @@ def make_key_fmt(output_type):
         22-byte phraser_key, uint16 collar
     codebook_matrix:
         uint16 model_id, uint8 output_type_id
-    model_metadata:
-        8-byte model_name_hash, uint8 output_type_id
     '''
     if output_type in ('hidden_state', 'attention'):
         return f'>HBB{PHRASER_KEY_LEN}sH'
@@ -50,8 +47,6 @@ def make_key_fmt(output_type):
         return f'>HB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_matrix':
         return '>HB'
-    if output_type == 'model_metadata':
-        return f'>{MODEL_NAME_HASH_LEN}sB'
     raise ValueError(f'unknown output type: {output_type!r}')
 
 

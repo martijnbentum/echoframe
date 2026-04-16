@@ -5,10 +5,10 @@ from .embeddings import Embeddings, TokenEmbeddings
 from .metadata import (
     EchoframeMetadata,
     filter_metadata,
-    ModelMetadata,
     OUTPUT_TYPES,
     STABLE_METADATA_FIELDS,
 )
+from .model_registry import ModelMetadata
 from .store import Store
 
 __all__ = [

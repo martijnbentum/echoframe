@@ -15,7 +15,7 @@ SEGMENT_OUTPUT_TYPES = {
 }
 
 
-OUTPUT_TYPES = SEGMENT_OUTPUT_TYPES | {'model_metadata'}
+OUTPUT_TYPES = SEGMENT_OUTPUT_TYPES
 
 
 STABLE_METADATA_FIELDS = (
@@ -324,82 +324,9 @@ class EchoframeMetadata(_BaseMetadata):
         key_hex = data.pop('echoframe_key_hex', None)
         if key_hex is not None:
             data['echoframe_key'] = bytes.fromhex(key_hex)
-        if data.get('output_type') == 'model_metadata':
-            return ModelMetadata.from_dict(data)
         phraser_key_hex = data.pop('phraser_key_hex', None)
         if phraser_key_hex is not None:
             data['phraser_key'] = bytes.fromhex(phraser_key_hex)
-        return cls(**data)
-
-
-class ModelMetadata(_BaseMetadata):
-    '''Metadata for one registered model.'''
-
-    def __init__(self, model_name, output_type='model_metadata',
-        model_id=None, local_path=None, huggingface_id=None, language=None,
-        size=None, storage_status='live', shard_id=None, dataset_path=None,
-        shape=None, dtype=None, tags=None, created_at=None, deleted_at=None,
-        accessed_at=None, echoframe_key=None, phraser_key=None, collar=None,
-        layer=None):
-        self.model_id = model_id
-        self.local_path = local_path
-        self.huggingface_id = huggingface_id
-        self.language = language
-        self.size = size
-        self.phraser_key = phraser_key
-        self.collar = collar
-        self.layer = layer
-        super().__init__(model_name=model_name, output_type=output_type,
-            storage_status=storage_status, shard_id=shard_id,
-            dataset_path=dataset_path, shape=shape, dtype=dtype, tags=tags,
-            created_at=created_at, deleted_at=deleted_at,
-            accessed_at=accessed_at, echoframe_key=echoframe_key)
-
-    def _validate_specific(self):
-        if self.output_type != 'model_metadata':
-            raise ValueError("model metadata output_type must be 'model_metadata'")
-        if self.phraser_key not in (None, ''):
-            raise ValueError('model_metadata does not use phraser_key')
-        if self.collar not in (None, 0):
-            raise ValueError('model_metadata does not use collar')
-        if self.layer not in (None, 0):
-            raise ValueError('model_metadata does not use layer')
-
-    def _fallback_key_components(self):
-        return [self.model_name, self.output_type]
-
-    def _display_specific_dict(self):
-        data = {}
-        if self.model_id is not None:
-            data['model_id'] = self.model_id
-        if self.local_path is not None:
-            data['local_path'] = self.local_path
-        if self.huggingface_id is not None:
-            data['huggingface_id'] = self.huggingface_id
-        if self.language is not None:
-            data['language'] = self.language
-        if self.size is not None:
-            data['size'] = self.size
-        return data
-
-    def _to_dict_specific(self):
-        return {
-            'model_id': self.model_id,
-            'local_path': self.local_path,
-            'huggingface_id': self.huggingface_id,
-            'language': self.language,
-            'size': self.size,
-            'phraser_key': self.phraser_key,
-            'collar': self.collar,
-            'layer': self.layer,
-        }
-
-    @classmethod
-    def from_dict(cls, data):
-        data = dict(data)
-        key_hex = data.pop('echoframe_key_hex', None)
-        if key_hex is not None:
-            data['echoframe_key'] = bytes.fromhex(key_hex)
         return cls(**data)
 
 
@@ -408,8 +335,6 @@ def metadata_class_for_output_type(output_type):
     if output_type not in OUTPUT_TYPES:
         message = f'output_type must be one of {sorted(OUTPUT_TYPES)}'
         raise ValueError(message)
-    if output_type == 'model_metadata':
-        return ModelMetadata
     return partial(EchoframeMetadata, output_type=output_type)
 
 

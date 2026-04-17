@@ -34,108 +34,80 @@ store = Store('cache')
 
 ## Examples
 
-Store hidden states for a `phraser` object key:
+Open a store and register models:
 
 ```python
 from echoframe import Store
 
 store = Store('cache')
+record = store.register_model(
+    'wav2vec2',
+    huggingface_id='facebook/wav2vec2-base',
+    language='en',
+    size='base',
+)
 
-metadata = store.put(
-    phraser_key='phrase-123',
+print(record.model_id)
+print(store.get_model_metadata('wav2vec2').huggingface_id)
+```
+
+Import several model definitions from a JSON file:
+
+```python
+records = store.import_models('models.json')
+print([record.model_name for record in records])
+```
+
+`models.json` should contain a JSON list:
+
+```json
+[
+  {
+    "model_name": "wav2vec2",
+    "huggingface_id": "facebook/wav2vec2-base",
+    "language": "en",
+    "size": "base"
+  },
+  {
+    "model_name": "bert-base-uncased",
+    "local_path": "/models/bert-base-uncased"
+  }
+]
+```
+
+Store hidden states for a `phraser` object key:
+
+```python
+from echoframe.metadata import metadata_class_for_output_type
+
+store = Store('cache')
+store.register_model('wav2vec2')
+
+phraser_key = b'phrase-123'.ljust(22, b'\0')
+echoframe_key = store.make_echoframe_key(
+    'hidden_state',
+    model_name='wav2vec2',
+    phraser_key=phraser_key,
+    collar=150,
+    layer=7,
+)
+metadata_cls = metadata_class_for_output_type('hidden_state')
+metadata = metadata_cls(
+    phraser_key=phraser_key,
     collar=150,
     model_name='wav2vec2',
-    output_type='hidden_state',
     layer=7,
-    data=[[0.1, 0.2], [0.3, 0.4]],
     tags=['exp-a', 'speaker-01'],
+    echoframe_key=echoframe_key,
 )
 
-print(metadata.entry_id)
-print(metadata.dataset_path)
-```
-
-Check whether output is already available:
-
-```python
-exists = store.exists(
-    phraser_key='phrase-123',
-    collar=150,
-    model_name='wav2vec2',
-    output_type='hidden_state',
-    layer=7,
+stored = store.put(
+    echoframe_key,
+    metadata,
+    [[0.1, 0.2], [0.3, 0.4]],
 )
 
-print(exists)
-```
-
-Load a stored output:
-
-```python
-payload = store.load(
-    phraser_key='phrase-123',
-    collar=150,
-    model_name='wav2vec2',
-    output_type='hidden_state',
-    layer=7,
-)
-```
-
-Load a payload directly from `echoframe` metadata:
-
-```python
-payload = store.metadata_to_payload(metadata)
-payloads = store.metadatas_to_payloads([metadata], strict=True)
-```
-
-Load hidden-state frames for one object and layer:
-
-```python
-payload = store.load_object_frames(
-    phraser_key='phrase-123',
-    model_name='wav2vec2',
-    layer=7,
-    collar=500,
-)
-
-all_payloads = store.load_object_frames(
-    phraser_key='phrase-123',
-    model_name='wav2vec2',
-    layer=7,
-    collar=None,
-)
-
-for metadata, payload in store.iter_object_frames(
-    phraser_key='phrase-123',
-    model_name='wav2vec2',
-    layer=7,
-):
-    print(metadata.collar, payload)
-```
-
-List everything stored for one `phraser_key`:
-
-```python
-entries = store.find(
-    phraser_key='phrase-123',
-    model_name='wav2vec2',
-)
-
-for metadata in entries:
-    print(metadata.output_type, metadata.layer, metadata.collar)
-```
-
-Use collar matching when an exact collar is not available:
-
-```python
-metadata = store.find_one(
-    phraser_key='phrase-123',
-    collar=160,
-    model_name='wav2vec2',
-    output_type='hidden_state',
-    layer=7,
-    match='nearest',
-)
+print(stored.dataset_path)
 ```
 
 Find stored output or compute it:
@@ -146,7 +118,7 @@ def compute_hidden_state():
 
 
 metadata, created = store.find_or_compute(
-    phraser_key='phrase-123',
+    phraser_key=b'phrase-123'.ljust(22, b'\0'),
     collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
@@ -157,11 +129,53 @@ metadata, created = store.find_or_compute(
 print(created)
 ```
 
+Load a stored output:
+
+```python
+payload = store.load(echoframe_key)
+payload = store.metadata_to_payload(stored)
+payloads = store.metadatas_to_payloads([stored], strict=True)
+```
+
+Load hidden-state frames for one object and layer:
+
+```python
+payload = store.load_object_frames(
+    phraser_key,
+    model_name='wav2vec2',
+    layer=7,
+    collar=150,
+)
+
+all_payloads = store.load_object_frames(
+    phraser_key,
+    model_name='wav2vec2',
+    layer=7,
+    collar=None,
+)
+
+for metadata, payload in store.iter_object_frames(
+    phraser_key,
+    model_name='wav2vec2',
+    layer=7,
+):
+    print(metadata.collar, payload)
+```
+
+List everything stored for one `phraser_key`:
+
+```python
+entries = store.find_phraser(phraser_key)
+
+for metadata in entries:
+    print(metadata.output_type, metadata.layer, metadata.collar)
+```
+
 Delete one stored output:
 
 ```python
 deleted = store.delete(
-    phraser_key='phrase-123',
+    phraser_key,
     collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
@@ -171,26 +185,12 @@ deleted = store.delete(
 print(deleted.storage_status if deleted else None)
 ```
 
-List all outputs for one tag:
+List outputs by tag:
 
 ```python
 entries = store.find_by_tag('exp-a')
-
-for metadata in entries:
-    print(metadata.phraser_key, metadata.layer, metadata.tags)
-```
-
-Find records by multiple tags:
-
-```python
 entries = store.find_by_tags(['exp-a', 'speaker-01'], match='all')
 tags = store.list_tags()
-```
-
-Find records by `phraser` label:
-
-```python
-entries = store.find_by_label('hello', model_name='wav2vec2')
 ```
 
 Store and query in batches:
@@ -198,35 +198,14 @@ Store and query in batches:
 ```python
 created = store.put_many([
     {
-        'phraser_key': 'phrase-123',
-        'collar': 150,
-        'model_name': 'wav2vec2',
-        'output_type': 'hidden_state',
-        'layer': 7,
+        'echoframe_key': echoframe_key,
+        'metadata': metadata,
         'data': [[0.1, 0.2]],
-        'tags': ['exp-a'],
     },
 ])
 
-results = store.find_many([
-    {
-        'phraser_key': 'phrase-123',
-        'collar': 150,
-        'model_name': 'wav2vec2',
-        'output_type': 'hidden_state',
-        'layer': 7,
-    },
-])
-
-payloads = store.load_many([
-    {
-        'phraser_key': 'phrase-123',
-        'collar': 150,
-        'model_name': 'wav2vec2',
-        'output_type': 'hidden_state',
-        'layer': 7,
-    },
-], strict=False)
+metadatas = store.get_many_metadata([echoframe_key])
+payloads = store.load_many([echoframe_key], strict=False)
 ```
 
 Run maintenance checks:

@@ -40,6 +40,36 @@ class TestStoreIo(unittest.TestCase):
         self.assertNotIn('__version__', echoframe.__all__)
         self.assertFalse(hasattr(echoframe, '__version__'))
 
+    def test_store_str_includes_summary_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            text = str(store)
+        self.assertIn('Store', text)
+        self.assertIn('root', text)
+        self.assertIn('records', text)
+        self.assertIn('shard count', text)
+        self.assertIn('tags', text)
+
+    def test_show_store_state_includes_detailed_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            text = store.show_store_state()
+        self.assertIn('Store', text)
+        self.assertIn('config path', text)
+        self.assertIn('lmdb path', text)
+        self.assertIn('health events', text)
+        self.assertIn('tag count', text)
+
+    def test_model_registry_str_includes_architecture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            store.register_model('wav2vec2', language='en', size='base',
+                architecture='wav2vec2')
+            text = str(store.registry)
+        self.assertIn('ModelRegistry', text)
+        self.assertIn('architectures', text)
+        self.assertIn('wav2vec2', text)
+
     def test_put_find_and_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

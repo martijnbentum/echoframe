@@ -138,6 +138,11 @@ class TestModelMetadata(unittest.TestCase):
         self.assertEqual(restored.size, 'base')
         self.assertEqual(restored.architecture, 'bert')
 
+    def test_to_dict_includes_architecture(self):
+        metadata = ModelMetadata('bert-base-uncased', architecture='bert')
+        data = metadata.to_dict()
+        self.assertEqual(data['architecture'], 'bert')
+
     def test_invalid_model_id_raises(self):
         with self.assertRaises(ValueError):
             ModelMetadata('bert-base-uncased', model_id=-1)

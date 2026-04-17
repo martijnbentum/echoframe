@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+from . import util_formatting
+
 
 class ModelRegistry:
     '''Persist and query model metadata in a store config file.'''
@@ -13,6 +15,13 @@ class ModelRegistry:
     def __repr__(self):
         m = f'ModelRegistry(config_path={self.config_path})'
         return m
+
+    def __str__(self):
+        try:
+            summary = self.registry_summary()
+            return util_formatting.format_model_registry_str(summary)
+        except Exception:
+            return self.__repr__()
 
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None, architecture=None):
@@ -28,6 +37,10 @@ class ModelRegistry:
         config['models'][model_name] = metadata
         self.write_config(config)
         return metadata
+
+    def registry_summary(self):
+        '''Return compact summary stats for this model registry.'''
+        return util_formatting.build_model_registry_summary(self)
 
     @property
     def model_metadatas(self):

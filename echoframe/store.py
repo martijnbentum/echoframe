@@ -5,22 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import compaction
+from . import typed_loaders
+from . import util_formatting
 from .index import LmdbIndex
 from .key_helper import pack_echoframe_key
-from .metadata import (
-    EchoframeMetadata,
-    filter_metadata,
-    metadata_class_for_output_type,
-    utc_now,
-)
+from .metadata import EchoframeMetadata, filter_metadata
+from .metadata import metadata_class_for_output_type, utc_now
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
-from .typed_loaders import (
-    load_codebook as _load_codebook,
-    load_embeddings as _load_embeddings,
-    load_many_codebooks as _load_many_codebooks,
-    load_many_embeddings as _load_many_embeddings,
-)
 
 
 class Store:
@@ -48,27 +40,15 @@ class Store:
         m = f'Store(root={str(self.root)})'
         return m
 
-    def _bind_metadata(self, metadata):
-        if metadata is None:
-            return None
-        return metadata.bind_store(self)
+    def __str__(self):
+        try:
+            summary = self.store_summary()
+            return util_formatting.format_store_str(summary)
+        except Exception:
+            return self.__repr__()
 
-    def _bind_metadatas(self, metadata_list):
-        return [self._bind_metadata(metadata) for metadata in metadata_list]
-
-    def _make_metadata(self, phraser_key, collar, model_name, output_type,
-        layer, tags=None):
-        metadata_cls = metadata_class_for_output_type(output_type)
-        echoframe_key = self.make_echoframe_key(output_type,
-            model_name=model_name, phraser_key=phraser_key, layer=layer,
-            collar=collar)
-        return metadata_cls(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, layer=layer, tags=tags,
-            echoframe_key=echoframe_key)
-
-    def register_model(self, model_name, local_path=None,
-        huggingface_id=None, language=None, size=None,
-        architecture=None):
+    def register_model(self, model_name, local_path=None, huggingface_id=None,
+        language=None, size=None, architecture=None):
         '''Register one model in the store registry.
 
         model_name:   str model identifier
@@ -102,41 +82,23 @@ class Store:
         record = self.registry.load_model_metadata(model_name)
         if record is None:
             raise ValueError(f'model_name is not registered: {model_name!r}')
-        kwargs = {
-            'output_type': output_type,
-            'model_id': record.model_id,
-        }
-        if output_type in {'hidden_state', 'attention'}:
-            kwargs.update({
-                'layer': layer,
-                'phraser_key': phraser_key,
-                'collar': collar,
-            })
-        elif output_type == 'codebook_indices':
-            kwargs.update({
-                'phraser_key': phraser_key,
-                'collar': collar,
-            })
-        elif output_type == 'codebook_matrix':
-            pass
-        else:
-            raise ValueError(f'unknown output type: {output_type!r}')
-        return pack_echoframe_key(**kwargs)
+        return pack_echoframe_key(output_type, record.model_id,
+            phraser_key=phraser_key, layer=layer, collar=collar)
 
-    def put(self, echoframe_key, metadata, data):
+    def put(self, echoframe_key, metadata_obj, data):
         '''Store one output payload.
 
         Canonical form:
             store.put(echoframe_key, metadata, data)
         '''
-        if not isinstance(metadata, EchoframeMetadata):
+        if not isinstance(metadata_obj, EchoframeMetadata):
             raise ValueError('metadata must be an EchoframeMetadata')
         if data is None:
             raise ValueError('data must not be None for this output type')
-        if bytes(echoframe_key) != metadata.echoframe_key:
+        if bytes(echoframe_key) != metadata_obj.echoframe_key:
             raise ValueError(
                 'metadata.echoframe_key must match the first argument')
-        stored = self.storage.store(metadata, data=data)
+        stored = self.storage.store(metadata_obj, data=data)
         return self._bind_metadata(self.index.upsert(stored))
 
     def put_many(self, items):
@@ -145,17 +107,17 @@ class Store:
         '''
         prepared = []
         for item in items:
-            metadata = item['metadata']
+            metadata_obj = item['metadata']
             echoframe_key = item['echoframe_key']
-            if not isinstance(metadata, EchoframeMetadata):
+            if not isinstance(metadata_obj, EchoframeMetadata):
                 raise ValueError('metadata must be an EchoframeMetadata')
-            if bytes(echoframe_key) != metadata.echoframe_key:
+            if bytes(echoframe_key) != metadata_obj.echoframe_key:
                 raise ValueError(
                     'metadata.echoframe_key must match the item key')
             if item['data'] is None:
                 raise ValueError('data must not be None for this output type')
             prepared.append({
-                'metadata': metadata,
+                'metadata': metadata_obj,
                 'data': item['data'],
             })
         stored = self.storage.store_many(prepared)
@@ -166,48 +128,44 @@ class Store:
         return self._bind_metadatas(self.index.find_phraser(
             phraser_key=phraser_key, include_deleted=include_deleted))
 
-    def _touch_accessed_at(self, metadata):
-        '''Update accessed_at on a metadata record and persist to index.'''
-        updated = metadata.with_accessed_at(utc_now())
-        self.index.upsert(updated)
-        return updated
-
     def load_metadata(self, echoframe_key):
         '''Load one metadata record by echoframe key.'''
         return self._bind_metadata(self.index.get(echoframe_key))
 
     def load(self, echoframe_key):
         '''Load one stored payload by echoframe key.'''
-        metadata = self.load_metadata(echoframe_key)
-        if metadata is None:
+        metadata_obj = self.load_metadata(echoframe_key)
+        if metadata_obj is None:
             raise ValueError(
                 'no stored output matched the requested echoframe key')
-        self._touch_accessed_at(metadata)
-        return self.storage.load(metadata)
+        self._touch_accessed_at(metadata_obj)
+        return self.storage.load(metadata_obj)
 
-    def metadata_to_payload(self, metadata):
+    def metadata_to_payload(self, metadata_obj):
         '''Load one stored output payload from echoframe metadata.
         metadata:    metadata record that points to a stored payload
         '''
-        return self.storage.load(metadata)
+        return self.storage.load(metadata_obj)
 
     def load_embeddings(self, phraser_key, collar, model_name, layers,
         frame_aggregation=None):
         '''Load one typed Embeddings object.'''
-        return _load_embeddings(self, phraser_key, collar, model_name,
+        return typed_loaders.load_embeddings(self, phraser_key, collar,
+            model_name,
             layers, frame_aggregation=frame_aggregation)
 
     def load_many_embeddings(self, requests):
         '''Load many typed Embeddings objects.'''
-        return _load_many_embeddings(self, requests)
+        return typed_loaders.load_many_embeddings(self, requests)
 
     def load_codebook(self, phraser_key, collar, model_name):
         '''Load one typed Codebook object.'''
-        return _load_codebook(self, phraser_key, collar, model_name)
+        return typed_loaders.load_codebook(self, phraser_key, collar,
+            model_name)
 
     def load_many_codebooks(self, requests):
         '''Load many typed Codebook objects.'''
-        return _load_many_codebooks(self, requests)
+        return typed_loaders.load_many_codebooks(self, requests)
 
     def load_many(self, echoframe_keys, strict=False):
         '''Load multiple stored output payloads.
@@ -217,23 +175,23 @@ class Store:
         metadata_list = self.get_many_metadata(echoframe_keys)
         if not strict:
             payloads = []
-            for metadata in metadata_list:
-                if metadata is None:
+            for metadata_obj in metadata_list:
+                if metadata_obj is None:
                     payloads.append(None)
                 else:
-                    self._touch_accessed_at(metadata)
-                    payloads.append(self.storage.load(metadata))
+                    self._touch_accessed_at(metadata_obj)
+                    payloads.append(self.storage.load(metadata_obj))
             return payloads
 
         payloads = []
-        for metadata in metadata_list:
-            if metadata is None:
+        for metadata_obj in metadata_list:
+            if metadata_obj is None:
                 raise ValueError(
                     'no stored output matched one of the requested '
                     'echoframe keys'
                 )
-            self._touch_accessed_at(metadata)
-            payloads.append(self.storage.load(metadata))
+            self._touch_accessed_at(metadata_obj)
+            payloads.append(self.storage.load(metadata_obj))
         return payloads
 
     def get_many_metadata(self, echoframe_keys):
@@ -246,17 +204,18 @@ class Store:
         strict:          raise when any metadata item is None
         '''
         if not strict:
-            return [None if metadata is None else self.storage.load(metadata)
-                for metadata in metadata_list]
+            return [None if metadata_obj is None
+                else self.storage.load(metadata_obj)
+                for metadata_obj in metadata_list]
 
         payloads = []
-        for metadata in metadata_list:
-            if metadata is None:
+        for metadata_obj in metadata_list:
+            if metadata_obj is None:
                 raise ValueError(
                     'no stored output matched one of the requested metadata '
                     'records'
                 )
-            payloads.append(self.storage.load(metadata))
+            payloads.append(self.storage.load(metadata_obj))
         return payloads
 
     def load_object_frames(self, phraser_key, model_name, layer, collar=500,
@@ -272,8 +231,8 @@ class Store:
         if collar is None:
             entries = filter_metadata(self.find_phraser(phraser_key),
                 model_name=model_name, output_type=output_type, layer=layer)
-            return {metadata.collar: self.storage.load(metadata)
-                for metadata in entries}
+            return {metadata_obj.collar: self.storage.load(metadata_obj)
+                for metadata_obj in entries}
         matches = filter_metadata(self.find_phraser(phraser_key),
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
@@ -294,8 +253,8 @@ class Store:
         if collar is None:
             entries = filter_metadata(self.find_phraser(phraser_key),
                 model_name=model_name, output_type=output_type, layer=layer)
-            for metadata in entries:
-                yield metadata, self.storage.load(metadata)
+            for metadata_obj in entries:
+                yield metadata_obj, self.storage.load(metadata_obj)
             return
 
         matches = filter_metadata(self.find_phraser(phraser_key),
@@ -303,8 +262,8 @@ class Store:
             collar=collar, match=match)
         if not matches:
             raise ValueError('no stored output matched the requested criteria')
-        metadata = matches[0]
-        yield metadata, self.storage.load(metadata)
+        metadata_obj = matches[0]
+        yield metadata_obj, self.storage.load(metadata_obj)
 
     def delete(self, phraser_key, collar, model_name, output_type, layer,
         match='exact'):
@@ -321,9 +280,21 @@ class Store:
             collar=collar, match=match)
         if not matches:
             return None
-        metadata = matches[0]
-        self.storage.delete(metadata)
-        return self.index.delete(metadata)
+        metadata_obj = matches[0]
+        self.storage.delete(metadata_obj)
+        return self.index.delete(metadata_obj)
+
+    def store_summary(self):
+        '''Return compact summary stats for this store.'''
+        return util_formatting.build_store_summary(self)
+
+    def store_state(self):
+        '''Return detailed summary stats for this store.'''
+        return util_formatting.build_store_state(self)
+
+    def show_store_state(self):
+        '''Return a formatted store state summary.'''
+        return util_formatting.format_store_state(self.store_state())
 
     def find_by_tag(self, tag, include_deleted=False):
         '''List metadata records for one tag.
@@ -489,15 +460,15 @@ class Store:
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if matches:
-            metadata = matches[0]
+            metadata_obj = matches[0]
             if tags and add_tags_on_hit:
-                metadata = self.add_tags(metadata.echoframe_key, tags)
-            return metadata, False
+                metadata_obj = self.add_tags(metadata_obj.echoframe_key, tags)
+            return metadata_obj, False
         data = compute()
-        metadata = self._make_metadata(phraser_key, collar, model_name,
+        metadata_obj = self._make_metadata(phraser_key, collar, model_name,
             output_type, layer, tags=tags)
-        metadata = self.put(metadata.echoframe_key, metadata, data)
-        return metadata, True
+        metadata_obj = self.put(metadata_obj.echoframe_key, metadata_obj, data)
+        return metadata_obj, True
 
     def _storage_bytes(self):
         '''Return total bytes used by shard files.'''
@@ -526,38 +497,67 @@ class Store:
 
         entries = self.list_entries()
         stale = []
-        for metadata in entries:
-            if metadata.accessed_at is None:
+        for metadata_obj in entries:
+            if metadata_obj.accessed_at is None:
                 continue
-            accessed = datetime.fromisoformat(metadata.accessed_at)
+            accessed = datetime.fromisoformat(metadata_obj.accessed_at)
             if accessed < cutoff:
-                stale.append(metadata)
+                stale.append(metadata_obj)
 
         stale.sort(key=lambda m: m.accessed_at)
 
         evicted = []
-        for metadata in stale:
+        for metadata_obj in stale:
             if budget_bytes is not None and self._storage_bytes() <= budget_bytes:
                 break
-            self.storage.delete(metadata)
-            self.index.delete(metadata)
-            evicted.append(metadata)
+            self.storage.delete(metadata_obj)
+            self.index.delete(metadata_obj)
+            evicted.append(metadata_obj)
         return evicted
+
+    def _bind_metadata(self, metadata_obj):
+        if metadata_obj is None:
+            return None
+        return metadata_obj.bind_store(self)
+
+    def _bind_metadatas(self, metadata_list):
+        return [self._bind_metadata(metadata_obj)
+            for metadata_obj in metadata_list]
+
+    def _make_metadata(self, phraser_key, collar, model_name, output_type,
+        layer, tags=None):
+        metadata_cls = metadata_class_for_output_type(output_type)
+        echoframe_key = self.make_echoframe_key(output_type,
+            model_name=model_name, phraser_key=phraser_key, layer=layer,
+            collar=collar)
+        return metadata_cls(phraser_key=phraser_key, collar=collar,
+            model_name=model_name, layer=layer, tags=tags,
+            echoframe_key=echoframe_key)
+
+    def _touch_accessed_at(self, metadata_obj):
+        '''Update accessed_at on a metadata record and persist to index.'''
+        updated = metadata_obj.with_accessed_at(utc_now())
+        self.index.upsert(updated)
+        return updated
 
     def verify_integrity(self):
         '''Verify that live metadata records point to existing datasets.'''
         broken = []
         checked = 0
         for shard_id in self.index.list_shards():
-            for metadata in self.index.entries_for_shard(shard_id):
+            for metadata_obj in self.index.entries_for_shard(shard_id):
                 checked += 1
-                if metadata.shard_id is None or metadata.dataset_path is None:
-                    broken.append(self._broken_reference(metadata,
+                if metadata_obj.shard_id is None:
+                    broken.append(self._broken_reference(metadata_obj,
                         reason='missing shard pointer'))
                     continue
-                if not self.storage.dataset_exists(metadata.shard_id,
-                    metadata.dataset_path):
-                    broken.append(self._broken_reference(metadata,
+                if metadata_obj.dataset_path is None:
+                    broken.append(self._broken_reference(metadata_obj,
+                        reason='missing shard pointer'))
+                    continue
+                if not self.storage.dataset_exists(metadata_obj.shard_id,
+                    metadata_obj.dataset_path):
+                    broken.append(self._broken_reference(metadata_obj,
                         reason='missing dataset'))
         return {
             'ok': not broken,

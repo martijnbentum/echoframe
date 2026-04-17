@@ -10,6 +10,9 @@ class ModelRegistry:
     '''Persist and query model metadata in a store config file.'''
 
     def __init__(self, config_path):
+        '''Create one model registry bound to a config path.
+        config_path:  path to the store config.json file
+        '''
         self.config_path = Path(config_path)
 
     def __repr__(self):
@@ -25,7 +28,14 @@ class ModelRegistry:
 
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None, architecture=None):
-        '''Register one model and persist it in config.json.'''
+        '''Register one model and persist it in config.json.
+        model_name:      unique registered model name
+        local_path:      optional local model path
+        huggingface_id:  optional Hugging Face model identifier
+        language:        optional language label
+        size:            optional model size label
+        architecture:    optional model architecture label
+        '''
         metadata = ModelMetadata(model_name, model_id=None,
             local_path=local_path, huggingface_id=huggingface_id,
             language=language, size=size, architecture=architecture)
@@ -104,6 +114,15 @@ class ModelMetadata:
 
     def __init__(self, model_name, model_id=None, local_path=None,
         huggingface_id=None, language=None, size=None, architecture=None):
+        '''Create one validated model metadata record.
+        model_name:      unique registered model name
+        model_id:        optional numeric model identifier
+        local_path:      optional local model path
+        huggingface_id:  optional Hugging Face model identifier
+        language:        optional language label
+        size:            optional model size label
+        architecture:    optional model architecture label
+        '''
         self.model_name = model_name
         self.model_id = model_id
         self.local_path = local_path
@@ -125,15 +144,6 @@ class ModelMetadata:
         m += f'architecture={self.architecture})'
         return m
 
-    def _validate(self):
-        _validate_model_name(self.model_name)
-        _validate_model_id(self.model_id)
-        _validate_optional_string(self.local_path, 'local_path')
-        _validate_optional_string(self.huggingface_id, 'huggingface_id')
-        _validate_optional_string(self.language, 'language')
-        _validate_optional_string(self.architecture, 'architecture')
-        _validate_optional_size(self.size)
-
     def to_dict(self):
         return {
             'model_id': self.model_id,
@@ -147,6 +157,7 @@ class ModelMetadata:
 
     @classmethod
     def from_dict(cls, data):
+        '''Build one metadata record from serialized model data.'''
         return cls(model_name=data.get('model_name'),
             model_id=data.get('model_id'),
             local_path=data.get('local_path'),
@@ -154,14 +165,17 @@ class ModelMetadata:
             language=data.get('language'), size=data.get('size'),
             architecture=data.get('architecture'))
 
-
-def _default_config():
-    return {
-        'models': {},
-    }
-
+    def _validate(self):
+        _validate_model_name(self.model_name)
+        _validate_model_id(self.model_id)
+        _validate_optional_string(self.local_path, 'local_path')
+        _validate_optional_string(self.huggingface_id, 'huggingface_id')
+        _validate_optional_string(self.language, 'language')
+        _validate_optional_string(self.architecture, 'architecture')
+        _validate_optional_size(self.size)
 
 def config_from_dict(data):
+    '''Build one validated config mapping from serialized JSON data.'''
     if not isinstance(data, dict):
         raise ValueError('config.json must contain a JSON object')
     config = _default_config()
@@ -180,28 +194,26 @@ def config_from_dict(data):
 
 
 def config_to_dict(config):
-    return {
-        'models': {
-            model_name: metadata.to_dict()
-            for model_name, metadata in config['models'].items()
-        },
-    }
-
-
-def _next_model_id(model_metadatas):
-    max_id = -1
-    for metadata in model_metadatas:
-        candidate = metadata.model_id if metadata.model_id is not None else -1
-        if candidate > max_id:
-            max_id = candidate
-    return max_id + 1
+    '''Serialize one validated config mapping for JSON output.'''
+    models = {}
+    for model_name, metadata in config['models'].items():
+        models[model_name] = metadata.to_dict()
+    return {'models': models}
 
 
 def check_model_name_conflict(config, metadata):
+    '''Return whether one model metadata record conflicts by name.
+    config:    validated registry config mapping
+    metadata:  candidate model metadata record
+    '''
     return metadata.model_name in config['models']
 
 
 def check_model_names_conflict(config, metadata_list):
+    '''Return conflicting model metadata records, or None.
+    config:         validated registry config mapping
+    metadata_list:  candidate model metadata records
+    '''
     conflicts = [
         metadata for metadata in metadata_list
         if check_model_name_conflict(config, metadata)
@@ -211,35 +223,8 @@ def check_model_names_conflict(config, metadata_list):
     return conflicts
 
 
-def _validate_model_name(model_name):
-    if not isinstance(model_name, str) or not model_name.strip():
-        raise ValueError('model_name must be a non-empty string')
-
-
-def _validate_model_id(model_id):
-    if model_id is None:
-        return
-    if not isinstance(model_id, int) or model_id < 0:
-        raise ValueError('model_id must be a non-negative integer')
-
-
-def _validate_optional_string(value, field_name):
-    if value is None:
-        return
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f'{field_name} must be a non-empty string')
-
-
-def _validate_optional_size(size):
-    if size is None:
-        return
-    if isinstance(size, bool):
-        raise ValueError('size must not be a boolean')
-    if not isinstance(size, (int, float, str)):
-        raise ValueError('size must be a string or number')
-
-
 def load_model_seed_file(path):
+    '''Load model metadata records from one JSON seed file.'''
     path = Path(path)
     with open(path) as f:
         data = json.load(f)
@@ -273,3 +258,44 @@ def load_model_seed_file(path):
         seen_names.add(model_name)
         records.append(metadata)
     return records
+
+
+def _next_model_id(model_metadatas):
+    max_id = -1
+    for metadata in model_metadatas:
+        candidate = metadata.model_id if metadata.model_id is not None else -1
+        if candidate > max_id:
+            max_id = candidate
+    return max_id + 1
+
+
+def _default_config():
+    return {'models': {}}
+
+
+def _validate_model_name(model_name):
+    if not isinstance(model_name, str) or not model_name.strip():
+        raise ValueError('model_name must be a non-empty string')
+
+
+def _validate_model_id(model_id):
+    if model_id is None:
+        return
+    if not isinstance(model_id, int) or model_id < 0:
+        raise ValueError('model_id must be a non-negative integer')
+
+
+def _validate_optional_string(value, field_name):
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'{field_name} must be a non-empty string')
+
+
+def _validate_optional_size(size):
+    if size is None:
+        return
+    if isinstance(size, bool):
+        raise ValueError('size must not be a boolean')
+    if not isinstance(size, (int, float, str)):
+        raise ValueError('size must be a string or number')

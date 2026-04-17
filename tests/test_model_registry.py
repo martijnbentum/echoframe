@@ -82,6 +82,7 @@ class TestRegisterModel(unittest.TestCase):
         self.assertEqual(record.huggingface_id, None)
         self.assertEqual(record.language, None)
         self.assertEqual(record.size, None)
+        self.assertEqual(record.architecture, None)
 
     def test_register_accepts_optional_metadata_fields(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -89,11 +90,12 @@ class TestRegisterModel(unittest.TestCase):
             record = store.register_model('bert-base-uncased',
                 local_path='/models/bert-base-uncased',
                 huggingface_id='bert-base-uncased', language='en',
-                size='base')
+                size='base', architecture='bert')
         self.assertEqual(record.local_path, '/models/bert-base-uncased')
         self.assertEqual(record.huggingface_id, 'bert-base-uncased')
         self.assertEqual(record.language, 'en')
         self.assertEqual(record.size, 'base')
+        self.assertEqual(record.architecture, 'bert')
 
     def test_register_model_id_is_stable(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,7 +128,7 @@ class TestModelMetadata(unittest.TestCase):
     def test_round_trip_dict_preserves_fields(self):
         metadata = ModelMetadata('bert-base-uncased', model_id=3,
             local_path='/models/bert', huggingface_id='bert-base-uncased',
-            language='en', size='base')
+            language='en', size='base', architecture='bert')
         restored = ModelMetadata.from_dict(metadata.to_dict())
         self.assertEqual(restored.model_name, 'bert-base-uncased')
         self.assertEqual(restored.model_id, 3)
@@ -134,6 +136,7 @@ class TestModelMetadata(unittest.TestCase):
         self.assertEqual(restored.huggingface_id, 'bert-base-uncased')
         self.assertEqual(restored.language, 'en')
         self.assertEqual(restored.size, 'base')
+        self.assertEqual(restored.architecture, 'bert')
 
     def test_invalid_model_id_raises(self):
         with self.assertRaises(ValueError):
@@ -142,6 +145,10 @@ class TestModelMetadata(unittest.TestCase):
     def test_invalid_optional_string_raises(self):
         with self.assertRaises(ValueError):
             ModelMetadata('bert-base-uncased', language='   ')
+
+    def test_invalid_architecture_raises(self):
+        with self.assertRaises(ValueError):
+            ModelMetadata('bert-base-uncased', architecture='   ')
 
     def test_invalid_size_boolean_raises(self):
         with self.assertRaises(ValueError):
@@ -330,7 +337,8 @@ class TestImportModels(unittest.TestCase):
                 {'model_name': 'bert-base-uncased',
                  'huggingface_id': 'bert-base-uncased',
                  'language': 'en',
-                 'size': 'base'},
+                 'size': 'base',
+                 'architecture': 'bert'},
             ])
             store.import_models(seed_path)
             record = store.get_model_metadata('bert-base-uncased')
@@ -339,6 +347,7 @@ class TestImportModels(unittest.TestCase):
         self.assertEqual(record.huggingface_id, 'bert-base-uncased')
         self.assertEqual(record.language, 'en')
         self.assertEqual(record.size, 'base')
+        self.assertEqual(record.architecture, 'bert')
 
     def test_import_ids_continue_from_existing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -450,12 +459,14 @@ class TestLoadModelSeedFile(unittest.TestCase):
                 'huggingface_id': 'bert-base-uncased',
                 'language': 'en',
                 'size': 'base',
+                'architecture': 'bert',
             }])
             records = load_model_seed_file(path)
         self.assertEqual(records[0].local_path, '/models/bert')
         self.assertEqual(records[0].huggingface_id, 'bert-base-uncased')
         self.assertEqual(records[0].language, 'en')
         self.assertEqual(records[0].size, 'base')
+        self.assertEqual(records[0].architecture, 'bert')
 
     def test_load_checked_in_model_file(self):
         path = Path(__file__).parent.parent / 'data' / 'models.json'

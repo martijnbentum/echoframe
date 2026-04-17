@@ -67,7 +67,8 @@ class Store:
             echoframe_key=echoframe_key)
 
     def register_model(self, model_name, local_path=None,
-        huggingface_id=None, language=None, size=None):
+        huggingface_id=None, language=None, size=None,
+        architecture=None):
         '''Register one model in the store registry.
 
         model_name:   str model identifier
@@ -76,7 +77,8 @@ class Store:
         '''
         return self.registry.register_model(model_name,
             local_path=local_path, huggingface_id=huggingface_id,
-            language=language, size=size)
+            language=language, size=size,
+            architecture=architecture)
 
     def import_models(self, path):
         '''Import model definitions from a JSON file.

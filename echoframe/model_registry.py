@@ -15,11 +15,11 @@ class ModelRegistry:
         return m
 
     def register_model(self, model_name, local_path=None, huggingface_id=None,
-        language=None, size=None):
+        language=None, size=None, architecture=None):
         '''Register one model and persist it in config.json.'''
         metadata = ModelMetadata(model_name, model_id=None,
             local_path=local_path, huggingface_id=huggingface_id,
-            language=language, size=size)
+            language=language, size=size, architecture=architecture)
         config = self.read_config()
         if check_model_name_conflict(config, metadata):
             message = f'model_name already registered: {model_name!r}'
@@ -90,13 +90,14 @@ class ModelMetadata:
     '''Small validated model metadata record.'''
 
     def __init__(self, model_name, model_id=None, local_path=None,
-        huggingface_id=None, language=None, size=None):
+        huggingface_id=None, language=None, size=None, architecture=None):
         self.model_name = model_name
         self.model_id = model_id
         self.local_path = local_path
         self.huggingface_id = huggingface_id
         self.language = language
         self.size = size
+        self.architecture = architecture
         self._validate()
 
     def __repr__(self):
@@ -107,7 +108,8 @@ class ModelMetadata:
             m += f'local_path={p.name}, '
         if self.huggingface_id is not None:
             m += f'hf_id={self.huggingface_id}, '
-        m += f'language={self.language}, size={self.size})'
+        m += f'language={self.language}, size={self.size}, '
+        m += f'architecture={self.architecture})'
         return m
 
     def _validate(self):
@@ -116,6 +118,7 @@ class ModelMetadata:
         _validate_optional_string(self.local_path, 'local_path')
         _validate_optional_string(self.huggingface_id, 'huggingface_id')
         _validate_optional_string(self.language, 'language')
+        _validate_optional_string(self.architecture, 'architecture')
         _validate_optional_size(self.size)
 
     def to_dict(self):
@@ -125,6 +128,7 @@ class ModelMetadata:
             'huggingface_id': self.huggingface_id,
             'language': self.language,
             'size': self.size,
+            'architecture': self.architecture,
             'model_name': self.model_name,
         }
 
@@ -134,7 +138,8 @@ class ModelMetadata:
             model_id=data.get('model_id'),
             local_path=data.get('local_path'),
             huggingface_id=data.get('huggingface_id'),
-            language=data.get('language'), size=data.get('size'))
+            language=data.get('language'), size=data.get('size'),
+            architecture=data.get('architecture'))
 
 
 def _default_config():
@@ -247,7 +252,8 @@ def load_model_seed_file(path):
             local_path=record.get('local_path'),
             huggingface_id=record.get('huggingface_id'),
             language=record.get('language'),
-            size=record.get('size'))
+            size=record.get('size'),
+            architecture=record.get('architecture'))
         if model_name in seen_names:
             raise ValueError(
                 f'duplicate model_name in model file: {model_name!r}')

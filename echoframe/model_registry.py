@@ -95,6 +95,17 @@ class ModelMetadata:
         self.size = size
         self._validate()
 
+    def __repr__(self):
+        m = f'ModelMetadata(model_name={self.model_name}, '
+        m += f'model_id={self.model_id}, '
+        if self.local_path is not None:
+            p = Path(self.local_path)
+            m += f'local_path={p.name}, '
+        if self.huggingface_id is not None:
+            m += f'hf_id={self.huggingface_id}, '
+        m += f'language={self.language}, size={self.size})'
+        return m
+
     def _validate(self):
         _validate_model_name(self.model_name)
         _validate_model_id(self.model_id)

@@ -44,6 +44,10 @@ class Store:
             max_shard_size_bytes=max_shard_size_bytes)
         self.registry = ModelRegistry(self.config_path)
 
+    def __repr__(self):
+        m = f'Store(root={str(self.root)})'
+        return m
+
     def _bind_metadata(self, metadata):
         if metadata is None:
             return None

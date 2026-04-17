@@ -10,6 +10,10 @@ class ModelRegistry:
     def __init__(self, config_path):
         self.config_path = Path(config_path)
 
+    def __repr__(self):
+        m = f'ModelRegistry(config_path={self.config_path})'
+        return m
+
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None):
         '''Register one model and persist it in config.json.'''

@@ -30,17 +30,7 @@ TAG_HASH_LEN        = 8
 
 
 def make_key_fmt(output_type):
-    '''Return the struct fmt string for the given output type echoframe_key.
-
-    hidden_state / attention:
-        uint32 model_id, uint8 output_type_id, uint8 layer,
-        22-byte phraser_key, uint16 collar
-    codebook_indices:
-        uint32 model_id, uint8 output_type_id,
-        22-byte phraser_key, uint16 collar
-    codebook_matrix:
-        uint32 model_id, uint8 output_type_id
-    '''
+    '''Return the struct fmt string for one echoframe key type.'''
     if output_type in ('hidden_state', 'attention'):
         return f'>IBB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_indices':

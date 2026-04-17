@@ -2,12 +2,8 @@
 
 from .codebooks import Codebook, TokenCodebooks
 from .embeddings import Embeddings, TokenEmbeddings
-from .metadata import (
-    EchoframeMetadata,
-    filter_metadata,
-    OUTPUT_TYPES,
-    STABLE_METADATA_FIELDS,
-)
+from .metadata import EchoframeMetadata, OUTPUT_TYPES
+from .metadata import STABLE_METADATA_FIELDS, filter_metadata
 from .model_registry import ModelMetadata
 from .store import Store
 

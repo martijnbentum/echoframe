@@ -113,8 +113,7 @@ def pack_codebook_matrix_key(model_id):
 def pack_echoframe_key(output_type, model_id, phraser_key=None, layer=None,
     collar=None):
     '''Pack one echoframe_key by output type.
-
-    output_type: one of the supported echoframe output types
+    output_type:  one of the supported echoframe output types
     model_id:     model identifier
     phraser_key:  segment phraser key when required
     layer:        layer when required

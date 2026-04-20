@@ -11,3 +11,4 @@ echoframe_logs/
 echoframe.egg-info/
 uv.lock
 docs/interview_workflow.md
+scripts/

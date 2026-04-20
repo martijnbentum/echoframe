@@ -66,7 +66,7 @@ def _put(store, *, phraser_key, collar, model_name, output_type, layer,
     metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
         model_name=model_name, layer=layer, tags=tags,
         echoframe_key=store.make_echoframe_key(**key_kwargs))
-    return store.put(metadata.echoframe_key, metadata, data)
+    return store.save(metadata.echoframe_key, metadata, data)
 
 
 def _make_segment(start=1000, end=1300, key=None,
@@ -185,21 +185,75 @@ class TestGetEmbeddings(unittest.TestCase):
             np.testing.assert_array_equal(result.tokens[0].to_numpy(), data_1)
             np.testing.assert_array_equal(result.tokens[1].to_numpy(), data_2)
 
-    def test_batch_uses_typed_store_loader(self):
+    def test_batch_reuses_single_item_function(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
             segments = [_make_segment(key=_pk('aabb'))]
 
-            original = store.load_many_embeddings
-            with mock.patch.object(store, 'load_many_embeddings',
+            original = segment_features.get_embeddings
+            with mock.patch.object(segment_features, 'get_embeddings',
                 wraps=original) as patched:
                 result = get_embeddings_batch(segments, layers=4, collar=500,
                     model_name='wav2vec2', store=store, model=None)
 
             self.assertIsInstance(result, TokenEmbeddings)
             patched.assert_called_once()
+
+    def test_batch_skip_is_default_and_omits_failed_items(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            data = np.arange(6).reshape(2, 3).astype(float)
+            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            result = get_embeddings_batch(segments, layers=4, collar=500,
+                model_name='wav2vec2', store=store, model=None)
+
+            self.assertIsInstance(result, TokenEmbeddings)
+            self.assertEqual(result.token_count, 1)
+            self.assertEqual(result.echoframe_keys, (
+                store.make_echoframe_key(
+                    'hidden_state',
+                    model_name='wav2vec2',
+                    phraser_key=_pk('aabb'),
+                    layer=4,
+                    collar=500,
+                ),
+            ))
+            np.testing.assert_array_equal(result.tokens[0].to_numpy(), data)
+
+    def test_batch_raise_propagates_first_failure(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            data = np.arange(6).reshape(2, 3).astype(float)
+            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            with self.assertRaises(ValueError):
+                get_embeddings_batch(segments, layers=4, collar=500,
+                    model_name='wav2vec2', store=store, model=None,
+                    on_error='raise')
+
+    def test_batch_skip_raises_when_all_items_fail(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            with self.assertRaisesRegex(ValueError,
+                'no embeddings succeeded'):
+                get_embeddings_batch(segments, layers=4, collar=500,
+                    model_name='wav2vec2', store=store, model=None)
 
     def test_duration_clips_collared_window(self):
         tmpdir, store = _make_store()
@@ -305,7 +359,7 @@ class TestGetCodebookIndices(unittest.TestCase):
             np.testing.assert_array_equal(result.tokens[1].to_numpy(),
                 indices_2)
 
-    def test_batch_uses_typed_codebook_loader(self):
+    def test_batch_reuses_single_item_codebook_function(self):
         tmpdir, store = _make_store()
         with tmpdir:
             indices = np.array([[0, 1]])
@@ -313,14 +367,69 @@ class TestGetCodebookIndices(unittest.TestCase):
             _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
             segments = [_make_segment(key=_pk('aabb'))]
 
-            original = store.load_many_codebooks
-            with mock.patch.object(store, 'load_many_codebooks',
+            original = segment_features.get_codebook_indices
+            with mock.patch.object(segment_features, 'get_codebook_indices',
                 wraps=original) as patched:
                 result = get_codebook_indices_batch(segments, collar=500,
                     model_name='wav2vec2', store=store, model=None)
 
             self.assertIsInstance(result, TokenCodebooks)
             patched.assert_called_once()
+
+    def test_codebook_batch_skip_is_default_and_omits_failed_items(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            indices = np.array([[0, 1]])
+            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            result = get_codebook_indices_batch(segments, collar=500,
+                model_name='wav2vec2', store=store, model=None)
+
+            self.assertIsInstance(result, TokenCodebooks)
+            self.assertEqual(result.token_count, 1)
+            self.assertEqual(result.echoframe_keys, (
+                store.make_echoframe_key(
+                    'codebook_indices',
+                    model_name='wav2vec2',
+                    phraser_key=_pk('aabb'),
+                    collar=500,
+                ),
+            ))
+            np.testing.assert_array_equal(result.tokens[0].to_numpy(), indices)
+
+    def test_codebook_batch_raise_propagates_first_failure(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            indices = np.array([[0, 1]])
+            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
+            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            with self.assertRaises(ValueError):
+                get_codebook_indices_batch(segments, collar=500,
+                    model_name='wav2vec2', store=store, model=None,
+                    on_error='raise')
+
+    def test_codebook_batch_skip_raises_when_all_items_fail(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd')),
+            ]
+
+            with self.assertRaisesRegex(ValueError,
+                'no codebook indices succeeded'):
+                get_codebook_indices_batch(segments, collar=500,
+                    model_name='wav2vec2', store=store, model=None)
 
     def test_duration_clips_collared_window(self):
         tmpdir, store = _make_store()

@@ -18,7 +18,6 @@ from .typed_loaders import load_many_codebooks, load_many_embeddings
 
 class Store:
     '''Link phraser keys to stored model outputs.'''
-
     def __init__(self, root, max_shard_size_bytes=1_000_000_000,
         index=None, storage=None):
         '''Initialize a store.
@@ -31,10 +30,12 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         shards_root = self.root / 'shards'
         self.config_path = self.root / 'config.json'
-        self.index = index or LmdbIndex(self.root / 'index.lmdb',
-            shards_root=shards_root)
-        self.storage = storage or Hdf5ShardStore(shards_root,
-            max_shard_size_bytes=max_shard_size_bytes)
+        if index is None: 
+            index = LmdbIndex(self.root / 'index.lmdb', shards_root=shards_root)
+        self.index = index
+        if storage is None: 
+            storage = Hdf5ShardStore(shards_root, max_shard_size_bytes)
+        self.storage = storage 
         self.registry = ModelRegistry(self.config_path)
 
     def __repr__(self):
@@ -42,11 +43,8 @@ class Store:
         return m
 
     def __str__(self):
-        try:
-            summary = self.store_summary()
-            return util_formatting.format_store_str(summary)
-        except: return self.__repr__()
-            
+        summary = self.store_summary()
+        return util_formatting.format_store_str(summary)
 
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None, architecture=None):
@@ -59,8 +57,8 @@ class Store:
         architecture:    optional model architecture label
         '''
         return self.registry.register_model(model_name,
-            local_path=local_path, huggingface_id=huggingface_id, language=language,
-            size=size, architecture=architecture)
+            local_path=local_path, huggingface_id=huggingface_id,
+            language=language, size=size, architecture=architecture)
 
     def import_models(self, path):
         '''Import model definitions from a JSON file.
@@ -73,7 +71,6 @@ class Store:
 
     def get_model_metadata(self, model_name):
         '''Look up a model_metadata record by model name.
-
         Returns a ModelMetadata object, or None.
         '''
         return self.registry.load_model_metadata(model_name)
@@ -104,8 +101,8 @@ class Store:
         if data is None:
             raise ValueError('data must not be None for this output type')
         if bytes(echoframe_key) != metadata_obj.echoframe_key:
-            raise ValueError(
-                'metadata.echoframe_key must match the first argument')
+            message = 'metadata.echoframe_key must match the first argument'
+            raise ValueError(message)
         stored = self.storage.store(metadata_obj, data=data)
         indexed = self.index.upsert(stored)
         return self._bind_metadata(indexed)
@@ -121,8 +118,8 @@ class Store:
             if not isinstance(metadata_obj, EchoframeMetadata):
                 raise ValueError('metadata must be an EchoframeMetadata')
             if bytes(echoframe_key) != metadata_obj.echoframe_key:
-                raise ValueError(
-                    'metadata.echoframe_key must match the item key')
+                message = 'metadata.echoframe_key must match the item key'
+                raise ValueError(message)
             if item['data'] is None:
                 raise ValueError('data must not be None for this output type')
             prepared_item = {'metadata': metadata_obj, 'data': item['data']}
@@ -149,8 +146,8 @@ class Store:
         '''Load one stored payload by echoframe key.'''
         metadata_obj = self.load_metadata(echoframe_key)
         if metadata_obj is None:
-            raise ValueError(
-                'no stored output matched the requested echoframe key')
+            message = 'no stored output matched the requested echoframe key'
+            raise ValueError(message)
         self._touch_accessed_at(metadata_obj)
         return self.storage.load(metadata_obj)
 
@@ -169,8 +166,7 @@ class Store:
         layers:              layer indexes to load
         frame_aggregation:   optional frame aggregation mode
         '''
-        embeddings = load_embeddings(self, phraser_key, collar,
-            model_name,
+        embeddings = load_embeddings(self, phraser_key, collar, model_name,
             layers, frame_aggregation=frame_aggregation)
         return embeddings
 
@@ -197,27 +193,7 @@ class Store:
         strict:          raise when any key does not match
         '''
         metadata_list = self.get_many_metadata(echoframe_keys)
-        if not strict:
-            payloads = []
-            for metadata_obj in metadata_list:
-                if metadata_obj is None:
-                    payloads.append(None)
-                else:
-                    self._touch_accessed_at(metadata_obj)
-                    payload = self.storage.load(metadata_obj)
-                    payloads.append(payload)
-            return payloads
-
-        payloads = []
-        for metadata_obj in metadata_list:
-            if metadata_obj is None:
-                raise ValueError(
-                    'no stored output matched one of the requested '
-                    'echoframe keys'
-                )
-            self._touch_accessed_at(metadata_obj)
-            payload = self.storage.load(metadata_obj)
-            payloads.append(payload)
+        payloads = self.metadatas_to_payloads(metadata_list, strict=strict)
         return payloads
 
     def get_many_metadata(self, echoframe_keys):
@@ -230,28 +206,22 @@ class Store:
         metadata_list:   iterable of metadata records or None values
         strict:          raise when any metadata item is None
         '''
-        if not strict:
-            payloads = []
-            for metadata_obj in metadata_list:
-                if metadata_obj is None:
-                    payloads.append(None)
-                else:
-                    payload = self.storage.load(metadata_obj)
-                    payloads.append(payload)
-            return payloads
-
         payloads = []
-        for metadata_obj in metadata_list:
-            if metadata_obj is None:
-                raise ValueError(
-                    'no stored output matched one of the requested metadata '
-                    'records'
-                )
+        for index, metadata_obj in enumerate(metadata_list):
+            if metadata_obj is None and strict:
+                message = 'no stored output matched one of the requested '
+                message += 'echoframe key at index {index}, {echoframe_key}'
+                raise ValueError(message)
+            if metadata_obj is None: 
+                print(f'WARNING: no output for echoframe key at index {index}')
+                continue
+            self._touch_accessed_at(metadata_obj)
             payload = self.storage.load(metadata_obj)
             payloads.append(payload)
+
         return payloads
 
-    def load_object_frames(self, phraser_key, model_name, layer, collar=500,
+    def phraser_key_to_output(self, phraser_key, model_name, layer, collar=500,
         output_type='hidden_state', match='exact'):
         '''Load frame outputs for one object.
         phraser_key:    unique phraser object key
@@ -261,23 +231,18 @@ class Store:
         output_type:    output type to match
         match:          exact, min, max, or nearest
         '''
-        if collar is None:
-            phraser_records = self.find_phraser(phraser_key)
-            entries = filter_metadata(phraser_records,
-                model_name=model_name, output_type=output_type, layer=layer)
-            frames = {}
-            for metadata_obj in entries:
-                frames[metadata_obj.collar] = self.storage.load(metadata_obj)
-            return frames
         phraser_records = self.find_phraser(phraser_key)
         matches = filter_metadata(phraser_records,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches:
             raise ValueError('no stored output matched the requested criteria')
-        return self.load(matches[0].echoframe_key)
+        if len(matches) > 1:
+            print(f'{len(matches)} stored outputs matched the criteria')
+            print(f'returning echoframe_key {matches[0].echoframe_key}')
+        return self.load(matches[0].echoframe_key), matches[0]
 
-    def iter_object_frames(self, phraser_key, model_name, layer,
+    def phraser_key_to_outputs(self, phraser_key, model_name, layer = None,
         collar=None, output_type='hidden_state', match='exact'):
         '''Iterate lazily over frame outputs for one object.
         phraser_key:    unique phraser object key
@@ -287,26 +252,19 @@ class Store:
         output_type:    output type to match
         match:          exact, min, max, or nearest
         '''
-        if collar is None:
-            phraser_records = self.find_phraser(phraser_key)
-            entries = filter_metadata(phraser_records,
-                model_name=model_name, output_type=output_type, layer=layer)
-            for metadata_obj in entries:
-                yield metadata_obj, self.storage.load(metadata_obj)
-            return
-
         phraser_records = self.find_phraser(phraser_key)
         matches = filter_metadata(phraser_records,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches:
             raise ValueError('no stored output matched the requested criteria')
-        metadata_obj = matches[0]
-        yield metadata_obj, self.storage.load(metadata_obj)
+        keys = [metadata_obj.echoframe_key for metadata_obj in matches]
+        outputs = self.load_many(keys)
+        return outputs, matches
 
-    def delete(self, phraser_key, collar, model_name, output_type, layer,
-        match='exact'):
-        '''Delete one stored output from live indexes.
+    def delete_phraser_key(self, phraser_key, model_name, output_type,
+        layer = None, collar = None, match='exact'):
+        '''Delete stored outputs linked to phraser_key that match the criteria.
         phraser_key:    unique phraser object key
         collar:         requested collar in milliseconds
         model_name:     model identifier
@@ -319,9 +277,10 @@ class Store:
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches: return None
-        metadata_obj = matches[0]
-        self.storage.delete(metadata_obj)
-        return self.index.delete(metadata_obj)
+        for metadata_obj in matches:
+            self.storage.delete(metadata_obj)
+            self.index.delete(metadata_obj)
+        print(f'deleted {len(matches)} entries for phraser_key {phraser_key}')
 
     def store_summary(self):
         '''Return compact summary stats for this store.'''
@@ -356,7 +315,7 @@ class Store:
         return self._bind_metadatas(records)
 
     def find_by_label(self, label, model_name=None, output_type=None,
-        layer=None, include_deleted=False):
+        layer=None, include_deleted=False, collar=None, match='exact'):
         '''List metadata records for one phraser object label.
         label:             phraser object label to match
         model_name:        optional model filter
@@ -368,24 +327,17 @@ class Store:
             raise ValueError('label must be a non-empty string')
 
         records = self.index.list_entries(include_deleted=include_deleted)
-        if model_name is not None:
-            records = [record for record in records
-                if record.model_name == model_name]
-        if output_type is not None:
-            records = [record for record in records
-                if record.output_type == output_type]
-        if layer is not None:
-            records = [record for record in records if record.layer == layer]
-
-        models = _load_phraser_models()
+        records = filter_metadata(records, model_name=model_name,
+            output_type=output_type, layer=layer, collar=collar, match=match)
+        if len(records) == 0: return None
+        phraser_models= _load_phraser_models_module()
+            
         labels_by_key = {}
         matches = []
         for record in records:
             phraser_key = record.phraser_key
             if phraser_key not in labels_by_key:
-                phraser_object = models.cache.load(phraser_key)
-                labels_by_key[phraser_key] = getattr(phraser_object,
-                    'label', None)
+                labels_by_key[phraser_key] = record.label
             if labels_by_key[phraser_key] == label:
                 matches.append(record)
         return self._bind_metadatas(matches)
@@ -442,15 +394,10 @@ class Store:
         '''List stored metadata records across all shards.
         include_deleted:   include tombstoned entries
         '''
-        entries = self.index.list_entries(
-            include_deleted=include_deleted)
-        entries.sort(key=lambda metadata: (
-            metadata.phraser_key,
-            metadata.model_name,
-            metadata.output_type,
-            metadata.layer,
-            metadata.collar,
-        ))
+        entries = self.index.list_entries(include_deleted=include_deleted)
+        entries.sort(key=lambda metadata: (metadata.phraser_key,
+            metadata.model_name, metadata.output_type, metadata.layer,
+            metadata.collar))
         bound_entries = self._bind_metadatas(entries)
         return bound_entries
 
@@ -532,7 +479,8 @@ class Store:
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
 
-        if budget_bytes is not None and self._storage_bytes() <= budget_bytes: return []
+        if budget_bytes is not None and self._storage_bytes() <= budget_bytes: 
+            return []
 
         entries = self.list_entries()
         stale = []
@@ -590,17 +538,14 @@ class Store:
         dry_run:            report what would be compacted
         resume_pending:     resume running journal entries first
         '''
-        if shard_ids is None:
-            shard_ids = self.index.list_shards()
-        if resume_pending:
-            self.resume_compactions()
+        if shard_ids is None: shard_ids = self.index.list_shards()
+        if resume_pending: self.resume_compactions()
 
         compacted = []
         plans = []
         for shard_id in shard_ids:
             plan = self._compaction_plan(shard_id)
-            if not plan['needs_compaction']:
-                continue
+            if not plan['needs_compaction']: continue
             if dry_run:
                 plans.append(plan)
                 continue
@@ -625,8 +570,11 @@ class Store:
         '''Return total bytes used by shard files.'''
         shards_root = self.root / 'shards'
         if not shards_root.exists(): return 0
-        return sum(f.stat().st_size for f in shards_root.rglob('*')
-            if f.is_file())
+        file_sizes = []
+        for filename in shards_root.rglob('*'):
+            if filename.is_file():
+                file_sizes.append(filename.stat().st_size)
+        return sum(file_sizes)
 
     def _bind_metadata(self, metadata_obj):
         if metadata_obj is None: return None
@@ -672,11 +620,10 @@ class Store:
             plan, from_journal=from_journal)
 
 
-def _load_phraser_models():
+def _load_phraser_models_module():
     try:
         from phraser import models
     except ImportError as exc:
-        raise ImportError(
-            'phraser is required to find entries by label'
-        ) from exc
+        message = 'phraser is required to find entries by label'
+        raise ImportError(message) from exc
     return models

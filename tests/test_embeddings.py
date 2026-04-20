@@ -263,6 +263,25 @@ class TestTokenEmbeddingsInit(unittest.TestCase):
         self.assertEqual(obj.layers, (3, 6, 12))
         self.assertEqual(obj.frame_aggregation, 'mean')
 
+    def test_accepts_failed_metadatas_tuple(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1')
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2')
+        failed = ({'reason': 'missing file'},)
+
+        obj = TokenEmbeddings(tokens=[token_1, token_2],
+            _failed_metadatas=failed)
+
+        self.assertEqual(obj._failed_metadatas, failed)
+
+    def test_rejects_non_tuple_failed_metadatas(self):
+        token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1')
+        token_2 = _make_token((8,), ('embed_dim',), echoframe_key='token-2')
+
+        with self.assertRaisesRegex(ValueError,
+            '_failed_metadatas must be a tuple'):
+            TokenEmbeddings(tokens=[token_1, token_2],
+                _failed_metadatas=[{'reason': 'missing file'}])
+
     def test_infers_path_from_child_tokens(self):
         token_1 = _make_token((8,), ('embed_dim',), echoframe_key='token-1',
             path=Path('/tmp/shared-store'))
@@ -371,6 +390,19 @@ class TestTokenEmbeddingsLayer(unittest.TestCase):
         self.assertIsNone(result.__dict__.get('_store'))
         self.assertEqual(result.tokens[0].path, obj.path)
         self.assertEqual(result.tokens[1].path, obj.path)
+
+    def test_layer_preserves_failed_metadatas(self):
+        token_1 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-1')
+        token_2 = _make_token((3, 8), ('layers', 'embed_dim'),
+            layers=(3, 6, 12), echoframe_key='token-2')
+        failed = ({'reason': 'missing file'},)
+        obj = TokenEmbeddings(tokens=[token_1, token_2],
+            _failed_metadatas=failed)
+
+        result = obj.layer(6)
+
+        self.assertEqual(result._failed_metadatas, failed)
 
     def test_layer_preserves_frame_based_tokens(self):
         data_1 = np.arange(3 * 5 * 8).reshape(3, 5, 8).astype(float)

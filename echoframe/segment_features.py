@@ -10,6 +10,10 @@ import numpy as np
 from .codebooks import TokenCodebooks
 from .embeddings import TokenEmbeddings
 from .metadata import metadata_class_for_output_type
+from .segment_batch_validation import (
+    validate_segment_batch_contexts,
+    warn_for_failed_metadatas,
+)
 
 try:
     import frame
@@ -50,28 +54,41 @@ def get_embeddings(segment, layers, collar=500, model_name='wav2vec2',
 
 def get_embeddings_batch(segments, layers, collar=500, model_name='wav2vec2',
     frame_aggregation=None, model=None, store=None,
-    store_root='echoframe', gpu=False, tags=None, on_error='skip'):
+    store_root='echoframe', gpu=False, tags=None, batch_minutes=None):
     '''Return embeddings for multiple segment objects.'''
     segments = _require_segments(segments)
-    _normalise_layers(layers)
+    single_layer = isinstance(layers, Integral)
+    layers_list = _normalise_layers(layers)
     _validate_frame_aggregation(frame_aggregation)
     store = _resolve_store(store, store_root)
-    _validate_on_error(on_error)
+    contexts = [_build_segment_batch_context(segment, collar)
+        for segment in segments]
+    valid_contexts, failed_metadatas = validate_segment_batch_contexts(
+        contexts)
+    warn_for_failed_metadatas(failed_metadatas, item_label='segments')
+    if not valid_contexts:
+        raise ValueError('no valid segments remained after batch validation')
+
+    missing_contexts = []
+    for context in valid_contexts:
+        if _embeddings_missing(store, context['phraser_key'], collar,
+            model_name, layers_list):
+            missing_contexts.append(context)
+
+    if missing_contexts:
+        compute_model = _require_loaded_model(model, 'embeddings')
+        _compute_and_store_embeddings_batch(missing_contexts, collar,
+            layers_list, model_name, compute_model, store, gpu, tags,
+            batch_minutes=batch_minutes)
+
     tokens = []
-    for segment in segments:
-        try:
-            token = get_embeddings(segment, layers, collar=collar,
-                model_name=model_name, frame_aggregation=frame_aggregation,
-                model=model, store=store, store_root=store_root, gpu=gpu,
-                tags=tags)
-        except Exception:
-            if on_error == 'raise':
-                raise
-            continue
+    load_layers = layers if single_layer else layers_list
+    for context in valid_contexts:
+        token = store.load_embeddings(context['phraser_key'], collar,
+            model_name, load_layers, frame_aggregation=frame_aggregation)
         tokens.append(token)
-    if not tokens:
-        raise ValueError('no embeddings succeeded for the requested segments')
-    return TokenEmbeddings(tokens=tokens, path=store.root).bind_store(store)
+    return TokenEmbeddings(tokens=tokens, path=store.root,
+        _failed_metadatas=tuple(failed_metadatas)).bind_store(store)
 
 
 def get_codebook_indices(segment, collar=500, model_name='wav2vec2',
@@ -158,6 +175,20 @@ def _validate_on_error(on_error):
         raise ValueError("on_error must be 'skip' or 'raise'")
 
 
+def _build_segment_batch_context(segment, collar):
+    phraser_key, audio_filename, col_start_ms, col_end_ms, orig_start_ms, \
+        orig_end_ms = _segment_context(segment, collar)
+    return {
+        'segment': segment,
+        'phraser_key': phraser_key,
+        'audio_filename': audio_filename,
+        'col_start_ms': col_start_ms,
+        'col_end_ms': col_end_ms,
+        'orig_start_ms': orig_start_ms,
+        'orig_end_ms': orig_end_ms,
+    }
+
+
 def _segment_context(segment, collar):
     phraser_key = segment_to_echoframe_key(segment)
     audio = getattr(segment, 'audio', None)
@@ -233,6 +264,34 @@ def _compute_and_store_embeddings(audio_filename, col_start_ms,
     outputs = to_vector.filename_to_vector(audio_filename,
         start=_ms_to_s(col_start_ms), end=_ms_to_s(col_end_ms),
         model=compute_model, gpu=gpu, numpify_output=True)
+    _store_embeddings_from_outputs(outputs, col_start_ms, orig_start_ms,
+        orig_end_ms, collar, layers, model_name, phraser_key, store, tags)
+
+
+def _compute_and_store_embeddings_batch(contexts, collar, layers, model_name,
+    compute_model, store, gpu, tags, batch_minutes=None):
+    if frame is None:
+        raise ImportError('frame is required to compute embeddings')
+    if to_vector is None:
+        raise ImportError('to_vector is required to compute embeddings')
+    audio_filenames = [context['audio_filename'] for context in contexts]
+    starts = [_ms_to_s(context['col_start_ms']) for context in contexts]
+    ends = [_ms_to_s(context['col_end_ms']) for context in contexts]
+    outputs_list = to_vector.filename_batch_to_vector(audio_filenames,
+        starts=starts, ends=ends, model=compute_model, gpu=gpu,
+        numpify_output=True, batch_minutes=batch_minutes)
+    for context, outputs in zip(contexts, outputs_list):
+        _store_embeddings_from_outputs(outputs, context['col_start_ms'],
+            context['orig_start_ms'], context['orig_end_ms'], collar, layers,
+            model_name, context['phraser_key'], store, tags)
+
+
+def _store_embeddings_from_outputs(outputs, col_start_ms, orig_start_ms,
+    orig_end_ms, collar, layers, model_name, phraser_key, store, tags):
+    if frame is None:
+        raise ImportError('frame is required to compute embeddings')
+    if to_vector is None:
+        raise ImportError('to_vector is required to compute embeddings')
 
     hidden_states = getattr(outputs, 'hidden_states', None)
     if hidden_states is None:

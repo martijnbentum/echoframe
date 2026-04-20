@@ -160,6 +160,8 @@ class TokenEmbeddings:
 
     tokens: list[Embeddings]
     path: Path | None = field(default=None, compare=False)
+    _failed_metadatas: tuple[dict, ...] = field(default_factory=tuple,
+        compare=False)
     _store: Any = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self):
@@ -167,6 +169,8 @@ class TokenEmbeddings:
             raise ValueError('tokens must be a list of Embeddings')
         if not self.tokens:
             raise ValueError('tokens must contain at least one Embeddings')
+        if not isinstance(self._failed_metadatas, tuple):
+            raise ValueError('_failed_metadatas must be a tuple')
 
         deduped = []
         seen = set()
@@ -282,6 +286,7 @@ class TokenEmbeddings:
         text = 'TokenEmbeddings('
         text += f'token_count={self.token_count}, '
         text += f'echoframe_keys={self.echoframe_keys}, '
+        text += f'failed_count={len(self._failed_metadatas)}, '
         text += f'dims={self.dims}, layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
         return text
@@ -289,7 +294,8 @@ class TokenEmbeddings:
     def layer(self, n):
         '''Return a new TokenEmbeddings with only layer n.'''
         tokens = [token.layer(n) for token in self.tokens]
-        result = TokenEmbeddings(tokens=tokens, path=self.path)
+        result = TokenEmbeddings(tokens=tokens, path=self.path,
+            _failed_metadatas=self._failed_metadatas)
         if self._store is not None:
             result.bind_store(self._store)
         return result

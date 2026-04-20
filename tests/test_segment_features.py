@@ -70,9 +70,11 @@ def _put(store, *, phraser_key, collar, model_name, output_type, layer,
 
 
 def _make_segment(start=1000, end=1300, key=None,
-    filename='audio.wav', duration=None):
+    filename=None, duration=None):
     if key is None:
         key = _pk('aabb')
+    if filename is None:
+        filename = str(Path(__file__).resolve())
     audio = types.SimpleNamespace(filename=filename)
     if duration is not None:
         audio.duration = duration
@@ -92,7 +94,7 @@ def _put_codebook(store, phraser_key, collar, model_name, indices, matrix):
 
 
 def _patch_runtime_dependencies(outputs=None, indices=None, matrix=None,
-    frame_indices=None):
+    frame_indices=None, batch_outputs=None):
     fake_frames = types.SimpleNamespace(
         select_frames=mock.Mock(return_value=[
             types.SimpleNamespace(index=index) for index in frame_indices or []
@@ -100,6 +102,7 @@ def _patch_runtime_dependencies(outputs=None, indices=None, matrix=None,
     )
     fake_to_vector = types.SimpleNamespace(
         filename_to_vector=mock.Mock(return_value=outputs),
+        filename_batch_to_vector=mock.Mock(return_value=batch_outputs or []),
         filename_to_codebook_artifacts=mock.Mock(return_value=types.SimpleNamespace(
             indices=indices, codebook_matrix=matrix,
         )),
@@ -185,73 +188,130 @@ class TestGetEmbeddings(unittest.TestCase):
             np.testing.assert_array_equal(result.tokens[0].to_numpy(), data_1)
             np.testing.assert_array_equal(result.tokens[1].to_numpy(), data_2)
 
-    def test_batch_reuses_single_item_function(self):
+    def test_batch_uses_batch_compute_for_missing_segments(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk('aabb'), duration=2000),
+                _make_segment(key=_pk('ccdd'), duration=2000),
+            ]
+            outputs_1 = types.SimpleNamespace(hidden_states=[
+                np.zeros((1, 5, 2)),
+                np.ones((1, 5, 2)),
+            ])
+            outputs_2 = types.SimpleNamespace(hidden_states=[
+                np.zeros((1, 5, 2)),
+                np.full((1, 5, 2), 2.0),
+            ])
+            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
+                batch_outputs=[outputs_1, outputs_2],
+                frame_indices=[1, 2],
+            )
+            with mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector), mock.patch.object(segment_features, 'frame',
+                fake_frame):
+                result = get_embeddings_batch(segments, layers=1, collar=500,
+                    model_name='wav2vec2', store=store, model=object(),
+                    batch_minutes=3)
+
+            self.assertIsInstance(result, TokenEmbeddings)
+            self.assertEqual(result.token_count, 2)
+            fake_to_vector.filename_batch_to_vector.assert_called_once()
+            _, kwargs = fake_to_vector.filename_batch_to_vector.call_args
+            self.assertEqual(kwargs['batch_minutes'], 3)
+            self.assertEqual(kwargs['starts'], [0.5, 0.5])
+            self.assertEqual(kwargs['ends'], [1.8, 1.8])
+
+    def test_batch_filters_invalid_segments_and_warns(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
-            segments = [_make_segment(key=_pk('aabb'))]
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd'), start=1000, end=1020),
+                _make_segment(key=_pk('eeff'),
+                    filename=str(Path(tmpdir.name) / 'missing.wav')),
+            ]
 
-            original = segment_features.get_embeddings
-            with mock.patch.object(segment_features, 'get_embeddings',
-                wraps=original) as patched:
+            with self.assertWarnsRegex(UserWarning,
+                'filtered 2 invalid segments'):
                 result = get_embeddings_batch(segments, layers=4, collar=500,
                     model_name='wav2vec2', store=store, model=None)
 
             self.assertIsInstance(result, TokenEmbeddings)
-            patched.assert_called_once()
-
-    def test_batch_skip_is_default_and_omits_failed_items(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            data = np.arange(6).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            result = get_embeddings_batch(segments, layers=4, collar=500,
-                model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, TokenEmbeddings)
             self.assertEqual(result.token_count, 1)
-            self.assertEqual(result.echoframe_keys, (
-                store.make_echoframe_key(
-                    'hidden_state',
-                    model_name='wav2vec2',
-                    phraser_key=_pk('aabb'),
-                    layer=4,
-                    collar=500,
-                ),
-            ))
             np.testing.assert_array_equal(result.tokens[0].to_numpy(), data)
+            self.assertEqual(len(result._failed_metadatas), 2)
+            self.assertEqual(result._failed_metadatas[0]['reason'],
+                'segment shorter than 25 ms')
+            self.assertIn('audio file does not exist',
+                result._failed_metadatas[1]['reason'])
 
-    def test_batch_raise_propagates_first_failure(self):
+    def test_batch_skips_cached_segments_in_compute_subset(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            data = np.arange(6).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
+            cached = np.arange(6).reshape(2, 3).astype(float)
+            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 1, cached)
             segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
+                _make_segment(key=_pk('aabb'), duration=2000),
+                _make_segment(key=_pk('ccdd'), duration=2000),
             ]
+            batch_output = types.SimpleNamespace(hidden_states=[
+                np.zeros((1, 5, 3)),
+                np.full((1, 5, 3), 4.0),
+            ])
+            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
+                batch_outputs=[batch_output],
+                frame_indices=[1, 2],
+            )
 
-            with self.assertRaises(ValueError):
-                get_embeddings_batch(segments, layers=4, collar=500,
-                    model_name='wav2vec2', store=store, model=None,
-                    on_error='raise')
+            with mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector), mock.patch.object(segment_features, 'frame',
+                fake_frame):
+                result = get_embeddings_batch(segments, layers=1, collar=500,
+                    model_name='wav2vec2', store=store, model=object())
 
-    def test_batch_skip_raises_when_all_items_fail(self):
+            self.assertEqual(result.token_count, 2)
+            np.testing.assert_array_equal(result.tokens[0].to_numpy(), cached)
+            np.testing.assert_array_equal(result.tokens[1].to_numpy(),
+                np.full((2, 3), 4.0))
+            _, kwargs = fake_to_vector.filename_batch_to_vector.call_args
+            self.assertEqual(len(kwargs['starts']), 1)
+            self.assertEqual(len(kwargs['ends']), 1)
+
+    def test_batch_post_preflight_compute_failure_raises(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
+                _make_segment(key=_pk('aabb'), duration=2000),
+                _make_segment(key=_pk('ccdd'), duration=2000),
+            ]
+            bad_outputs = types.SimpleNamespace(hidden_states=None)
+            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
+                batch_outputs=[bad_outputs, bad_outputs],
+                frame_indices=[1, 2],
+            )
+
+            with mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector), mock.patch.object(segment_features, 'frame',
+                fake_frame):
+                with self.assertRaisesRegex(ValueError,
+                    'did not contain hidden_states'):
+                    get_embeddings_batch(segments, layers=1, collar=500,
+                        model_name='wav2vec2', store=store, model=object())
+
+    def test_batch_raises_when_no_valid_segments_remain(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk('aabb'), start=1000, end=1010),
+                _make_segment(key=_pk('ccdd'),
+                    filename=str(Path(tmpdir.name) / 'missing.wav')),
             ]
 
             with self.assertRaisesRegex(ValueError,
-                'no embeddings succeeded'):
+                'no valid segments remained'):
                 get_embeddings_batch(segments, layers=4, collar=500,
                     model_name='wav2vec2', store=store, model=None)
 

@@ -112,6 +112,11 @@ class Embeddings:
         '''Delegate shape to underlying array.'''
         return self.data.shape
 
+    @property
+    def metadatas(self):
+        '''Load metadata records for this embedding.'''
+        return tuple(self.store.load_many_metadata(self.echoframe_keys))
+
     def __repr__(self):
         text = 'Embeddings('
         text += f'echoframe_keys={self.echoframe_keys}, '
@@ -236,8 +241,21 @@ class TokenEmbeddings:
 
     @property
     def echoframe_keys(self):
-        '''Return ordered echoframe keys.'''
-        return tuple(token.echoframe_key for token in self.tokens)
+        '''Return ordered echoframe keys across all tokens.'''
+        keys = []
+        for token in self.tokens:
+            keys.extend(token.echoframe_keys)
+        return tuple(keys)
+
+    @property
+    def metadatas(self):
+        '''Return ordered metadata records across all tokens.'''
+        metadatas = []
+        for token in self.tokens:
+            if token.metadatas is None:
+                continue
+            metadatas.extend(token.metadatas)
+        return tuple(metadatas)
 
     @property
     def dims(self):

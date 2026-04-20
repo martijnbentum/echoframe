@@ -258,7 +258,10 @@ class TestTokenEmbeddingsInit(unittest.TestCase):
             frame_aggregation='mean')
         obj = TokenEmbeddings(tokens=[token_1, token_2])
         self.assertEqual(obj.token_count, 2)
-        self.assertEqual(obj.echoframe_keys, ('token-1', 'token-2'))
+        self.assertEqual(obj.echoframe_keys, (
+            'token-1', 'token-1', 'token-1',
+            'token-2', 'token-2', 'token-2',
+        ))
         self.assertEqual(obj.dims, ('layers', 'embed_dim'))
         self.assertEqual(obj.layers, (3, 6, 12))
         self.assertEqual(obj.frame_aggregation, 'mean')

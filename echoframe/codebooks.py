@@ -103,6 +103,11 @@ class Codebook:
         '''Load and cache the linked codebook matrix artifact.'''
         return self._load_codebook_matrix()
 
+    @property
+    def metadata(self):
+        '''Load metadata for the stored indices artifact.'''
+        return self.store.load_metadata(self.echoframe_key)
+
     def to_numpy(self):
         '''Return normalized codebook indices as a numpy array.'''
         return self._normalized_indices()
@@ -217,7 +222,14 @@ class TokenCodebooks:
 
     @property
     def echoframe_keys(self):
-        return tuple(token.echoframe_key for token in self.tokens)
+        keys = []
+        for token in self.tokens:
+            keys.append(token.echoframe_key)
+        return tuple(keys)
+
+    @property
+    def metadatas(self):
+        return tuple(token.metadata for token in self.tokens)
 
     @property
     def model_architecture(self):

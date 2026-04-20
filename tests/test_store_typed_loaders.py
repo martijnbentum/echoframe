@@ -162,8 +162,8 @@ class TestLoadManyEmbeddings(unittest.TestCase):
 
             self.assertEqual(result.token_count, 2)
             self.assertEqual(result.echoframe_keys, (
-                result.tokens[0].echoframe_key,
-                result.tokens[1].echoframe_key,
+                *result.tokens[0].echoframe_keys,
+                *result.tokens[1].echoframe_keys,
             ))
             self.assertEqual(result.path, store.root)
             self.assertIsNone(result.__dict__.get('_store'))

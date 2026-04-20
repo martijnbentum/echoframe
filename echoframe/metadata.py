@@ -8,11 +8,6 @@ from .util_formatting import format_pretty_dict, truncate_text
 
 class EchoframeMetadata:
     '''Metadata for one stored echoframe output.
-    phraser_key:    phraser object key linked to this output
-    collar:         collar in milliseconds
-    model_name:     registered model name
-    output_type:    stored output type
-    layer:          model layer index
     '''
 
     def __init__(self, phraser_key, collar, model_name, output_type, layer=0,
@@ -20,6 +15,24 @@ class EchoframeMetadata:
         dataset_path=None, shape=None, dtype=None, tags=None,
         created_at=None, deleted_at=None, accessed_at=None,
         echoframe_key=None):
+        '''Initialize one metadata record.
+        phraser_key:      phraser object key linked to this output
+        collar:           collar in milliseconds
+        model_name:       registered model name
+        output_type:      stored output type
+        layer:            model layer index
+        model_id:         optional registered model identifier
+        storage_status:   live or deleted storage state
+        shard_id:         optional shard identifier
+        dataset_path:     optional dataset path inside the shard
+        shape:            optional stored payload shape
+        dtype:            optional stored payload dtype
+        tags:             optional grouping labels
+        created_at:       optional creation timestamp
+        deleted_at:       optional deletion timestamp
+        accessed_at:      optional last-access timestamp
+        echoframe_key:    optional canonical binary echoframe key
+        '''
         self.phraser_key = phraser_key
         self.collar = collar
         self.model_name = model_name
@@ -41,6 +54,16 @@ class EchoframeMetadata:
         self._phraser_object_loaded = False
         self._validate()
 
+    def __repr__(self):
+        limit = 80
+        tags = ','.join(self.tags) if self.tags else '-'
+        body = f'model={self.model_name}, layer={self.layer}, '
+        body += f'status={self.storage_status}, tags={tags}'
+        return 'MD(' + truncate_text(body, limit) + ')'
+
+    def __str__(self):
+        return format_pretty_dict(self._display_dict())
+
     def bind_store(self, store):
         '''Attach one store so the metadata can load its payload.'''
         self._store = store
@@ -48,7 +71,7 @@ class EchoframeMetadata:
 
     def load_payload(self):
         '''Load the stored output payload through the attached store.'''
-        if self._store is None:
+        if self._store is None: 
             raise ValueError('metadata is not bound to a store')
         return self._store.metadata_to_payload(self)
 
@@ -75,16 +98,13 @@ class EchoframeMetadata:
     @property
     def phraser_object(self):
         '''Load the linked phraser object when phraser is available.'''
-        if self._phraser_object_loaded:
-            return self._phraser_object
-        try:
-            from phraser import models
-        except ImportError:
-            return None
-        try:
-            self._phraser_object = models.cache.load(self.phraser_key)
-        except Exception:
-            self._phraser_object = None
+        if self._phraser_object_loaded: return self._phraser_object
+        try: from phraser import models
+        except ImportError: return None
+            
+        try: self._phraser_object = models.cache.load(self.phraser_key)
+        except Exception: self._phraser_object = None
+
         self._phraser_object_loaded = True
         return self._phraser_object
 
@@ -92,8 +112,7 @@ class EchoframeMetadata:
     def label(self):
         '''Return the linked phraser object label when available.'''
         phraser_object = self.phraser_object
-        if phraser_object is None:
-            return None
+        if phraser_object is None: return None
         return getattr(phraser_object, 'label', None)
 
     def to_dict(self):
@@ -156,16 +175,6 @@ class EchoframeMetadata:
         metadata = self.__class__.from_dict(data)
         return metadata.bind_store(self._store)
 
-    def __repr__(self):
-        limit = 80
-        tags = ','.join(self.tags) if self.tags else '-'
-        body = f'model={self.model_name}, layer={self.layer}, '
-        body += f'status={self.storage_status}, tags={tags}'
-        return 'MD(' + truncate_text(body, limit) + ')'
-
-    def __str__(self):
-        return format_pretty_dict(self._display_dict())
-
     def _validate(self):
         _validate_output_type(self.output_type)
         _validate_model_name(self.model_name)
@@ -180,16 +189,13 @@ class EchoframeMetadata:
         self._validate_segment_fields()
 
     def _validate_segment_fields(self):
-        if not self.phraser_key:
-            raise ValueError('phraser_key must not be empty')
-        if self.collar < 0:
-            raise ValueError('collar must be >= 0')
-        if self.layer < 0:
-            raise ValueError('layer must be >= 0')
+        if not self.phraser_key: raise ValueError('phraser_key must not be empty')
+        if self.collar < 0: raise ValueError('collar must be >= 0')
+        if self.layer < 0: raise ValueError('layer must be >= 0')
         if self.output_type in {'codebook_indices', 'codebook_matrix'}:
             if self.layer != 0:
-                raise ValueError(
-                    'codebook output types require layer to be exactly 0')
+                message = 'codebook output types require layer to be exactly 0'
+                raise ValueError(message)
 
     def _display_dict(self):
         data = self._display_header_dict()
@@ -209,25 +215,18 @@ class EchoframeMetadata:
         return data
 
     def _display_header_dict(self):
-        data = {
-            'phraser_key': self.phraser_key,
-            'collar': self.collar,
-            'model_name': self.model_name,
-            'output_type': self.output_type,
-            'layer': self.layer,
-        }
+        data = {'phraser_key': self.phraser_key,'collar': self.collar,
+            'model_name': self.model_name, 'output_type': self.output_type,
+            'layer': self.layer}
         if self.has_echoframe_key:
             data['echoframe_key_hex'] = self.format_echoframe_key()
-        if self.model_id is not None:
-            data['model_id'] = self.model_id
+        if self.model_id is not None: data['model_id'] = self.model_id
         return data
-
 
 def metadata_class_for_output_type(output_type):
     '''Return the metadata constructor for one output type.'''
     _validate_output_type(output_type)
     return partial(EchoframeMetadata, output_type=output_type)
-
 
 def filter_metadata(records, model_name=None, output_type=None, layer=None,
     collar=None, match='exact'):
@@ -239,39 +238,38 @@ def filter_metadata(records, model_name=None, output_type=None, layer=None,
     collar:        optional collar filter
     match:         exact, min, max, or nearest
     '''
-    items = [record for record in records if record is not None]
+    items = []
+    for record in records:
+        if record is not None: items.append(record)
     if model_name is not None:
         items = [record for record in items if record.model_name == model_name]
     if output_type is not None:
-        items = [record for record in items
-            if record.output_type == output_type]
+        filtered = []
+        for record in items:
+            if record.output_type == output_type: filtered.append(record)
+        items = filtered
     if layer is not None:
         items = [record for record in items if record.layer == layer]
-    items.sort(key=lambda record: (
-        record.collar,
-        record.output_type,
-        record.layer,
-        record.model_name,
-    ))
+    items.sort(key=lambda record: (record.collar, record.output_type,
+        record.layer,record.model_name))
 
-    if collar is None:
-        return items
+    if collar is None: return items
     if match not in VALID_MATCHES:
         message = "match must be one of 'exact', 'min', 'max', 'nearest'"
         raise ValueError(message)
-    if not items:
-        return []
+    if not items: return []
     if match == 'exact':
-        return [record for record in items if record.collar == collar]
+        matches = []
+        for record in items:
+            if record.collar == collar: matches.append(record)
+        return matches
     if match == 'min':
         for record in items:
-            if record.collar >= collar:
-                return [record]
+            if record.collar >= collar: return [record]
         return []
     if match == 'max':
         for record in reversed(items):
-            if record.collar <= collar:
-                return [record]
+            if record.collar <= collar: return [record]
         return []
     return [min(items, key=lambda record: abs(record.collar - collar))]
 
@@ -283,18 +281,15 @@ def utc_now():
 
 def normalize_tags(tags):
     '''Validate and normalize tag values.'''
-    if tags is None:
-        return []
+    if tags is None: return []
 
     values = []
     for tag in tags:
-        if not isinstance(tag, str):
-            raise ValueError('tags must contain only strings')
+        message = 'tags must contain only strings'
+        if not isinstance(tag, str): raise ValueError(message)
         value = tag.strip()
-        if not value:
-            raise ValueError('tags must not be empty')
-        if ':' in value:
-            raise ValueError("tags must not contain ':'")
+        if not value: raise ValueError('tags must not be empty')
+        if ':' in value: raise ValueError("tags must not contain ':'")
         values.append(value)
     return sorted(set(values))
 
@@ -306,13 +301,13 @@ def _validate_output_type(output_type):
 
 
 def _validate_model_name(model_name):
-    if not model_name:
-        raise ValueError('model_name must not be empty')
+    if not model_name: raise ValueError('model_name must not be empty')
 
 
 def _validate_storage_status(storage_status):
     if storage_status not in {'live', 'deleted'}:
-        raise ValueError("storage_status must be 'live' or 'deleted'")
+        message = "storage_status must be 'live' or 'deleted'"
+        raise ValueError(message)
 
 
 def _display_storage_dict(metadata):

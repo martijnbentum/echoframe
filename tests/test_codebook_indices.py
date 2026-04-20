@@ -208,7 +208,7 @@ class TestStoreCodebookMatrixRoundTrip(unittest.TestCase):
             metadata = metadata_cls(phraser_key='phrase-1', collar=0,
                 model_name='wav2vec2', layer=0,
                 echoframe_key=echoframe_key)
-            metadata = store.put(echoframe_key, metadata, matrix)
+            metadata = store.save(echoframe_key, metadata, matrix)
 
             self.assertEqual(metadata.output_type, 'codebook_matrix')
             self.assertEqual(metadata.layer, 0)

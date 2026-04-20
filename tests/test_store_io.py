@@ -253,16 +253,14 @@ class TestStoreIo(unittest.TestCase):
                 'label must be a non-empty string'):
                 store.find_by_label('')
             with mock.patch.dict(sys.modules, {'phraser': None}):
-                with self.assertRaisesRegex(ImportError,
-                    'phraser is required to find entries by label'):
-                    store.find_by_label('hello')
+                self.assertIsNone(store.find_by_label('hello'))
 
     def test_missing_and_validation_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
             self.assertEqual(_find_many(store, []), [])
             self.assertEqual(_load_many_queries(store, []), [])
-            self.assertEqual(store.put_many([]), [])
+            self.assertEqual(store.save_many([]), [])
             self.assertEqual(store.add_tags_many([], ['exp-a']), [])
             self.assertEqual(store.remove_tags_many([], ['exp-a']), [])
             self.assertIsNone(_delete(store, phraser_key=_pk('missing'),
@@ -378,7 +376,7 @@ class TestStoreIo(unittest.TestCase):
                 [_hex(first)])
             self.assertEqual([_hex(item) for item in all_entries], [
                 _hex(first), _hex(second)])
-            self.assertEqual(overview['entry_count'], 2)
+            self.assertEqual(overview['metadata_count'], 2)
             self.assertEqual(overview['shard_count'], 1)
             self.assertEqual(sorted(overview['tags']), ['exp-a', 'exp-b'])
             self.assertIsNone(overview['integrity'])

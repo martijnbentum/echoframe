@@ -44,7 +44,7 @@ def _put(store, phraser_key, collar, model_name, output_type, layer, data,
     metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
         model_name=model_name, layer=layer, tags=tags,
         echoframe_key=echoframe_key)
-    return store.put(echoframe_key, metadata, data)
+    return store.save(echoframe_key, metadata, data)
 
 
 class TestRegisterModel(unittest.TestCase):
@@ -101,7 +101,7 @@ class TestRegisterModel(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             r1 = store.register_model('bert-base-uncased')
-            retrieved = store.get_model_metadata('bert-base-uncased')
+            retrieved = store.load_model_metadata('bert-base-uncased')
         self.assertEqual(r1.model_id, retrieved.model_id)
 
     def test_register_empty_name_raises(self):
@@ -190,14 +190,14 @@ class TestGetModelMetadata(unittest.TestCase):
     def test_get_returns_none_for_unknown_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            result = store.get_model_metadata('unknown-model')
+            result = store.load_model_metadata('unknown-model')
         self.assertIsNone(result)
 
     def test_get_returns_record_after_registration(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_model('bert-base-uncased')
-            record = store.get_model_metadata('bert-base-uncased')
+            record = store.load_model_metadata('bert-base-uncased')
         self.assertIsNotNone(record)
         self.assertEqual(record.model_name, 'bert-base-uncased')
 
@@ -205,15 +205,15 @@ class TestGetModelMetadata(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             registered = store.register_model('bert-base-uncased')
-            retrieved = store.get_model_metadata('bert-base-uncased')
+            retrieved = store.load_model_metadata('bert-base-uncased')
         self.assertEqual(registered.model_id, retrieved.model_id)
 
     def test_get_is_stable_across_lookups(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_model('bert-base-uncased')
-            r1 = store.get_model_metadata('bert-base-uncased')
-            r2 = store.get_model_metadata('bert-base-uncased')
+            r1 = store.load_model_metadata('bert-base-uncased')
+            r2 = store.load_model_metadata('bert-base-uncased')
         self.assertEqual(r1.model_id, r2.model_id)
 
 
@@ -225,7 +225,7 @@ class TestPersistence(unittest.TestCase):
             store1.register_model('bert-base-uncased')
             # second store reuses the same LMDB env (cached by path)
             store2 = _make_store(tmp)
-            record = store2.get_model_metadata('bert-base-uncased')
+            record = store2.load_model_metadata('bert-base-uncased')
         self.assertIsNotNone(record)
         self.assertEqual(record.model_name, 'bert-base-uncased')
 
@@ -346,7 +346,7 @@ class TestImportModels(unittest.TestCase):
                  'architecture': 'bert'},
             ])
             store.import_models(seed_path)
-            record = store.get_model_metadata('bert-base-uncased')
+            record = store.load_model_metadata('bert-base-uncased')
         self.assertIsNotNone(record)
         self.assertEqual(record.model_name, 'bert-base-uncased')
         self.assertEqual(record.huggingface_id, 'bert-base-uncased')
@@ -403,7 +403,7 @@ class TestImportModelConflicts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.import_models(seed_path)
             # new-model must not have been written
-            result = store.get_model_metadata('new-model')
+            result = store.load_model_metadata('new-model')
         self.assertIsNone(result)
 
     def test_import_conflict_error_mentions_conflicting_name(self):

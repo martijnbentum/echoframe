@@ -69,7 +69,7 @@ class Store:
         '''
         return self.registry.register_models_from_file(path)
 
-    def get_model_metadata(self, model_name):
+    def load_model_metadata(self, model_name):
         '''Look up a model_metadata record by model name.
         Returns a ModelMetadata object, or None.
         '''
@@ -90,7 +90,7 @@ class Store:
         return pack_echoframe_key(output_type, record.model_id,
             phraser_key=phraser_key, layer=layer, collar=collar)
 
-    def put(self, echoframe_key, metadata_obj, data):
+    def save(self, echoframe_key, metadata_obj, data):
         '''Store one output payload.
         echoframe_key:  canonical echoframe identifier
         metadata_obj:   metadata record for this payload
@@ -107,9 +107,9 @@ class Store:
         indexed = self.index.upsert(stored)
         return self._bind_metadata(indexed)
 
-    def put_many(self, items):
+    def save_many(self, items):
         '''Store multiple output payloads.
-        items:    iterable of put-like keyword mappings
+        items:    iterable of save-like keyword mappings
         '''
         prepared = []
         for item in items:
@@ -133,9 +133,9 @@ class Store:
         phraser_key:       unique phraser object key
         include_deleted:   include tombstoned entries
         '''
-        records = self.index.find_phraser(phraser_key=phraser_key,
+        metadatas = self.index.find_phraser(phraser_key=phraser_key,
             include_deleted=include_deleted)
-        return self._bind_metadatas(records)
+        return self._bind_metadatas(metadatas)
 
     def load_metadata(self, echoframe_key):
         '''Load one metadata record by echoframe key.'''
@@ -192,11 +192,11 @@ class Store:
         echoframe_keys:  iterable of canonical metadata identifiers
         strict:          raise when any key does not match
         '''
-        metadata_list = self.get_many_metadata(echoframe_keys)
+        metadata_list = self.load_many_metadata(echoframe_keys)
         payloads = self.metadatas_to_payloads(metadata_list, strict=strict)
         return payloads
 
-    def get_many_metadata(self, echoframe_keys):
+    def load_many_metadata(self, echoframe_keys):
         '''Load multiple metadata records by echoframe key.'''
         metadata_list = self.index.get_many(echoframe_keys)
         return self._bind_metadatas(metadata_list)
@@ -231,8 +231,8 @@ class Store:
         output_type:    output type to match
         match:          exact, min, max, or nearest
         '''
-        phraser_records = self.find_phraser(phraser_key)
-        matches = filter_metadata(phraser_records,
+        metadatas = self.find_phraser(phraser_key)
+        matches = filter_metadata(metadatas,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches:
@@ -252,8 +252,8 @@ class Store:
         output_type:    output type to match
         match:          exact, min, max, or nearest
         '''
-        phraser_records = self.find_phraser(phraser_key)
-        matches = filter_metadata(phraser_records,
+        metadatas = self.find_phraser(phraser_key)
+        matches = filter_metadata(metadatas,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches:
@@ -272,15 +272,15 @@ class Store:
         layer:          layer to match
         match:          exact, min, max, or nearest
         '''
-        phraser_records = self.find_phraser(phraser_key)
-        matches = filter_metadata(phraser_records,
+        metadatas = self.find_phraser(phraser_key)
+        matches = filter_metadata(metadatas,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches: return None
         for metadata_obj in matches:
             self.storage.delete(metadata_obj)
             self.index.delete(metadata_obj)
-        print(f'deleted {len(matches)} entries for phraser_key {phraser_key}')
+        print(f'deleted {len(matches)} metadata for phraser_key {phraser_key}')
 
     def store_summary(self):
         '''Return compact summary stats for this store.'''
@@ -300,9 +300,9 @@ class Store:
         tag:               grouping label
         include_deleted:   include tombstoned entries
         '''
-        records = self.index.find_by_tag(tag,
+        metadatas = self.index.find_by_tag(tag,
             include_deleted=include_deleted)
-        return self._bind_metadatas(records)
+        return self._bind_metadatas(metadatas)
 
     def find_by_tags(self, tags, match='all', include_deleted=False):
         '''List metadata records that match a tag set.
@@ -310,9 +310,9 @@ class Store:
         match:             require all or any tags
         include_deleted:   include tombstoned entries
         '''
-        records = self.index.find_by_tags(tags, match=match,
+        metadatas = self.index.find_by_tags(tags, match=match,
             include_deleted=include_deleted)
-        return self._bind_metadatas(records)
+        return self._bind_metadatas(metadatas)
 
     def find_by_label(self, label, model_name=None, output_type=None,
         layer=None, include_deleted=False, collar=None, match='exact'):
@@ -326,20 +326,20 @@ class Store:
         if not isinstance(label, str) or not label.strip():
             raise ValueError('label must be a non-empty string')
 
-        records = self.index.list_entries(include_deleted=include_deleted)
-        records = filter_metadata(records, model_name=model_name,
+        metadatas = self.index.list_entries(include_deleted=include_deleted)
+        metadatas = filter_metadata(metadatas, model_name=model_name,
             output_type=output_type, layer=layer, collar=collar, match=match)
-        if len(records) == 0: return None
+        if len(metadatas) == 0: return None
         phraser_models= _load_phraser_models_module()
             
         labels_by_key = {}
         matches = []
-        for record in records:
-            phraser_key = record.phraser_key
+        for metadata_obj in metadatas:
+            phraser_key = metadata_obj.phraser_key
             if phraser_key not in labels_by_key:
-                labels_by_key[phraser_key] = record.label
+                labels_by_key[phraser_key] = metadata_obj.label
             if labels_by_key[phraser_key] == label:
-                matches.append(record)
+                matches.append(metadata_obj)
         return self._bind_metadatas(matches)
 
     def list_tags(self, include_deleted=False):
@@ -394,12 +394,12 @@ class Store:
         '''List stored metadata records across all shards.
         include_deleted:   include tombstoned entries
         '''
-        entries = self.index.list_entries(include_deleted=include_deleted)
-        entries.sort(key=lambda metadata: (metadata.phraser_key,
+        metadatas = self.index.list_entries(include_deleted=include_deleted)
+        metadatas.sort(key=lambda metadata: (metadata.phraser_key,
             metadata.model_name, metadata.output_type, metadata.layer,
             metadata.collar))
-        bound_entries = self._bind_metadatas(entries)
-        return bound_entries
+        bound_metadatas = self._bind_metadatas(metadatas)
+        return bound_metadatas
 
     @property
     def metadata(self):
@@ -415,10 +415,10 @@ class Store:
         health_event_limit:   recent shard health events to include
         include_integrity:    run a full integrity scan
         '''
-        entries = self.list_entries(include_deleted=include_deleted)
+        metadatas = self.list_entries(include_deleted=include_deleted)
         data = {}
-        data['entry_count'] = len(entries)
-        data['entries'] = [metadata.to_dict() for metadata in entries]
+        data['metadata_count'] = len(metadatas)
+        data['metadatas'] = [metadata.to_dict() for metadata in metadatas]
         data['shard_count'] = len(self.index.list_shards())
         data['shards'] = self.shard_stats()
         data['tags'] = self.list_tags(include_deleted=include_deleted)
@@ -449,8 +449,8 @@ class Store:
         tags:                 optional grouping labels
         add_tags_on_hit:      add tags to an existing matching entry
         '''
-        phraser_records = self.find_phraser(phraser_key)
-        matches = filter_metadata(phraser_records,
+        metadatas = self.find_phraser(phraser_key)
+        matches = filter_metadata(metadatas,
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if matches:
@@ -461,15 +461,15 @@ class Store:
         data = compute()
         metadata_obj = self._make_metadata(phraser_key, collar, model_name,
             output_type, layer, tags=tags)
-        metadata_obj = self.put(metadata_obj.echoframe_key, metadata_obj, data)
+        metadata_obj = self.save(metadata_obj.echoframe_key, metadata_obj, data)
         return metadata_obj, True
 
     def evict_by_recency(self):
-        '''Soft-delete entries older than the recency window until under budget.
+        '''Soft-delete metadata older than the recency window until under budget.
 
         Reads ECHOFRAME_RECENCY_WINDOW_DAYS (default 30) and
         ECHOFRAME_STORAGE_BUDGET_GB (default no limit) from the environment.
-        Entries without accessed_at are skipped. Oldest entries are deleted
+        Metadata without accessed_at are skipped. Oldest metadata are deleted
         first until storage is within the budget.
         '''
         window_days_text = os.environ.get('ECHOFRAME_RECENCY_WINDOW_DAYS', 30)
@@ -482,9 +482,9 @@ class Store:
         if budget_bytes is not None and self._storage_bytes() <= budget_bytes: 
             return []
 
-        entries = self.list_entries()
+        metadatas = self.list_entries()
         stale = []
-        for metadata_obj in entries:
+        for metadata_obj in metadatas:
             if metadata_obj.accessed_at is None:
                 continue
             accessed = datetime.fromisoformat(metadata_obj.accessed_at)
@@ -527,8 +527,8 @@ class Store:
                     broken.append(broken_item)
         data = {}
         data['ok'] = not broken
-        data['checked_entries'] = checked
-        data['broken_references'] = broken
+        data['checked_metadata_count'] = checked
+        data['broken_metadata_references'] = broken
         return data
 
     def compact_shards(self, shard_ids=None, dry_run=False,
@@ -624,6 +624,6 @@ def _load_phraser_models_module():
     try:
         from phraser import models
     except ImportError as exc:
-        message = 'phraser is required to find entries by label'
+        message = 'phraser is required to find metadata by label'
         raise ImportError(message) from exc
     return models

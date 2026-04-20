@@ -7,6 +7,8 @@ from pathlib import Path
 
 import echoframe
 import numpy as np
+from .codebooks import TokenCodebooks
+from .embeddings import TokenEmbeddings
 from .metadata import metadata_class_for_output_type
 
 try:
@@ -48,30 +50,28 @@ def get_embeddings(segment, layers, collar=500, model_name='wav2vec2',
 
 def get_embeddings_batch(segments, layers, collar=500, model_name='wav2vec2',
     frame_aggregation=None, model=None, store=None,
-    store_root='echoframe', gpu=False, tags=None):
+    store_root='echoframe', gpu=False, tags=None, on_error='skip'):
     '''Return embeddings for multiple segment objects.'''
     segments = _require_segments(segments)
-    layers_list = _normalise_layers(layers)
+    _normalise_layers(layers)
     _validate_frame_aggregation(frame_aggregation)
     store = _resolve_store(store, store_root)
-    requests = []
+    _validate_on_error(on_error)
+    tokens = []
     for segment in segments:
-        phraser_key, audio_filename, col_start_ms, col_end_ms, \
-            orig_start_ms, orig_end_ms = _segment_context(segment, collar)
-        if _embeddings_missing(store, phraser_key, collar, model_name,
-            layers_list):
-            compute_model = _require_loaded_model(model, 'embeddings')
-            _compute_and_store_embeddings(audio_filename, col_start_ms,
-                col_end_ms, orig_start_ms, orig_end_ms, collar, layers_list,
-                model_name, compute_model, phraser_key, store, gpu, tags)
-        requests.append({
-            'phraser_key': phraser_key,
-            'collar': collar,
-            'model_name': model_name,
-            'layers': layers,
-            'frame_aggregation': frame_aggregation,
-        })
-    return store.load_many_embeddings(requests)
+        try:
+            token = get_embeddings(segment, layers, collar=collar,
+                model_name=model_name, frame_aggregation=frame_aggregation,
+                model=model, store=store, store_root=store_root, gpu=gpu,
+                tags=tags)
+        except Exception:
+            if on_error == 'raise':
+                raise
+            continue
+        tokens.append(token)
+    if not tokens:
+        raise ValueError('no embeddings succeeded for the requested segments')
+    return TokenEmbeddings(tokens=tokens, path=store.root).bind_store(store)
 
 
 def get_codebook_indices(segment, collar=500, model_name='wav2vec2',
@@ -91,26 +91,27 @@ def get_codebook_indices(segment, collar=500, model_name='wav2vec2',
 
 
 def get_codebook_indices_batch(segments, collar=500, model_name='wav2vec2',
-    model=None, store=None, store_root='echoframe', gpu=False, tags=None):
+    model=None, store=None, store_root='echoframe', gpu=False, tags=None,
+    on_error='skip'):
     '''Return codebook indices for multiple segment objects.'''
     segments = _require_segments(segments)
     store = _resolve_store(store, store_root)
-    requests = []
+    _validate_on_error(on_error)
+    tokens = []
     for segment in segments:
-        phraser_key, audio_filename, col_start_ms, col_end_ms, \
-            orig_start_ms, orig_end_ms = _segment_context(segment, collar)
-        if _codebook_artifacts_missing(store, phraser_key, collar,
-            model_name):
-            compute_model = _require_loaded_model(model, 'codebook indices')
-            _compute_and_store_codebook_indices(audio_filename, col_start_ms,
-                col_end_ms, orig_start_ms, orig_end_ms, collar, model_name,
-                compute_model, phraser_key, store, gpu, tags)
-        requests.append({
-            'phraser_key': phraser_key,
-            'collar': collar,
-            'model_name': model_name,
-        })
-    return store.load_many_codebooks(requests)
+        try:
+            token = get_codebook_indices(segment, collar=collar,
+                model_name=model_name, model=model, store=store,
+                store_root=store_root, gpu=gpu, tags=tags)
+        except Exception:
+            if on_error == 'raise':
+                raise
+            continue
+        tokens.append(token)
+    if not tokens:
+        raise ValueError('no codebook indices succeeded for the requested '
+            'segments')
+    return TokenCodebooks(tokens=tokens, path=store.root).bind_store(store)
 
 
 def segment_to_echoframe_key(segment):
@@ -150,6 +151,11 @@ def _validate_frame_aggregation(frame_aggregation):
         message = 'frame_aggregation must be one of '
         message += f'{_VALID_FRAME_AGGREGATIONS}, got {frame_aggregation!r}'
         raise ValueError(message)
+
+
+def _validate_on_error(on_error):
+    if on_error not in {'skip', 'raise'}:
+        raise ValueError("on_error must be 'skip' or 'raise'")
 
 
 def _segment_context(segment, collar):
@@ -261,7 +267,7 @@ def _compute_and_store_embeddings(audio_filename, col_start_ms,
         metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
             model_name=model_name, layer=layer, tags=tags,
             echoframe_key=echoframe_key)
-        store.put(metadata.echoframe_key, metadata, data)
+        store.save(metadata.echoframe_key, metadata, data)
 
 
 def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
@@ -296,7 +302,7 @@ def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
     )
     ci_metadata = ci_cls(phraser_key=phraser_key, collar=collar,
         model_name=model_name, layer=0, tags=tags, echoframe_key=ci_key)
-    store.put(ci_metadata.echoframe_key, ci_metadata, selected_indices)
+    store.save(ci_metadata.echoframe_key, ci_metadata, selected_indices)
     cm_cls = metadata_class_for_output_type('codebook_matrix')
     cm_key = store.make_echoframe_key(
         'codebook_matrix',
@@ -304,7 +310,7 @@ def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
     )
     cm_metadata = cm_cls(phraser_key=phraser_key, collar=collar,
         model_name=model_name, layer=0, tags=tags, echoframe_key=cm_key)
-    store.put(cm_metadata.echoframe_key, cm_metadata,
+    store.save(cm_metadata.echoframe_key, cm_metadata,
         np.asarray(artifacts.codebook_matrix))
 
 

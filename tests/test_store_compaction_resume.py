@@ -98,7 +98,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             self.assertEqual([_hex(item) for item in all_entries], [
                 _hex(deleted), _hex(live)])
             self.assertEqual([item['echoframe_key_hex']
-                for item in overview['entries']], [_hex(deleted), _hex(live)])
+                for item in overview['metadatas']], [_hex(deleted), _hex(live)])
 
     def test_list_entries_ignores_stale_shard_index_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

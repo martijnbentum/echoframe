@@ -93,9 +93,10 @@ class TestStoreEndToEnd(unittest.TestCase):
             store.storage.delete(metadata)
             report = store.verify_integrity()
             self.assertFalse(report['ok'])
-            self.assertEqual(report['checked_entries'], 1)
-            self.assertEqual(len(report['broken_references']), 1)
-            self.assertEqual(report['broken_references'][0]['echoframe_key_hex'],
+            self.assertEqual(report['checked_metadata_count'], 1)
+            self.assertEqual(len(report['broken_metadata_references']), 1)
+            self.assertEqual(
+                report['broken_metadata_references'][0]['echoframe_key_hex'],
                 _hex(metadata))
 
     def test_real_find_many_and_tag_queries(self) -> None:

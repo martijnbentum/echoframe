@@ -174,7 +174,7 @@ def hex_key(metadata) -> str:
 
 
 def ensure_model(store: Store, model_name: str) -> None:
-    if store.get_model_metadata(model_name) is None:
+    if store.load_model_metadata(model_name) is None:
         store.register_model(model_name)
 
 
@@ -216,7 +216,7 @@ def put(store: Store, *, phraser_key, collar, model_name, output_type,
     metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
         model_name=model_name, layer=layer, tags=tags,
         echoframe_key=echoframe_key)
-    return store.put(echoframe_key, metadata, data)
+    return store.save(echoframe_key, metadata, data)
 
 
 def put_item(store: Store, *, phraser_key, collar, model_name, output_type,
@@ -239,7 +239,7 @@ def put_many(store: Store, items):
             prepared.append(item)
             continue
         prepared.append(put_item(store, **item))
-    return store.put_many(prepared)
+    return store.save_many(prepared)
 
 
 def find(store: Store, phraser_key, include_deleted=False, **filters):
@@ -294,23 +294,46 @@ def load_many_queries(store: Store, queries, strict=False):
 
 def delete(store: Store, *, phraser_key, collar, model_name, output_type,
     layer, match='exact'):
-    return store.delete(phraser_key=pk(phraser_key), collar=collar,
+    store.delete_phraser_key(phraser_key=pk(phraser_key), collar=collar,
         model_name=model_name, output_type=output_type, layer=layer,
         match=match)
+    records = store.find_phraser(pk(phraser_key), include_deleted=True)
+    matches = filter_metadata(records, model_name=model_name,
+        output_type=output_type, layer=layer, collar=collar, match=match)
+    if not matches:
+        return None
+    return matches[0]
 
 
 def load_object_frames(store: Store, *, phraser_key, model_name, layer,
     collar=500, output_type='hidden_state', match='exact'):
-    return store.load_object_frames(phraser_key=pk(phraser_key),
-        model_name=model_name, layer=layer, collar=collar,
-        output_type=output_type, match=match)
+    if collar is None:
+        try:
+            payloads, metadata_list = store.phraser_key_to_outputs(
+                phraser_key=pk(phraser_key), model_name=model_name,
+                layer=layer, collar=collar, output_type=output_type,
+                match=match)
+        except ValueError:
+            return {}
+        return {metadata.collar: payload for metadata, payload in zip(
+            metadata_list, payloads)}
+    payload, metadata = store.phraser_key_to_output(
+        phraser_key=pk(phraser_key), model_name=model_name, layer=layer,
+        collar=collar, output_type=output_type, match=match)
+    return payload
 
 
 def iter_object_frames(store: Store, *, phraser_key, model_name, layer,
     collar=None, output_type='hidden_state', match='exact'):
-    return store.iter_object_frames(phraser_key=pk(phraser_key),
-        model_name=model_name, layer=layer, collar=collar,
-        output_type=output_type, match=match)
+    try:
+        payloads, metadata_list = store.phraser_key_to_outputs(
+            phraser_key=pk(phraser_key), model_name=model_name, layer=layer,
+            collar=collar, output_type=output_type, match=match)
+    except ValueError:
+        if collar is None:
+            return iter(())
+        raise
+    return zip(metadata_list, payloads)
 
 
 def find_or_compute(store: Store, *, phraser_key, collar, model_name,

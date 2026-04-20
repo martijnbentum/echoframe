@@ -201,7 +201,8 @@ class TestEvictByRecency(unittest.TestCase):
                 model_name='m1', output_type='hidden_state', layer=0)
             store.index.upsert(live.with_accessed_at(_days_ago(60)))
             store.index.upsert(deleted.with_accessed_at(_days_ago(60)))
-            store.delete(_pk('deleted'), 0, 'm1', 'hidden_state', 0)
+            store.delete_phraser_key(_pk('deleted'), 'm1', 'hidden_state', 0,
+                0)
 
             call_count = [0]
 
@@ -233,7 +234,8 @@ class TestEvictByRecency(unittest.TestCase):
             metadata = _find_one(store, phraser_key='deleted', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
             store.index.upsert(metadata.with_accessed_at(_days_ago(60)))
-            store.delete(_pk('deleted'), 0, 'm1', 'hidden_state', 0)
+            store.delete_phraser_key(_pk('deleted'), 'm1', 'hidden_state', 0,
+                0)
 
             with mock.patch.dict('os.environ',
                 {'ECHOFRAME_RECENCY_WINDOW_DAYS': '30',

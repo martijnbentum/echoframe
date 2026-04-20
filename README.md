@@ -48,7 +48,7 @@ record = store.register_model(
 )
 
 print(record.model_id)
-print(store.get_model_metadata('wav2vec2').huggingface_id)
+print(store.load_model_metadata('wav2vec2').huggingface_id)
 ```
 
 Import several model definitions from a JSON file:
@@ -101,7 +101,7 @@ metadata = metadata_cls(
     echoframe_key=echoframe_key,
 )
 
-stored = store.put(
+stored = store.save(
     echoframe_key,
     metadata,
     [[0.1, 0.2], [0.3, 0.4]],
@@ -196,7 +196,7 @@ tags = store.list_tags()
 Store and query in batches:
 
 ```python
-created = store.put_many([
+created = store.save_many([
     {
         'echoframe_key': echoframe_key,
         'metadata': metadata,
@@ -204,7 +204,7 @@ created = store.put_many([
     },
 ])
 
-metadatas = store.get_many_metadata([echoframe_key])
+metadatas = store.load_many_metadata([echoframe_key])
 payloads = store.load_many([echoframe_key], strict=False)
 ```
 

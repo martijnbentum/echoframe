@@ -294,14 +294,17 @@ def load_many_queries(store: Store, queries, strict=False):
 
 def delete(store: Store, *, phraser_key, collar, model_name, output_type,
     layer, match='exact'):
-    store.delete_phraser_key(phraser_key=pk(phraser_key), collar=collar,
-        model_name=model_name, output_type=output_type, layer=layer,
-        match=match)
+    metadata_obj = find_one(store, phraser_key=pk(phraser_key),
+        collar=collar, model_name=model_name, output_type=output_type,
+        layer=layer, match=match)
+    if metadata_obj is None:
+        return None
+    deleted = store.delete(metadata_obj.echoframe_key)
     records = store.find_phraser(pk(phraser_key), include_deleted=True)
     matches = filter_metadata(records, model_name=model_name,
         output_type=output_type, layer=layer, collar=collar, match=match)
     if not matches:
-        return None
+        return deleted
     return matches[0]
 
 

@@ -125,6 +125,31 @@ class TestStoreIo(unittest.TestCase):
             self.assertEqual(_hex(rows[0][0]), _hex(first))
             self.assertEqual(_hex(rows[1][0]), _hex(second))
 
+    def test_delete_and_delete_many_by_echoframe_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=3, data=[[1.0]])
+            second = _put(store, phraser_key='phrase-2', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=3, data=[[2.0]])
+
+            deleted = store.delete(first.echoframe_key)
+            deleted_many = store.delete_many([
+                second.echoframe_key,
+                b'missing-echoframe-key',
+            ])
+
+            self.assertEqual(deleted.storage_status, 'deleted')
+            self.assertEqual(deleted_many[0].storage_status, 'deleted')
+            self.assertIsNone(deleted_many[1])
+            self.assertEqual(store.find_phraser(first.phraser_key), [])
+            self.assertEqual(store.find_phraser(second.phraser_key), [])
+            self.assertEqual(
+                store.load_metadata(first.echoframe_key).storage_status,
+                'deleted')
+
     def test_collar_matching_and_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

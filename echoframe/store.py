@@ -151,6 +151,22 @@ class Store:
         self._touch_accessed_at(metadata_obj)
         return self.storage.load(metadata_obj)
 
+    def delete(self, echoframe_key):
+        '''Soft-delete one stored payload by echoframe key.'''
+        metadata_obj = self.load_metadata(echoframe_key)
+        if metadata_obj is None:
+            return None
+        self.storage.delete(metadata_obj)
+        deleted = self.index.delete(metadata_obj)
+        return self._bind_metadata(deleted)
+
+    def delete_many(self, echoframe_keys):
+        '''Soft-delete multiple stored payloads by echoframe key.'''
+        deleted = []
+        for echoframe_key in echoframe_keys:
+            deleted.append(self.delete(echoframe_key))
+        return deleted
+
     def metadata_to_payload(self, metadata_obj):
         '''Load one stored output payload from echoframe metadata.
         metadata:    metadata record that points to a stored payload
@@ -277,9 +293,8 @@ class Store:
             model_name=model_name, output_type=output_type, layer=layer,
             collar=collar, match=match)
         if not matches: return None
-        for metadata_obj in matches:
-            self.storage.delete(metadata_obj)
-            self.index.delete(metadata_obj)
+        echoframe_keys = [metadata_obj.echoframe_key for metadata_obj in matches]
+        self.delete_many(echoframe_keys)
         print(f'deleted {len(matches)} metadata for phraser_key {phraser_key}')
 
     def store_summary(self):

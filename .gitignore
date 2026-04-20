@@ -11,4 +11,9 @@ echoframe_logs/
 echoframe.egg-info/
 uv.lock
 docs/interview_workflow.md
+docs/NOTE_metadata_state_2026-04-15.md
+docs/NOTE_segment_features_batch_2026-04-19.md
+docs/PLAN_coding_style.md
+docs/plan_embeddings_update.txt
+docs/propose_agent_coding_check.md
 scripts/

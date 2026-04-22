@@ -1,8 +1,9 @@
-'''Tests for segment-based feature retrieval orchestration.'''
+'''Tests for the current single-segment feature helpers.'''
 
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tempfile
 import types
 import unittest
@@ -11,18 +12,20 @@ from unittest import mock
 import numpy as np
 
 from echoframe import Store
-from echoframe.codebooks import Codebook, TokenCodebooks
-from echoframe.embeddings import Embeddings, TokenEmbeddings
+from echoframe.codebooks import Codebook
+from echoframe.embeddings import Embeddings
 from echoframe.index import LmdbIndex
-from echoframe.metadata import metadata_class_for_output_type
+from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
+
+sys.modules.setdefault('frame', types.SimpleNamespace())
+sys.modules.setdefault('to_vector', types.SimpleNamespace())
+
 import echoframe.segment_features as segment_features
 from echoframe.segment_features import (
+    _segment_times,
     get_codebook_indices,
-    get_codebook_indices_batch,
     get_embeddings,
-    get_embeddings_batch,
-    segment_to_echoframe_key,
 )
 from tests.helpers import (
     ensure_model as _ensure_model,
@@ -43,86 +46,87 @@ def _make_store():
     return tmpdir, store
 
 
-def _put(store, *, phraser_key, collar, model_name, output_type, layer,
-    data, tags=None):
+def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
     phraser_key = _pk(phraser_key)
-    _ensure_model(store, model_name)
-    key_kwargs = {
-        'output_type': output_type,
-        'model_name': model_name,
-    }
-    if output_type in {'hidden_state', 'attention'}:
-        key_kwargs.update({
-            'phraser_key': phraser_key,
-            'layer': layer,
-            'collar': collar,
-        })
-    elif output_type == 'codebook_indices':
-        key_kwargs.update({
-            'phraser_key': phraser_key,
-            'collar': collar,
-        })
-    metadata_cls = metadata_class_for_output_type(output_type)
-    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=layer, tags=tags,
-        echoframe_key=store.make_echoframe_key(**key_kwargs))
-    return store.save(metadata.echoframe_key, metadata, data)
+    echoframe_key = store.make_echoframe_key('hidden_state',
+        model_name=model_name, phraser_key=phraser_key, layer=layer,
+        collar=collar)
+    metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=layer, echoframe_key=echoframe_key,
+        output_type='hidden_state')
+    store.save(metadata.echoframe_key, metadata, data)
 
 
-def _make_segment(start=1000, end=1300, key=None,
-    filename=None, duration=None):
+def _put_codebook_indices(store, phraser_key, collar, model_name, data):
+    phraser_key = _pk(phraser_key)
+    echoframe_key = store.make_echoframe_key('codebook_indices',
+        model_name=model_name, phraser_key=phraser_key, collar=collar)
+    metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, echoframe_key=echoframe_key,
+        output_type='codebook_indices')
+    store.save(metadata.echoframe_key, metadata, data)
+
+
+def _put_codebook_matrix(store, phraser_key, collar, model_name, data):
+    phraser_key = _pk(phraser_key)
+    echoframe_key = store.make_echoframe_key('codebook_matrix',
+        model_name=model_name)
+    metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, echoframe_key=echoframe_key,
+        output_type='codebook_matrix')
+    store.save(metadata.echoframe_key, metadata, np.asarray(data))
+
+
+def _make_segment(start_seconds=1.0, end_seconds=1.3, key=None,
+    filename=None, duration=2000):
     if key is None:
         key = _pk('aabb')
     if filename is None:
         filename = str(Path(__file__).resolve())
-    audio = types.SimpleNamespace(filename=filename)
-    if duration is not None:
-        audio.duration = duration
-    return types.SimpleNamespace(key=key, start=start, end=end, audio=audio)
+    audio = types.SimpleNamespace(filename=filename, duration=duration)
+    return types.SimpleNamespace(key=key, start_seconds=start_seconds,
+        end_seconds=end_seconds, audio=audio)
 
 
-def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
-    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
-        output_type='hidden_state', layer=layer, data=data)
+def _make_selected_frames(indices):
+    return [types.SimpleNamespace(index=index) for index in indices]
 
 
-def _put_codebook(store, phraser_key, collar, model_name, indices, matrix):
-    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
-        output_type='codebook_indices', layer=0, data=indices)
-    _put(store, phraser_key=phraser_key, collar=collar, model_name=model_name,
-        output_type='codebook_matrix', layer=0, data=matrix)
+class FakeFrames:
+    def __init__(self, n_frames=None, start_time=None, selected_indices=None):
+        self.n_frames = n_frames
+        self.start_time = start_time
+        self.selected_indices = [] if selected_indices is None else (
+            list(selected_indices))
+        self.select_frames = mock.Mock(
+            return_value=_make_selected_frames(self.selected_indices))
 
 
-def _patch_runtime_dependencies(outputs=None, indices=None, matrix=None,
-    frame_indices=None, batch_outputs=None):
-    fake_frames = types.SimpleNamespace(
-        select_frames=mock.Mock(return_value=[
-            types.SimpleNamespace(index=index) for index in frame_indices or []
-        ]),
-    )
-    fake_to_vector = types.SimpleNamespace(
-        filename_to_vector=mock.Mock(return_value=outputs),
-        filename_batch_to_vector=mock.Mock(return_value=batch_outputs or []),
-        filename_to_codebook_artifacts=mock.Mock(return_value=types.SimpleNamespace(
-            indices=indices, codebook_matrix=matrix,
-        )),
-    )
-    fake_frame = types.SimpleNamespace(
-        make_frames_from_outputs=mock.Mock(return_value=fake_frames),
-    )
-    return fake_to_vector, fake_frame, fake_frames
+class TestSegmentTimes(unittest.TestCase):
+    def test_negative_collar_raises(self):
+        segment = _make_segment()
 
+        with self.assertRaisesRegex(ValueError, 'collar must be non-negative'):
+            _segment_times(segment, -1)
 
-class SegmentFeatureTests(unittest.TestCase):
-    def test_segment_to_echoframe_key_handles_bytes_and_strings(self):
-        self.assertEqual(segment_to_echoframe_key(
-            types.SimpleNamespace(key=_pk('aabb'))), _pk('aabb'))
-        with self.assertRaises(TypeError):
-            segment_to_echoframe_key(types.SimpleNamespace(key='my-key'))
+    def test_end_must_exceed_start(self):
+        segment = _make_segment(start_seconds=1.0, end_seconds=1.0)
 
-    def test_segment_to_echoframe_key_missing_key_raises(self):
-        with self.assertRaises(ValueError):
-            segment_to_echoframe_key(types.SimpleNamespace())
+        with self.assertRaisesRegex(ValueError,
+            'segment end must be greater than start'):
+            _segment_times(segment, 500)
+
+    def test_duration_clips_collared_window(self):
+        segment = _make_segment(start_seconds=1.0, end_seconds=1.3,
+            duration=1500)
+
+        start, end, collared_start, collared_end = _segment_times(segment,
+            500)
+
+        self.assertEqual(start, 1.0)
+        self.assertEqual(end, 1.3)
+        self.assertEqual(collared_start, 0.5)
+        self.assertEqual(collared_end, 1.5)
 
 
 class TestGetEmbeddings(unittest.TestCase):
@@ -133,395 +137,170 @@ class TestGetEmbeddings(unittest.TestCase):
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
             segment = _make_segment()
 
-            result = get_embeddings(segment, layers=4, collar=500,
-                model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, Embeddings)
-            np.testing.assert_array_equal(result.to_numpy(), data)
-
-    def test_cache_miss_requires_loaded_model(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment = _make_segment(duration=2000)
-            outputs = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 2)),
-                np.ones((1, 5, 2)),
-            ])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                outputs=outputs,
-                frame_indices=[1, 2],
-            )
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                with self.assertRaises(ValueError):
-                    get_embeddings(segment, layers=1, collar=500,
-                        model_name='wav2vec2', store=store, model=None)
-
-                result = get_embeddings(segment, layers=1, collar=500,
-                    model_name='wav2vec2', store=store, model=object())
-
-            self.assertIsInstance(result, Embeddings)
-            self.assertEqual(fake_to_vector.filename_to_vector.call_count, 1)
-            fake_frame.make_frames_from_outputs.assert_called_once()
-            self.assertEqual(result.dims, ('frames', 'embed_dim'))
-            np.testing.assert_array_equal(result.to_numpy(),
-                np.ones((2, 2)))
-
-    def test_batch_returns_token_embeddings(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            data_1 = np.arange(6).reshape(2, 3).astype(float)
-            data_2 = np.arange(6, 12).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data_1)
-            _put_hidden_state(store, 'ccdd', 500, 'wav2vec2', 4, data_2)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            result = get_embeddings_batch(segments, layers=4, collar=500,
-                model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, TokenEmbeddings)
-            self.assertEqual(result.token_count, 2)
-            np.testing.assert_array_equal(result.tokens[0].to_numpy(), data_1)
-            np.testing.assert_array_equal(result.tokens[1].to_numpy(), data_2)
-
-    def test_batch_uses_batch_compute_for_missing_segments(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segments = [
-                _make_segment(key=_pk('aabb'), duration=2000),
-                _make_segment(key=_pk('ccdd'), duration=2000),
-            ]
-            outputs_1 = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 2)),
-                np.ones((1, 5, 2)),
-            ])
-            outputs_2 = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 2)),
-                np.full((1, 5, 2), 2.0),
-            ])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                batch_outputs=[outputs_1, outputs_2],
-                frame_indices=[1, 2],
-            )
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                result = get_embeddings_batch(segments, layers=1, collar=500,
-                    model_name='wav2vec2', store=store, model=object(),
-                    batch_minutes=3)
-
-            self.assertIsInstance(result, TokenEmbeddings)
-            self.assertEqual(result.token_count, 2)
-            fake_to_vector.filename_batch_to_vector.assert_called_once()
-            _, kwargs = fake_to_vector.filename_batch_to_vector.call_args
-            self.assertEqual(kwargs['batch_minutes'], 3)
-            self.assertEqual(kwargs['starts'], [0.5, 0.5])
-            self.assertEqual(kwargs['ends'], [1.8, 1.8])
-
-    def test_batch_filters_invalid_segments_and_warns(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            data = np.arange(6).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd'), start=1000, end=1020),
-                _make_segment(key=_pk('eeff'),
-                    filename=str(Path(tmpdir.name) / 'missing.wav')),
-            ]
-
-            with self.assertWarnsRegex(UserWarning,
-                'filtered 2 invalid segments'):
-                result = get_embeddings_batch(segments, layers=4, collar=500,
+            with mock.patch.object(segment_features.to_vector,
+                'filename_to_vector', create=True) as compute:
+                result = get_embeddings(segment, layers=[4], collar=500,
                     model_name='wav2vec2', store=store, model=None)
 
-            self.assertIsInstance(result, TokenEmbeddings)
-            self.assertEqual(result.token_count, 1)
-            np.testing.assert_array_equal(result.tokens[0].to_numpy(), data)
-            self.assertEqual(len(result._failed_metadatas), 2)
-            self.assertEqual(result._failed_metadatas[0]['reason'],
-                'segment shorter than 25 ms')
-            self.assertIn('audio file does not exist',
-                result._failed_metadatas[1]['reason'])
+            self.assertIsInstance(result, Embeddings)
+            np.testing.assert_array_equal(result.to_numpy(), data[None, ...])
+            compute.assert_not_called()
 
-    def test_batch_skips_cached_segments_in_compute_subset(self):
+    def test_cache_miss_requires_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            cached = np.arange(6).reshape(2, 3).astype(float)
-            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 1, cached)
-            segments = [
-                _make_segment(key=_pk('aabb'), duration=2000),
-                _make_segment(key=_pk('ccdd'), duration=2000),
-            ]
-            batch_output = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 3)),
-                np.full((1, 5, 3), 4.0),
-            ])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                batch_outputs=[batch_output],
-                frame_indices=[1, 2],
-            )
+            segment = _make_segment()
 
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                result = get_embeddings_batch(segments, layers=1, collar=500,
-                    model_name='wav2vec2', store=store, model=object())
-
-            self.assertEqual(result.token_count, 2)
-            np.testing.assert_array_equal(result.tokens[0].to_numpy(), cached)
-            np.testing.assert_array_equal(result.tokens[1].to_numpy(),
-                np.full((2, 3), 4.0))
-            _, kwargs = fake_to_vector.filename_batch_to_vector.call_args
-            self.assertEqual(len(kwargs['starts']), 1)
-            self.assertEqual(len(kwargs['ends']), 1)
-
-    def test_batch_post_preflight_compute_failure_raises(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segments = [
-                _make_segment(key=_pk('aabb'), duration=2000),
-                _make_segment(key=_pk('ccdd'), duration=2000),
-            ]
-            bad_outputs = types.SimpleNamespace(hidden_states=None)
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                batch_outputs=[bad_outputs, bad_outputs],
-                frame_indices=[1, 2],
-            )
-
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                with self.assertRaisesRegex(ValueError,
-                    'did not contain hidden_states'):
-                    get_embeddings_batch(segments, layers=1, collar=500,
-                        model_name='wav2vec2', store=store, model=object())
-
-    def test_batch_raises_when_no_valid_segments_remain(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segments = [
-                _make_segment(key=_pk('aabb'), start=1000, end=1010),
-                _make_segment(key=_pk('ccdd'),
-                    filename=str(Path(tmpdir.name) / 'missing.wav')),
-            ]
-
-            with self.assertRaisesRegex(ValueError,
-                'no valid segments remained'):
-                get_embeddings_batch(segments, layers=4, collar=500,
+            with self.assertRaisesRegex(ValueError, 'model must be provided'):
+                get_embeddings(segment, layers=[4], collar=500,
                     model_name='wav2vec2', store=store, model=None)
 
-    def test_duration_clips_collared_window(self):
+    def test_cache_miss_computes_and_stores_selected_frames(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            segment = _make_segment(start=1000, end=1300, duration=1500)
+            segment = _make_segment()
             outputs = types.SimpleNamespace(hidden_states=[
                 np.zeros((1, 5, 2)),
-                np.ones((1, 5, 2)),
+                np.arange(10).reshape(1, 5, 2),
+                np.arange(10, 20).reshape(1, 5, 2),
             ])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                outputs=outputs,
-                frame_indices=[1],
+            fake_frames = FakeFrames(selected_indices=[1, 3])
+            fake_frame = types.SimpleNamespace(
+                make_frames_from_outputs=mock.Mock(return_value=fake_frames),
             )
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                get_embeddings(segment, layers=1, collar=500,
-                    model_name='wav2vec2', store=store, model=object())
+            fake_to_vector = types.SimpleNamespace(
+                filename_to_vector=mock.Mock(return_value=outputs),
+            )
 
-            _, kwargs = fake_to_vector.filename_to_vector.call_args
-            self.assertEqual(kwargs['start'], 0.5)
-            self.assertEqual(kwargs['end'], 1.5)
+            with mock.patch.object(segment_features, 'frame', fake_frame), (
+                mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector)
+            ):
+                result = get_embeddings(segment, layers=[1, 2],
+                    model_name='wav2vec2', model=object(), collar=500,
+                    store=store, gpu=True, tags=['fresh'])
+
+            np.testing.assert_array_equal(result.to_numpy(), np.array([
+                [[2, 3], [6, 7]],
+                [[12, 13], [16, 17]],
+            ]))
+            fake_to_vector.filename_to_vector.assert_called_once_with(
+                segment.audio.filename,
+                start=0.5,
+                end=1.8,
+                model=mock.ANY,
+                gpu=True,
+                numpify_output=True,
+            )
+            fake_frame.make_frames_from_outputs.assert_called_once_with(
+                outputs,
+                start_time=0.5,
+            )
 
 
 class TestGetCodebookIndices(unittest.TestCase):
-    def test_cache_hit_works_without_model(self):
+    def test_cache_hit_returns_codebook_without_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            indices = np.array([[1, 0], [0, 1]])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
             segment = _make_segment()
+            indices = np.array([[1, 3], [0, 2]])
+            matrix = np.arange(24).reshape(6, 4)
+            _put_codebook_indices(store, 'aabb', 500, 'wav2vec2', indices)
+            _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2', matrix)
 
-            result = get_codebook_indices(segment, collar=500,
-                model_name='wav2vec2', store=store, model=None)
+            with mock.patch.object(segment_features.to_vector,
+                'filename_to_codebook_artifacts', create=True) as compute:
+                result = get_codebook_indices(segment, model_name='wav2vec2',
+                    model=None, collar=500, store=store)
 
             self.assertIsInstance(result, Codebook)
             np.testing.assert_array_equal(result.to_numpy(), indices)
+            result.bind_store(store)
+            np.testing.assert_array_equal(result.codebook_matrix, matrix)
+            compute.assert_not_called()
 
-    def test_cache_miss_requires_loaded_model(self):
+    def test_cache_miss_requires_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            segment = _make_segment(duration=2000)
-            outputs = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 2)),
-                np.ones((1, 5, 2)),
-            ])
-            indices = np.array([
-                [0, 1],
-                [1, 0],
-                [0, 1],
-                [1, 1],
-                [0, 1],
-            ])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                outputs=outputs,
-                indices=indices,
-                matrix=matrix,
-                frame_indices=[1, 2],
+            segment = _make_segment()
+
+            with self.assertRaisesRegex(ValueError, 'model must be provided'):
+                get_codebook_indices(segment, model_name='wav2vec2',
+                    model=None, collar=500, store=store)
+
+    def test_cache_miss_stores_indices_and_matrix(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment()
+            artifacts = types.SimpleNamespace(
+                indices=np.array([[2, 4], [5, 1], [3, 0], [4, 2]]),
+                codebook_matrix=np.arange(24).reshape(6, 4),
             )
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                with self.assertRaises(ValueError):
-                    get_codebook_indices(segment, collar=500,
-                        model_name='wav2vec2', store=store, model=None)
-
-                result = get_codebook_indices(segment, collar=500,
-                    model_name='wav2vec2', store=store, model=object())
-
-            self.assertIsInstance(result, Codebook)
-            self.assertEqual(fake_to_vector.filename_to_vector.call_count, 1)
-            fake_to_vector.filename_to_codebook_artifacts.assert_called_once()
-            np.testing.assert_array_equal(result.to_numpy(), np.array([
-                [1, 0],
-                [0, 1],
-            ]))
-
-    def test_batch_returns_token_codebooks(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            indices_1 = np.array([[0, 1]])
-            indices_2 = np.array([[1, 0]])
-            matrix_1 = np.array([[1.0, 2.0], [3.0, 4.0]])
-            matrix_2 = np.array([[5.0, 6.0], [7.0, 8.0]])
-            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices_1,
-                matrix_1)
-            _put_codebook(store, 'ccdd', 500, 'wav2vec2', indices_2,
-                matrix_2)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            result = get_codebook_indices_batch(segments, collar=500,
-                model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, TokenCodebooks)
-            self.assertEqual(result.token_count, 2)
-            np.testing.assert_array_equal(result.tokens[0].to_numpy(),
-                indices_1)
-            np.testing.assert_array_equal(result.tokens[1].to_numpy(),
-                indices_2)
-
-    def test_batch_reuses_single_item_codebook_function(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            indices = np.array([[0, 1]])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
-            segments = [_make_segment(key=_pk('aabb'))]
-
-            original = segment_features.get_codebook_indices
-            with mock.patch.object(segment_features, 'get_codebook_indices',
-                wraps=original) as patched:
-                result = get_codebook_indices_batch(segments, collar=500,
-                    model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, TokenCodebooks)
-            patched.assert_called_once()
-
-    def test_codebook_batch_skip_is_default_and_omits_failed_items(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            indices = np.array([[0, 1]])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            result = get_codebook_indices_batch(segments, collar=500,
-                model_name='wav2vec2', store=store, model=None)
-
-            self.assertIsInstance(result, TokenCodebooks)
-            self.assertEqual(result.token_count, 1)
-            self.assertEqual(result.echoframe_keys, (
-                store.make_echoframe_key(
-                    'codebook_indices',
-                    model_name='wav2vec2',
-                    phraser_key=_pk('aabb'),
-                    collar=500,
-                ),
-            ))
-            np.testing.assert_array_equal(result.tokens[0].to_numpy(), indices)
-
-    def test_codebook_batch_raise_propagates_first_failure(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            indices = np.array([[0, 1]])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            _put_codebook(store, 'aabb', 500, 'wav2vec2', indices, matrix)
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            with self.assertRaises(ValueError):
-                get_codebook_indices_batch(segments, collar=500,
-                    model_name='wav2vec2', store=store, model=None,
-                    on_error='raise')
-
-    def test_codebook_batch_skip_raises_when_all_items_fail(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segments = [
-                _make_segment(key=_pk('aabb')),
-                _make_segment(key=_pk('ccdd')),
-            ]
-
-            with self.assertRaisesRegex(ValueError,
-                'no codebook indices succeeded'):
-                get_codebook_indices_batch(segments, collar=500,
-                    model_name='wav2vec2', store=store, model=None)
-
-    def test_duration_clips_collared_window(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment = _make_segment(start=1000, end=1300, duration=1500)
-            outputs = types.SimpleNamespace(hidden_states=[
-                np.zeros((1, 5, 2)),
-                np.ones((1, 5, 2)),
-            ])
-            indices = np.array([
-                [0, 1],
-                [1, 0],
-                [0, 0],
-                [1, 1],
-                [0, 1],
-            ])
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            fake_to_vector, fake_frame, _ = _patch_runtime_dependencies(
-                outputs=outputs,
-                indices=indices,
-                matrix=matrix,
-                frame_indices=[1],
+            fake_frames = FakeFrames(selected_indices=[1, 2])
+            fake_frame = types.SimpleNamespace(
+                Frames=mock.Mock(return_value=fake_frames),
             )
-            with mock.patch.object(segment_features, 'to_vector',
-                fake_to_vector), mock.patch.object(segment_features, 'frame',
-                fake_frame):
-                get_codebook_indices(segment, collar=500,
-                    model_name='wav2vec2', store=store, model=object())
+            fake_to_vector = types.SimpleNamespace(
+                filename_to_codebook_artifacts=mock.Mock(
+                    return_value=artifacts),
+            )
 
-            _, kwargs = fake_to_vector.filename_to_vector.call_args
-            self.assertEqual(kwargs['start'], 0.5)
-            self.assertEqual(kwargs['end'], 1.5)
+            with mock.patch.object(segment_features, 'frame', fake_frame), (
+                mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector)
+            ):
+                result = get_codebook_indices(segment, model_name='wav2vec2',
+                    model=object(), collar=500, store=store, gpu=True,
+                    tags=['fresh'])
+
+            np.testing.assert_array_equal(result.to_numpy(),
+                np.array([[5, 1], [3, 0]]))
+            result.bind_store(store)
+            np.testing.assert_array_equal(result.codebook_matrix,
+                artifacts.codebook_matrix)
+            fake_to_vector.filename_to_codebook_artifacts.\
+                assert_called_once_with(
+                    segment.audio.filename,
+                    start=0.5,
+                    end=1.8,
+                    model=mock.ANY,
+                    gpu=True,
+                )
+            fake_frame.Frames.assert_called_once_with(4, start_time=0.5)
+
+    def test_cache_miss_does_not_overwrite_existing_matrix(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment()
+            existing_matrix = np.arange(24).reshape(6, 4)
+            new_matrix = np.arange(100, 124).reshape(6, 4)
+            _put_codebook_matrix(store, 'older', 250, 'wav2vec2',
+                existing_matrix)
+            artifacts = types.SimpleNamespace(
+                indices=np.array([[1, 2], [3, 4], [0, 5]]),
+                codebook_matrix=new_matrix,
+            )
+            fake_frames = FakeFrames(selected_indices=[0, 2])
+            fake_frame = types.SimpleNamespace(
+                Frames=mock.Mock(return_value=fake_frames),
+            )
+            fake_to_vector = types.SimpleNamespace(
+                filename_to_codebook_artifacts=mock.Mock(
+                    return_value=artifacts),
+            )
+
+            with mock.patch.object(segment_features, 'frame', fake_frame), (
+                mock.patch.object(segment_features, 'to_vector',
+                fake_to_vector)
+            ):
+                result = get_codebook_indices(segment, model_name='wav2vec2',
+                    model=object(), collar=500, store=store)
+
+            np.testing.assert_array_equal(result.to_numpy(),
+                np.array([[1, 2], [0, 5]]))
+            result.bind_store(store)
+            np.testing.assert_array_equal(result.codebook_matrix,
+                existing_matrix)
 
 
 if __name__ == '__main__':

@@ -1,398 +1,277 @@
 '''Segment-based feature retrieval orchestration for echoframe.'''
-
-from __future__ import annotations
-
-from numbers import Integral
 from pathlib import Path
 
 import echoframe
 import numpy as np
-from .codebooks import TokenCodebooks
-from .embeddings import TokenEmbeddings
-from .metadata import metadata_class_for_output_type
-from .segment_batch_validation import (
-    validate_segment_batch_contexts,
-    warn_for_failed_metadatas,
-)
-
-try:
-    import frame
-except ModuleNotFoundError:  # pragma: no cover - exercised via monkeypatching
-    frame = None
-
-try:
-    import to_vector
-except ModuleNotFoundError:  # pragma: no cover - exercised via monkeypatching
-    to_vector = None
-
+from .metadata import EchoframeMetadata 
+import frame
+import to_vector
 
 _VALID_FRAME_AGGREGATIONS = (None, 'mean', 'centroid')
 
-
-def get_embeddings(segment, layers, collar=500, model_name='wav2vec2',
-    frame_aggregation=None, model=None, store=None,
-    store_root='echoframe', gpu=False, tags=None):
-    '''Return embeddings for one segment object.'''
-    single_layer = isinstance(layers, Integral)
-    layers_list = _normalise_layers(layers)
+def get_embeddings(segment, layers, model_name, model=None, collar=500, 
+    frame_aggregation=None, store=None, store_root='echoframe',gpu=False, 
+    tags=None):
+    '''Return embeddings for one segment object.
+    segment:              phraser segment object with key, timing, and audio
+    layers:               layer index or iterable of layer indices
+    model_name:           registered model name for store storage
+    model:                loaded model used when cached embeddings are missing
+    collar:               context window in milliseconds
+    frame_aggregation:    optional frame reduction mode
+    store:                optional Store instance
+    store_root:           root used when creating a Store lazily
+    gpu:                  whether to run vectorization on GPU
+    tags:                 optional tags stored on newly written metadata
+    '''
     _validate_frame_aggregation(frame_aggregation)
-    store = _resolve_store(store, store_root)
-    phraser_key, audio_filename, col_start_ms, col_end_ms, orig_start_ms, \
-        orig_end_ms = _segment_context(segment, collar)
-
-    if _embeddings_missing(store, phraser_key, collar, model_name,
-        layers_list):
-        compute_model = _require_loaded_model(model, 'embeddings')
-        _compute_and_store_embeddings(audio_filename, col_start_ms,
-            col_end_ms, orig_start_ms, orig_end_ms, collar, layers_list,
-            model_name, compute_model, phraser_key, store, gpu, tags)
-
-    load_layers = layers if single_layer else layers_list
-    return store.load_embeddings(phraser_key, collar, model_name, load_layers,
+    layers_list = _normalise_layers(layers)
+    if store is None: store = echoframe.Store(store_root)
+    phraser_key = segment.key
+    if embeddings_missing(store, phraser_key, collar, model_name, layers_list):
+        if model is None: raise ValueError('model must be provided')
+        outputs = _compute_embeddings(segment, collar, model, gpu)
+        _store_embeddings_from_outputs(outputs, segment, collar, layers_list, 
+            model_name, store, tags)
+    return store.load_embeddings(phraser_key, collar, model_name, layers,
         frame_aggregation=frame_aggregation)
 
-
-def get_embeddings_batch(segments, layers, collar=500, model_name='wav2vec2',
-    frame_aggregation=None, model=None, store=None,
-    store_root='echoframe', gpu=False, tags=None, batch_minutes=None):
-    '''Return embeddings for multiple segment objects.'''
-    segments = _require_segments(segments)
-    single_layer = isinstance(layers, Integral)
-    layers_list = _normalise_layers(layers)
-    _validate_frame_aggregation(frame_aggregation)
-    store = _resolve_store(store, store_root)
-    contexts = [_build_segment_batch_context(segment, collar)
-        for segment in segments]
-    valid_contexts, failed_metadatas = validate_segment_batch_contexts(
-        contexts)
-    warn_for_failed_metadatas(failed_metadatas, item_label='segments')
-    if not valid_contexts:
-        raise ValueError('no valid segments remained after batch validation')
-
-    missing_contexts = []
-    for context in valid_contexts:
-        if _embeddings_missing(store, context['phraser_key'], collar,
-            model_name, layers_list):
-            missing_contexts.append(context)
-
-    if missing_contexts:
-        compute_model = _require_loaded_model(model, 'embeddings')
-        _compute_and_store_embeddings_batch(missing_contexts, collar,
-            layers_list, model_name, compute_model, store, gpu, tags,
-            batch_minutes=batch_minutes)
-
-    tokens = []
-    load_layers = layers if single_layer else layers_list
-    for context in valid_contexts:
-        token = store.load_embeddings(context['phraser_key'], collar,
-            model_name, load_layers, frame_aggregation=frame_aggregation)
-        tokens.append(token)
-    return TokenEmbeddings(tokens=tokens, path=store.root,
-        _failed_metadatas=tuple(failed_metadatas)).bind_store(store)
-
-
-def get_codebook_indices(segment, collar=500, model_name='wav2vec2',
-    model=None, store=None, store_root='echoframe', gpu=False, tags=None):
-    '''Return codebook indices for one segment object.'''
-    store = _resolve_store(store, store_root)
-    phraser_key, audio_filename, col_start_ms, col_end_ms, orig_start_ms, \
-        orig_end_ms = _segment_context(segment, collar)
-
-    if _codebook_artifacts_missing(store, phraser_key, collar, model_name):
-        compute_model = _require_loaded_model(model, 'codebook indices')
-        _compute_and_store_codebook_indices(audio_filename, col_start_ms,
-            col_end_ms, orig_start_ms, orig_end_ms, collar, model_name,
-            compute_model, phraser_key, store, gpu, tags)
-
-    return store.load_codebook(phraser_key, collar, model_name)
-
-
-def get_codebook_indices_batch(segments, collar=500, model_name='wav2vec2',
-    model=None, store=None, store_root='echoframe', gpu=False, tags=None,
-    on_error='skip'):
-    '''Return codebook indices for multiple segment objects.'''
-    segments = _require_segments(segments)
-    store = _resolve_store(store, store_root)
-    _validate_on_error(on_error)
-    tokens = []
-    for segment in segments:
-        try:
-            token = get_codebook_indices(segment, collar=collar,
-                model_name=model_name, model=model, store=store,
-                store_root=store_root, gpu=gpu, tags=tags)
-        except Exception:
-            if on_error == 'raise':
-                raise
-            continue
-        tokens.append(token)
-    if not tokens:
-        raise ValueError('no codebook indices succeeded for the requested '
-            'segments')
-    return TokenCodebooks(tokens=tokens, path=store.root).bind_store(store)
-
-
-def segment_to_echoframe_key(segment):
-    '''Return the raw binary segment key used by echoframe.'''
-    key = getattr(segment, 'key', None)
-    if key is None:
-        raise ValueError('segment must expose a key')
-    if isinstance(key, bytes):
-        return key
-    raise TypeError('segment.key must be bytes')
-
-
-def _resolve_store(store, store_root):
-    if store is not None:
-        return store
-    return echoframe.Store(store_root)
-
-
-def _require_segments(segments):
-    segments = list(segments)
-    if not segments:
-        raise ValueError('segments must contain at least one segment')
-    return segments
-
-
-def _normalise_layers(layers):
-    if isinstance(layers, Integral):
-        return [int(layers)]
-    layers = [int(layer) for layer in layers]
-    if not layers:
-        raise ValueError('layers must not be empty')
-    return layers
-
-
-def _validate_frame_aggregation(frame_aggregation):
-    if frame_aggregation not in _VALID_FRAME_AGGREGATIONS:
-        message = 'frame_aggregation must be one of '
-        message += f'{_VALID_FRAME_AGGREGATIONS}, got {frame_aggregation!r}'
-        raise ValueError(message)
-
-
-def _validate_on_error(on_error):
-    if on_error not in {'skip', 'raise'}:
-        raise ValueError("on_error must be 'skip' or 'raise'")
-
-
-def _build_segment_batch_context(segment, collar):
-    phraser_key, audio_filename, col_start_ms, col_end_ms, orig_start_ms, \
-        orig_end_ms = _segment_context(segment, collar)
-    return {
-        'segment': segment,
-        'phraser_key': phraser_key,
-        'audio_filename': audio_filename,
-        'col_start_ms': col_start_ms,
-        'col_end_ms': col_end_ms,
-        'orig_start_ms': orig_start_ms,
-        'orig_end_ms': orig_end_ms,
-    }
-
-
-def _segment_context(segment, collar):
-    phraser_key = segment_to_echoframe_key(segment)
-    audio = getattr(segment, 'audio', None)
-    if audio is None:
-        raise ValueError('segment must be linked to an audio object')
-    audio_filename = getattr(audio, 'filename', None)
-    if not audio_filename:
-        raise ValueError('segment.audio must expose a filename')
-    start_ms = getattr(segment, 'start', None)
-    end_ms = getattr(segment, 'end', None)
-    if start_ms is None or end_ms is None:
-        raise ValueError('segment must expose start and end in milliseconds')
-    collar = int(collar)
-    if collar < 0:
-        raise ValueError('collar must be non-negative')
-    orig_start_ms = int(start_ms)
-    orig_end_ms = int(end_ms)
-    if orig_end_ms <= orig_start_ms:
-        raise ValueError('segment end must be greater than start')
-    col_start_ms = max(0, orig_start_ms - collar)
-    col_end_ms = orig_end_ms + collar
-    duration = getattr(audio, 'duration', None)
-    if duration is not None:
-        col_end_ms = min(col_end_ms, int(duration))
-    if col_end_ms <= col_start_ms:
-        raise ValueError('resolved segment window is invalid')
-    return (
-        phraser_key,
-        str(Path(audio_filename).resolve()),
-        col_start_ms,
-        col_end_ms,
-        orig_start_ms,
-        orig_end_ms,
-    )
-
-
-def _embeddings_missing(store, phraser_key, collar, model_name, layers):
+def embeddings_missing(store, phraser_key, collar, model_name, layers):
+    '''Return whether any requested hidden-state layer is absent.'''
     for layer in layers:
-        echoframe_key = store.make_echoframe_key(
-            'hidden_state',
-            model_name=model_name,
-            phraser_key=phraser_key,
-            layer=layer,
-            collar=collar,
-        )
-        if store.load_metadata(echoframe_key) is None:
-            return True
+        echoframe_key = store.make_echoframe_key('hidden_state',
+            model_name=model_name, phraser_key=phraser_key, layer=layer,
+            collar=collar)
+        if store.load_metadata(echoframe_key) is None: return True
     return False
 
+def get_codebook_indices(segment, model_name, model=None,
+    collar=500, store=None, store_root='echoframe', gpu=False, tags=None):
+    '''Return codebook indices for one segment object.
+    segment:      phraser segment object with key, timing, and audio
+    model_name:   registered model name
+    model:        loaded model used when cached indices are missing
+    collar:       context window in milliseconds
+    store:        optional Store instance
+    store_root:   root used when creating a Store lazily
+    gpu:          whether to run codebook extraction on GPU
+    tags:         optional tags stored on newly written metadata
+    '''
+    if store is None: store = echoframe.Store(store_root)
+    phraser_key = segment.key
+    if codebook_indices_missing(store, phraser_key, collar, model_name):
+        if model is None: raise ValueError('model must be provided')
+        artifacts = _compute_codebook_indices(segment, collar, model, gpu)
+        _store_codebook_indices_from_artifacts(artifacts, segment, collar,
+            model_name, store, tags)
+        if codebook_matrix_missing(store, model_name):
+            _store_codebook_matrix(artifacts.codebook_matrix, phraser_key,
+                collar, model_name, store, tags)
+    return store.load_codebook(phraser_key, collar, model_name)
 
-def _codebook_artifacts_missing(store, phraser_key, collar, model_name):
-    indices_key = store.make_echoframe_key(
-        'codebook_indices',
-        model_name=model_name,
-        phraser_key=phraser_key,
-        collar=collar,
-    )
-    matrix_key = store.make_echoframe_key(
-        'codebook_matrix',
-        model_name=model_name,
-    )
-    return (store.load_metadata(indices_key) is None or
-        store.load_metadata(matrix_key) is None)
+def codebook_indices_missing(store, phraser_key, collar, model_name):
+    '''Return whether segment-level codebook indices are absent.'''
+    indices_key = store.make_echoframe_key('codebook_indices',
+        model_name=model_name, phraser_key=phraser_key, collar=collar)
+    return store.load_metadata(indices_key) is None
 
-
-def _compute_and_store_embeddings(audio_filename, col_start_ms,
-    col_end_ms, orig_start_ms, orig_end_ms, collar, layers, model_name,
-    compute_model, phraser_key, store, gpu, tags):
-    if frame is None:
-        raise ImportError('frame is required to compute embeddings')
-    if to_vector is None:
-        raise ImportError('to_vector is required to compute embeddings')
-    outputs = to_vector.filename_to_vector(audio_filename,
-        start=_ms_to_s(col_start_ms), end=_ms_to_s(col_end_ms),
-        model=compute_model, gpu=gpu, numpify_output=True)
-    _store_embeddings_from_outputs(outputs, col_start_ms, orig_start_ms,
-        orig_end_ms, collar, layers, model_name, phraser_key, store, tags)
-
-
-def _compute_and_store_embeddings_batch(contexts, collar, layers, model_name,
-    compute_model, store, gpu, tags, batch_minutes=None):
-    if frame is None:
-        raise ImportError('frame is required to compute embeddings')
-    if to_vector is None:
-        raise ImportError('to_vector is required to compute embeddings')
-    audio_filenames = [context['audio_filename'] for context in contexts]
-    starts = [_ms_to_s(context['col_start_ms']) for context in contexts]
-    ends = [_ms_to_s(context['col_end_ms']) for context in contexts]
-    outputs_list = to_vector.filename_batch_to_vector(audio_filenames,
-        starts=starts, ends=ends, model=compute_model, gpu=gpu,
-        numpify_output=True, batch_minutes=batch_minutes)
-    for context, outputs in zip(contexts, outputs_list):
-        _store_embeddings_from_outputs(outputs, context['col_start_ms'],
-            context['orig_start_ms'], context['orig_end_ms'], collar, layers,
-            model_name, context['phraser_key'], store, tags)
+def codebook_matrix_missing(store, model_name):
+    '''Return whether the model-level codebook matrix is absent.'''
+    matrix_key = store.make_echoframe_key('codebook_matrix',
+        model_name=model_name)
+    return store.load_metadata(matrix_key) is None
 
 
-def _store_embeddings_from_outputs(outputs, col_start_ms, orig_start_ms,
-    orig_end_ms, collar, layers, model_name, phraser_key, store, tags):
-    if frame is None:
-        raise ImportError('frame is required to compute embeddings')
-    if to_vector is None:
-        raise ImportError('to_vector is required to compute embeddings')
+def _compute_embeddings(segment, collar,  model, gpu):
+    '''Compute hidden states for one collared segment window.'''
+    _, _, collared_start, collared_end = _segment_times(segment, collar)
+    outputs = to_vector.filename_to_vector(segment.audio.filename,
+        start=collared_start, end=collared_end, model=model, gpu=gpu,
+        numpify_output=True)
+    return outputs
 
-    hidden_states = getattr(outputs, 'hidden_states', None)
-    if hidden_states is None:
-        raise ValueError('to-vector outputs did not contain hidden_states')
-
-    frames = frame.make_frames_from_outputs(outputs,
-        start_time=_ms_to_s(col_start_ms))
-    selected = frames.select_frames(_ms_to_s(orig_start_ms),
-        _ms_to_s(orig_end_ms), percentage_overlap=100)
-    if not selected:
-        message = 'no frames fully within '
-        message += f'[{orig_start_ms}, {orig_end_ms}] ms'
-        raise ValueError(message)
-
-    indices = [f.index for f in selected]
-
+def _store_embeddings_from_outputs(outputs, segment, collar, layers,
+    model_name, store, tags):
+    '''Select segment frames from model outputs and store layer specific elments 
+    in the store.'''
+    _validate_hidden_states(outputs, layers) 
+    indices = _get_selected_frame_indices(outputs, segment, collar, layers) 
+    phraser_key = segment.key
     for layer in layers:
-        if layer >= len(hidden_states):
-            message = f'layer {layer} out of range '
-            message += f'(model has {len(hidden_states)} layers)'
-            raise ValueError(message)
-        hs = hidden_states[layer]
+        hs = outputs.hidden_states[layer]
         data = hs[0, indices, :] if hs.ndim == 3 else hs[indices, :]
-        metadata_cls = metadata_class_for_output_type('hidden_state')
-        echoframe_key = store.make_echoframe_key(
-            'hidden_state',
-            model_name=model_name,
-            phraser_key=phraser_key,
-            layer=layer,
-            collar=collar,
-        )
-        metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
+        echoframe_key = store.make_echoframe_key('hidden_state',
+            model_name=model_name,phraser_key=phraser_key,layer=layer,
+            collar=collar)
+        metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
             model_name=model_name, layer=layer, tags=tags,
-            echoframe_key=echoframe_key)
+            echoframe_key=echoframe_key, output_type='hidden_state')
         store.save(metadata.echoframe_key, metadata, data)
 
+def _compute_codebook_indices(segment, collar, model, gpu):
+    '''Compute storage-oriented codebook artifacts for one segment window.'''
+    _, _, collared_start, collared_end = _segment_times(segment, collar)
+    artifacts = to_vector.filename_to_codebook_artifacts(segment.audio.filename,
+        start=collared_start, end=collared_end, model=model, gpu=gpu)
+    return artifacts
 
-def _compute_and_store_codebook_indices(audio_filename, col_start_ms,
-    col_end_ms, orig_start_ms, orig_end_ms, collar, model_name,
-    compute_model, phraser_key, store, gpu, tags):
-    if frame is None:
-        raise ImportError('frame is required to compute codebook indices')
-    if to_vector is None:
-        raise ImportError('to_vector is required to compute codebook indices')
-    outputs = to_vector.filename_to_vector(audio_filename,
-        start=_ms_to_s(col_start_ms), end=_ms_to_s(col_end_ms),
-        model=compute_model, gpu=gpu, numpify_output=True)
-    frames = frame.make_frames_from_outputs(outputs,
-        start_time=_ms_to_s(col_start_ms))
-    selected = frames.select_frames(_ms_to_s(orig_start_ms),
-        _ms_to_s(orig_end_ms), percentage_overlap=100)
-    if not selected:
-        message = 'no frames fully within '
-        message += f'[{orig_start_ms}, {orig_end_ms}] ms'
-        raise ValueError(message)
-    frame_indices = [item.index for item in selected]
-    artifacts = to_vector.filename_to_codebook_artifacts(
-        audio_filename, start=_ms_to_s(col_start_ms), end=_ms_to_s(col_end_ms),
-        model=compute_model, gpu=gpu)
-    selected_indices = np.asarray(artifacts.indices)[frame_indices]
-    ci_cls = metadata_class_for_output_type('codebook_indices')
-    ci_key = store.make_echoframe_key(
-        'codebook_indices',
-        model_name=model_name,
-        phraser_key=phraser_key,
-        collar=collar,
-    )
-    ci_metadata = ci_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=0, tags=tags, echoframe_key=ci_key)
+def _store_codebook_indices_from_artifacts(artifacts, segment, collar,
+    model_name, store, tags):
+    '''Persist selected codebook indices for one segment from artifacts.'''
+    _validate_codebook_artifacts(artifacts)
+    indices = _get_selected_codebook_frame_indices(artifacts, segment, collar)
+    selected_indices = np.asarray(artifacts.indices)[indices]
+    phraser_key = segment.key
+    ci_key = store.make_echoframe_key('codebook_indices',
+        model_name=model_name, phraser_key=phraser_key, collar=collar)
+    ci_metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, tags=tags, echoframe_key=ci_key,
+        output_type='codebook_indices')
     store.save(ci_metadata.echoframe_key, ci_metadata, selected_indices)
-    cm_cls = metadata_class_for_output_type('codebook_matrix')
-    cm_key = store.make_echoframe_key(
-        'codebook_matrix',
-        model_name=model_name,
-    )
-    cm_metadata = cm_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=0, tags=tags, echoframe_key=cm_key)
-    store.save(cm_metadata.echoframe_key, cm_metadata,
-        np.asarray(artifacts.codebook_matrix))
+
+def _store_codebook_matrix(codebook_matrix, phraser_key, collar,
+    model_name, store, tags):
+    '''Persist the shared codebook matrix for one model.'''
+    cm_key = store.make_echoframe_key('codebook_matrix', model_name=model_name)
+    codebook_matrix = np.asarray(codebook_matrix)
+    cm_metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
+        model_name=model_name, layer=0, tags=tags, echoframe_key=cm_key,
+        output_type='codebook_matrix')
+    store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
+
+def _segment_times(segment, collar):
+    '''Return original and collared segment bounds in seconds.'''
+    if collar < 0:
+        raise ValueError('collar must be non-negative')
+    collar = _ms_to_seconds(collar)
+    start_seconds = float(segment.start_seconds)
+    end_seconds = float(segment.end_seconds)
+    duration_seconds = float(_ms_to_seconds(segment.audio.duration))
+    if end_seconds <= start_seconds:
+        raise ValueError('segment end must be greater than start')
+    collared_start = max(0.0, start_seconds - collar)
+    collared_end = end_seconds + collar
+    collared_end = min(collared_end, float(duration_seconds))
+    return start_seconds, end_seconds, collared_start, collared_end
+
+def _ms_to_seconds(value):
+    '''Convert milliseconds to seconds as float.'''
+    return float(value) / 1000.0
+
+def _validate_frame_aggregation(frame_aggregation):
+    '''Reject unsupported frame aggregation modes early.'''
+    if frame_aggregation in _VALID_FRAME_AGGREGATIONS: return
+    raise ValueError( f'{frame_aggregation} not in {_VALID_FRAME_AGGREGATIONS}')
+
+def _normalise_layers(layers):
+    '''Normalize layer input to a validated list of non-negative ints.'''
+    if layers is None:
+        raise ValueError('layers must be int or a list of ints {layers}')
+    layers_list = [layers] if isinstance(layers, int) else list(layers)
+    if len(layers_list) == 0: 
+        raise ValueError('layers must be a non-empty list')
+    for layer in layers_list:
+        if not isinstance(layer, int):
+            raise ValueError(f'layer must be int {layer}, {layers_list}') 
+        if layer < 0:
+            raise ValueError(f'layer must be non-negative integers {layer}')
+    return layers_list
+
+def _validate_hidden_states(outputs, layers, batch=False):
+    '''Validate requested hidden-state layers before frame selection.'''
+    if not hasattr(outputs, 'hidden_states'):
+        m = 'to-vector outputs did not contain hidden_states attribute\n'
+        m += f'outputs type: {type(outputs)}\n'
+        m += f'outputs attributes: {dir(outputs)}'
+        raise ValueError(m)
+    hidden_states = outputs.hidden_states
+    if not isinstance(hidden_states, list):
+        m = 'to-vector outputs hidden_states is not a list, '
+        m += f'got {type(hidden_states)}'
+        raise ValueError(m)
+    for layer in layers:
+        if layer >= len(hidden_states):
+            m = f'layer {layer} out of range '
+            m += f'(model has {len(hidden_states)} layers)'
+            raise ValueError(m)
+        if not isinstance(hidden_states[layer], np.ndarray):
+            m = f'hidden state for layer {layer} is not a numpy array, '
+            m += f'got {type(hidden_states[layer])}'
+            raise ValueError(m)
+        shape = hidden_states[layer].shape
+        if  len(shape) not in (2, 3):
+            m = f'hidden state for layer {layer} has invalid shape '
+            m += f'{hidden_states[layer].shape}'
+            raise ValueError(m)
+        if len(shape) == 3 and shape[0] != 1 and batch is False:
+            m = f'batch size for hidden states {shape} is {shape[0]}, expected 1'
+            raise ValueError(m)
 
 
-def _ms_to_s(value):
-    return int(value) / 1000.0
+def _validate_codebook_artifacts(artifacts):
+    '''Validate artifact arrays needed for codebook storage.'''
+    if not hasattr(artifacts, 'indices'):
+        m = 'to-vector artifacts did not contain indices attribute\n'
+        m += f'artifacts type: {type(artifacts)}\n'
+        m += f'artifacts attributes: {dir(artifacts)}'
+        raise ValueError(m)
+    if not hasattr(artifacts, 'codebook_matrix'):
+        m = 'to-vector artifacts did not contain codebook_matrix attribute\n'
+        m += f'artifacts type: {type(artifacts)}\n'
+        m += f'artifacts attributes: {dir(artifacts)}'
+        raise ValueError(m)
+    if not isinstance(artifacts.indices, np.ndarray):
+        m = 'to-vector artifacts indices is not a numpy array, '
+        m += f'got {type(artifacts.indices)}'
+        raise ValueError(m)
+    if not isinstance(artifacts.codebook_matrix, np.ndarray):
+        m = 'to-vector artifacts codebook_matrix is not a numpy array, '
+        m += f'got {type(artifacts.codebook_matrix)}'
+        raise ValueError(m)
+    if len(artifacts.indices.shape) != 2:
+        m = 'to-vector artifacts indices has invalid shape '
+        m += f'{artifacts.indices.shape}'
+        raise ValueError(m)
+    if len(artifacts.codebook_matrix.shape) != 2:
+        m = 'to-vector artifacts codebook_matrix has invalid shape '
+        m += f'{artifacts.codebook_matrix.shape}'
+        raise ValueError(m)
 
 
-def _require_loaded_model(model, output_label):
-    if model is None:
-        raise ValueError(
-            f'model is required as a loaded model object when '
-            f'{output_label} must be computed')
-    if isinstance(model, (str, Path)):
-        raise TypeError(
-            'model must be a loaded model object; string and path values '
-            'are not accepted for compute paths')
-    return model
+def _get_selected_frame_indices(outputs, segment, collar, layers):
+    '''Return frame indices fully contained in the original segment span.'''
+    start, end, collared_start, _ = _segment_times(segment, collar)
+    frames = frame.make_frames_from_outputs(outputs, start_time=collared_start)
+    selected = frames.select_frames(start, end, percentage_overlap=100)
+    if not selected:
+        m= f'no frames fully within {start} - {end}s, {segment!r}'
+        m+= f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    hs = outputs.hidden_states[layers[0]]
+    indices = [f.index for f in selected]
+    frame_count = hs.shape[1] if hs.ndim == 3 else hs.shape[0]
+    if max(indices) >= frame_count:
+        m = f'frame index {max(indices)} out of range for layer {layers[0]} '
+        m += f'with {frame_count} frames'
+        m += f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    return indices
 
 
-__all__ = [
-    'get_embeddings',
-    'get_embeddings_batch',
-    'get_codebook_indices',
-    'get_codebook_indices_batch',
-    'segment_to_echoframe_key',
-]
+def _get_selected_codebook_frame_indices(artifacts, segment, collar):
+    '''Return selected frame indices using artifact frame count only.'''
+    start, end, collared_start, _ = _segment_times(segment, collar)
+    n_frames = artifacts.indices.shape[0]
+    frames = frame.Frames(n_frames, start_time=collared_start)
+    selected = frames.select_frames(start, end, percentage_overlap=100)
+    if not selected:
+        m = f'no frames fully within {start} - {end}s, {segment!r}'
+        m += f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    indices = [f.index for f in selected]
+    if max(indices) >= n_frames:
+        m = f'frame index {max(indices)} out of range for codebook indices '
+        m += f'with {n_frames} frames'
+        m += f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    return indices

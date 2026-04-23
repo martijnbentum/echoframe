@@ -9,14 +9,13 @@ import to_vector
 
 _VALID_FRAME_AGGREGATIONS = (None, 'mean', 'centroid')
 
-def get_embeddings(segment, layers, model_name, model=None, collar=500, 
-    frame_aggregation=None, store=None, store_root='echoframe',gpu=False, 
+def get_embeddings(segment, layers, model_name, collar=500,
+    frame_aggregation=None, store=None, store_root='echoframe', gpu=False,
     tags=None):
     '''Return embeddings for one segment object.
     segment:              phraser segment object with key, timing, and audio
     layers:               layer index or iterable of layer indices
     model_name:           registered model name for store storage
-    model:                loaded model used when cached embeddings are missing
     collar:               context window in milliseconds
     frame_aggregation:    optional frame reduction mode
     store:                optional Store instance
@@ -29,9 +28,9 @@ def get_embeddings(segment, layers, model_name, model=None, collar=500,
     if store is None: store = echoframe.Store(store_root)
     phraser_key = segment.key
     if embeddings_missing(store, phraser_key, collar, model_name, layers_list):
-        if model is None: raise ValueError('model must be provided')
+        model = store.load_model(model_name, gpu=gpu)
         outputs = _compute_embeddings(segment, collar, model, gpu)
-        _store_embeddings_from_outputs(outputs, segment, collar, layers_list, 
+        _store_embeddings_from_outputs(outputs, segment, collar, layers_list,
             model_name, store, tags)
     return store.load_embeddings(phraser_key, collar, model_name, layers,
         frame_aggregation=frame_aggregation)
@@ -45,12 +44,11 @@ def embeddings_missing(store, phraser_key, collar, model_name, layers):
         if store.load_metadata(echoframe_key) is None: return True
     return False
 
-def get_codebook_indices(segment, model_name, model=None,
+def get_codebook_indices(segment, model_name,
     collar=500, store=None, store_root='echoframe', gpu=False, tags=None):
     '''Return codebook indices for one segment object.
     segment:      phraser segment object with key, timing, and audio
     model_name:   registered model name
-    model:        loaded model used when cached indices are missing
     collar:       context window in milliseconds
     store:        optional Store instance
     store_root:   root used when creating a Store lazily
@@ -60,7 +58,7 @@ def get_codebook_indices(segment, model_name, model=None,
     if store is None: store = echoframe.Store(store_root)
     phraser_key = segment.key
     if codebook_indices_missing(store, phraser_key, collar, model_name):
-        if model is None: raise ValueError('model must be provided')
+        model = store.load_model(model_name, gpu=gpu)
         artifacts = _compute_codebook_indices(segment, collar, model, gpu)
         _store_codebook_indices_from_artifacts(artifacts, segment, collar,
             model_name, store, tags)

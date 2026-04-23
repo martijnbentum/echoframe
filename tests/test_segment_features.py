@@ -130,35 +130,29 @@ class TestSegmentTimes(unittest.TestCase):
 
 
 class TestGetEmbeddings(unittest.TestCase):
-    def test_cache_hit_works_without_model(self):
+    def test_cache_hit_works_without_loading_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 4, data)
             segment = _make_segment()
+            store.load_model = mock.Mock()
 
             with mock.patch.object(segment_features.to_vector,
                 'filename_to_vector', create=True) as compute:
                 result = get_embeddings(segment, layers=[4], collar=500,
-                    model_name='wav2vec2', store=store, model=None)
+                    model_name='wav2vec2', store=store)
 
             self.assertIsInstance(result, Embeddings)
             np.testing.assert_array_equal(result.to_numpy(), data[None, ...])
             compute.assert_not_called()
-
-    def test_cache_miss_requires_model(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment = _make_segment()
-
-            with self.assertRaisesRegex(ValueError, 'model must be provided'):
-                get_embeddings(segment, layers=[4], collar=500,
-                    model_name='wav2vec2', store=store, model=None)
+            store.load_model.assert_not_called()
 
     def test_cache_miss_computes_and_stores_selected_frames(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment()
+            model = object()
             outputs = types.SimpleNamespace(hidden_states=[
                 np.zeros((1, 5, 2)),
                 np.arange(10).reshape(1, 5, 2),
@@ -171,24 +165,26 @@ class TestGetEmbeddings(unittest.TestCase):
             fake_to_vector = types.SimpleNamespace(
                 filename_to_vector=mock.Mock(return_value=outputs),
             )
+            store.load_model = mock.Mock(return_value=model)
 
             with mock.patch.object(segment_features, 'frame', fake_frame), (
                 mock.patch.object(segment_features, 'to_vector',
                 fake_to_vector)
             ):
                 result = get_embeddings(segment, layers=[1, 2],
-                    model_name='wav2vec2', model=object(), collar=500,
-                    store=store, gpu=True, tags=['fresh'])
+                    model_name='wav2vec2', collar=500, store=store, gpu=True,
+                    tags=['fresh'])
 
             np.testing.assert_array_equal(result.to_numpy(), np.array([
                 [[2, 3], [6, 7]],
                 [[12, 13], [16, 17]],
             ]))
+            store.load_model.assert_called_once_with('wav2vec2', gpu=True)
             fake_to_vector.filename_to_vector.assert_called_once_with(
                 segment.audio.filename,
                 start=0.5,
                 end=1.8,
-                model=mock.ANY,
+                model=model,
                 gpu=True,
                 numpify_output=True,
             )
@@ -199,7 +195,7 @@ class TestGetEmbeddings(unittest.TestCase):
 
 
 class TestGetCodebookIndices(unittest.TestCase):
-    def test_cache_hit_returns_codebook_without_model(self):
+    def test_cache_hit_returns_codebook_without_loading_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment()
@@ -207,31 +203,25 @@ class TestGetCodebookIndices(unittest.TestCase):
             matrix = np.arange(24).reshape(6, 4)
             _put_codebook_indices(store, 'aabb', 500, 'wav2vec2', indices)
             _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2', matrix)
+            store.load_model = mock.Mock()
 
             with mock.patch.object(segment_features.to_vector,
                 'filename_to_codebook_artifacts', create=True) as compute:
                 result = get_codebook_indices(segment, model_name='wav2vec2',
-                    model=None, collar=500, store=store)
+                    collar=500, store=store)
 
             self.assertIsInstance(result, Codebook)
             np.testing.assert_array_equal(result.to_numpy(), indices)
             result.bind_store(store)
             np.testing.assert_array_equal(result.codebook_matrix, matrix)
             compute.assert_not_called()
-
-    def test_cache_miss_requires_model(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment = _make_segment()
-
-            with self.assertRaisesRegex(ValueError, 'model must be provided'):
-                get_codebook_indices(segment, model_name='wav2vec2',
-                    model=None, collar=500, store=store)
+            store.load_model.assert_not_called()
 
     def test_cache_miss_stores_indices_and_matrix(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment()
+            model = object()
             artifacts = types.SimpleNamespace(
                 indices=np.array([[2, 4], [5, 1], [3, 0], [4, 2]]),
                 codebook_matrix=np.arange(24).reshape(6, 4),
@@ -244,26 +234,27 @@ class TestGetCodebookIndices(unittest.TestCase):
                 filename_to_codebook_artifacts=mock.Mock(
                     return_value=artifacts),
             )
+            store.load_model = mock.Mock(return_value=model)
 
             with mock.patch.object(segment_features, 'frame', fake_frame), (
                 mock.patch.object(segment_features, 'to_vector',
                 fake_to_vector)
             ):
                 result = get_codebook_indices(segment, model_name='wav2vec2',
-                    model=object(), collar=500, store=store, gpu=True,
-                    tags=['fresh'])
+                    collar=500, store=store, gpu=True, tags=['fresh'])
 
             np.testing.assert_array_equal(result.to_numpy(),
                 np.array([[5, 1], [3, 0]]))
             result.bind_store(store)
             np.testing.assert_array_equal(result.codebook_matrix,
                 artifacts.codebook_matrix)
+            store.load_model.assert_called_once_with('wav2vec2', gpu=True)
             fake_to_vector.filename_to_codebook_artifacts.\
                 assert_called_once_with(
                     segment.audio.filename,
                     start=0.5,
                     end=1.8,
-                    model=mock.ANY,
+                    model=model,
                     gpu=True,
                 )
             fake_frame.Frames.assert_called_once_with(4, start_time=0.5)
@@ -272,6 +263,7 @@ class TestGetCodebookIndices(unittest.TestCase):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment()
+            model = object()
             existing_matrix = np.arange(24).reshape(6, 4)
             new_matrix = np.arange(100, 124).reshape(6, 4)
             _put_codebook_matrix(store, 'older', 250, 'wav2vec2',
@@ -288,19 +280,21 @@ class TestGetCodebookIndices(unittest.TestCase):
                 filename_to_codebook_artifacts=mock.Mock(
                     return_value=artifacts),
             )
+            store.load_model = mock.Mock(return_value=model)
 
             with mock.patch.object(segment_features, 'frame', fake_frame), (
                 mock.patch.object(segment_features, 'to_vector',
                 fake_to_vector)
             ):
                 result = get_codebook_indices(segment, model_name='wav2vec2',
-                    model=object(), collar=500, store=store)
+                    collar=500, store=store)
 
             np.testing.assert_array_equal(result.to_numpy(),
                 np.array([[1, 2], [0, 5]]))
             result.bind_store(store)
             np.testing.assert_array_equal(result.codebook_matrix,
                 existing_matrix)
+            store.load_model.assert_called_once_with('wav2vec2', gpu=False)
 
 
 if __name__ == '__main__':

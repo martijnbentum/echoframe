@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import compaction
+from . import model_loader
 from . import util_formatting
 from .index import LmdbIndex
 from .key_helper import pack_echoframe_key
@@ -37,6 +38,8 @@ class Store:
             storage = Hdf5ShardStore(shards_root, max_shard_size_bytes)
         self.storage = storage 
         self.registry = ModelRegistry(self.config_path)
+        self._model = None
+        self._model_name = None
 
     def __repr__(self):
         m = f'Store(root={str(self.root)})'
@@ -74,6 +77,37 @@ class Store:
         Returns a ModelMetadata object, or None.
         '''
         return self.registry.load_model_metadata(model_name)
+
+    def load_model(self, model_name, gpu=False, flush_model_cache=False):
+        '''Load one registered model and cache only one model.
+        model_name:   registered model name
+        gpu:          whether the returned model should be on GPU
+        '''
+        if flush_model_cache: self.remove_cached_model()
+        model_metadata = self.load_model_metadata(model_name)
+        if model_metadata is None:
+            raise ValueError(f'model_name is not registered: {model_name!r}')
+        if self._model_name == model_name and self._model is None:
+            return self.load_model(model_name, gpu=gpu, flush_model_cache=True)
+        if self._model_name != model_name: 
+            if self._model is not None: self.remove_cached_model()
+            model = model_loader.load_model(model_metadata, gpu=gpu)
+            self._model = model
+            self._model_name = model_name
+            return model
+        if gpu and not model_loader.model_is_on_gpu(self._model):
+            self._model = model_loader.move_model_to_gpu(self._model) 
+        if not gpu and model_loader.model_is_on_gpu(self._model):
+            self._model = model_loader.move_model_to_cpu(self._model)
+
+        return self._model
+
+    def remove_cached_model(self):
+        if self._model is not None:
+            if model_loader.model_is_on_gpu(self._model):
+                self._model = model_loader.move_model_to_cpu(self._model)
+        self._model = None
+        self._model_name = None
 
     def make_echoframe_key(self, output_type, *, model_name, phraser_key=None,
         layer=None, collar=None):

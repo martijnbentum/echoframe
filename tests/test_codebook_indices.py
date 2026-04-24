@@ -16,7 +16,6 @@ from echoframe import (
     TokenCodebooks,
 )
 from echoframe.index import LmdbIndex
-from echoframe.metadata import metadata_class_for_output_type
 from echoframe.output_storage import Hdf5ShardStore
 
 
@@ -153,69 +152,6 @@ class CountingStore:
     def load(self, echoframe_key):
         self.load_calls += 1
         return self.matrices[echoframe_key]
-
-
-class TestMetadataValidation(unittest.TestCase):
-    def test_codebook_outputs_require_layer_zero(self):
-        valid_indices = EchoframeMetadata(
-            phraser_key='phrase-1',
-            collar=0,
-            model_name='wav2vec2',
-            output_type='codebook_indices',
-            layer=0,
-        )
-        valid_matrix = EchoframeMetadata(
-            phraser_key='phrase-1',
-            collar=0,
-            model_name='wav2vec2',
-            output_type='codebook_matrix',
-            layer=0,
-        )
-
-        self.assertEqual(valid_indices.layer, 0)
-        self.assertEqual(valid_matrix.layer, 0)
-        with self.assertRaisesRegex(
-            ValueError, 'codebook output types require layer to be exactly 0'):
-            EchoframeMetadata(
-                phraser_key='phrase-1',
-                collar=0,
-                model_name='wav2vec2',
-                output_type='codebook_indices',
-                layer=1,
-            )
-
-
-class TestStoreCodebookMatrixRoundTrip(unittest.TestCase):
-    def _make_store(self):
-        tmpdir = tempfile.TemporaryDirectory()
-        index = LmdbIndex(Path(tmpdir.name) / 'index', env=FakeEnv(),
-            shards_root=Path(tmpdir.name) / 'shards')
-        storage = Hdf5ShardStore(Path(tmpdir.name) / 'shards',
-            h5_module=FakeH5Module())
-        store = Store(tmpdir.name, index=index, storage=storage)
-        return tmpdir, store
-
-    def test_put_and_load_codebook_matrix(self):
-        tmpdir, store = self._make_store()
-        with tmpdir:
-            matrix = np.array([[1.0, 2.0], [3.0, 4.0]])
-            store.register_model('wav2vec2')
-            echoframe_key = store.make_echoframe_key(
-                output_type='codebook_matrix',
-                model_name='wav2vec2',
-            )
-            metadata_cls = metadata_class_for_output_type('codebook_matrix')
-            metadata = metadata_cls(phraser_key='phrase-1', collar=0,
-                model_name='wav2vec2', layer=0,
-                echoframe_key=echoframe_key)
-            metadata = store.save(echoframe_key, metadata, matrix)
-
-            self.assertEqual(metadata.output_type, 'codebook_matrix')
-            self.assertEqual(metadata.layer, 0)
-            np.testing.assert_array_equal(
-                store.load(echoframe_key),
-                matrix,
-            )
 
 
 class TestCodebookLoading(unittest.TestCase):

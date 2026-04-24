@@ -33,10 +33,6 @@ def _days_ago(n):
     return ts.replace(microsecond=0).isoformat()
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
 class TestAccessedAt(unittest.TestCase):
     def test_load_updates_accessed_at(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -75,7 +71,7 @@ class TestEvictByRecency(unittest.TestCase):
             model_name='m1', output_type='hidden_state', layer=0)
         if accessed_at is not None:
             updated = metadata.with_accessed_at(accessed_at)
-            store.index.upsert(updated)
+            store.index.save(updated)
         return store
 
     def test_entries_within_window_are_skipped(self):
@@ -104,16 +100,13 @@ class TestEvictByRecency(unittest.TestCase):
                 model_name='m1', output_type='hidden_state', layer=0)
             m_older = _find_one(store, phraser_key='older', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
-            store.index.upsert(m_old.with_accessed_at(_days_ago(40)))
-            store.index.upsert(m_older.with_accessed_at(_days_ago(60)))
+            store.index.save(m_old.with_accessed_at(_days_ago(40)))
+            store.index.save(m_older.with_accessed_at(_days_ago(60)))
 
-            # Budget forces one eviction; oldest should go first
             call_count = [0]
-            real_storage_bytes = store._storage_bytes
 
             def fake_storage_bytes():
                 call_count[0] += 1
-                # First call: over budget; second: under budget
                 if call_count[0] <= 2:
                     return 2_000_000_000
                 return 0
@@ -125,7 +118,7 @@ class TestEvictByRecency(unittest.TestCase):
                     side_effect=fake_storage_bytes):
                     evicted = store.evict_by_recency()
 
-            self.assertEqual(len(evicted), 1)
+        self.assertEqual(len(evicted), 1)
         self.assertEqual(evicted[0].phraser_key, _pk('older'))
 
     def test_tied_access_times_follow_store_entry_order(self):
@@ -146,8 +139,8 @@ class TestEvictByRecency(unittest.TestCase):
                 model_name='m1', output_type='hidden_state', layer=0)
             second = _find_one(store, phraser_key='b-second', collar=0,
                 model_name='m1', output_type='hidden_state', layer=0)
-            store.index.upsert(first.with_accessed_at(tied_time))
-            store.index.upsert(second.with_accessed_at(tied_time))
+            store.index.save(first.with_accessed_at(tied_time))
+            store.index.save(second.with_accessed_at(tied_time))
 
             call_count = [0]
 
@@ -185,65 +178,6 @@ class TestEvictByRecency(unittest.TestCase):
                 with mock.patch.object(store, '_storage_bytes',
                     return_value=100):
                     evicted = store.evict_by_recency()
-            self.assertEqual(evicted, [])
-
-    def test_deleted_entries_are_not_re_evicted(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = make_fake_store(tmpdir)
-            _put(store, phraser_key='live', collar=0, model_name='m1',
-                output_type='hidden_state', layer=0, data=[1.0])
-            _put(store, phraser_key='deleted', collar=0, model_name='m1',
-                output_type='hidden_state', layer=0, data=[2.0])
-
-            live = _find_one(store, phraser_key='live', collar=0,
-                model_name='m1', output_type='hidden_state', layer=0)
-            deleted = _find_one(store, phraser_key='deleted', collar=0,
-                model_name='m1', output_type='hidden_state', layer=0)
-            store.index.upsert(live.with_accessed_at(_days_ago(60)))
-            store.index.upsert(deleted.with_accessed_at(_days_ago(60)))
-            deleted = _find_one(store, phraser_key='deleted', collar=0,
-                model_name='m1', output_type='hidden_state', layer=0)
-            store.delete(deleted.echoframe_key)
-
-            call_count = [0]
-
-            def fake_storage_bytes():
-                call_count[0] += 1
-                if call_count[0] <= 2:
-                    return 2_000_000_000
-                return 0
-
-            with mock.patch.dict('os.environ',
-                {'ECHOFRAME_RECENCY_WINDOW_DAYS': '30',
-                 'ECHOFRAME_STORAGE_BUDGET_GB': '1'}):
-                with mock.patch.object(store, '_storage_bytes',
-                    side_effect=fake_storage_bytes):
-                    evicted = store.evict_by_recency()
-
-            self.assertEqual([m.phraser_key for m in evicted], [_pk('live')])
-            deleted_entries = store.list_entries(include_deleted=True)
-            deleted_keys = [m.phraser_key for m in deleted_entries
-                if m.deleted_at is not None]
-            self.assertEqual(sorted(deleted_keys),
-                [_pk('deleted'), _pk('live')])
-
-    def test_only_deleted_entries_returns_no_evictions(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = make_fake_store(tmpdir)
-            _put(store, phraser_key='deleted', collar=0, model_name='m1',
-                output_type='hidden_state', layer=0, data=[2.0])
-            metadata = _find_one(store, phraser_key='deleted', collar=0,
-                model_name='m1', output_type='hidden_state', layer=0)
-            store.index.upsert(metadata.with_accessed_at(_days_ago(60)))
-            store.delete(metadata.echoframe_key)
-
-            with mock.patch.dict('os.environ',
-                {'ECHOFRAME_RECENCY_WINDOW_DAYS': '30',
-                 'ECHOFRAME_STORAGE_BUDGET_GB': '1'}):
-                with mock.patch.object(store, '_storage_bytes',
-                    return_value=2_000_000_000):
-                    evicted = store.evict_by_recency()
-
             self.assertEqual(evicted, [])
 
 

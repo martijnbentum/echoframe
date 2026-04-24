@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from echoframe.metadata import metadata_class_for_output_type
+import numpy as np
+
 from echoframe.model_registry import (
     ModelMetadata,
     check_model_name_conflict,
@@ -37,14 +38,14 @@ def _write_model_file(tmp_dir, data):
 def _put(store, phraser_key, collar, model_name, output_type, layer, data,
     tags=None):
     phraser_key = _pk(phraser_key)
-    metadata_cls = metadata_class_for_output_type(output_type)
     echoframe_key = store.make_echoframe_key(output_type,
         model_name=model_name, phraser_key=phraser_key, layer=layer,
         collar=collar)
-    metadata = metadata_cls(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=layer, tags=tags,
-        echoframe_key=echoframe_key)
+    from echoframe.metadata import EchoframeMetadata
+    metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
+        tags=tags)
     return store.save(echoframe_key, metadata, data)
+
 
 
 class TestRegisterModel(unittest.TestCase):
@@ -419,10 +420,7 @@ class TestImportModelConflicts(unittest.TestCase):
 
 
 class TestExistingStoreUnchanged(unittest.TestCase):
-    '''Verify that existing store behavior is unaffected by F2.'''
-
     def test_put_and_find_still_work(self):
-        import numpy as np
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_model('bert')
@@ -432,15 +430,15 @@ class TestExistingStoreUnchanged(unittest.TestCase):
         self.assertEqual(len(results), 1)
 
     def test_registry_does_not_affect_artifact_entries(self):
-        import numpy as np
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_model('bert')
             data = np.zeros((4, 8), dtype='float32')
             _put(store, 'pk_abc', 0, 'bert', 'hidden_state', 0, data)
-            entries = store.list_entries()
+            entries = store.metadatas
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].model_name, 'bert')
+
 
 
 class TestLoadModelSeedFile(unittest.TestCase):

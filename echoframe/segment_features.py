@@ -9,40 +9,44 @@ import to_vector
 
 _VALID_FRAME_AGGREGATIONS = (None, 'mean', 'centroid')
 
-def get_embeddings(segment, layers, model_name, collar=500,
-    frame_aggregation=None, store=None, store_root='echoframe', gpu=False,
-    tags=None):
-    '''Return embeddings for one segment object.
+def compute_embeddings(segment, layers, model_name, collar=500, store=None,
+    store_root='echoframe', gpu=False, tags=None):
+    '''Compute and store embeddings for one segment object.
     segment:              phraser segment object with key, timing, and audio
     layers:               layer index or iterable of layer indices
     model_name:           registered model name for store storage
     collar:               context window in milliseconds
-    frame_aggregation:    optional frame reduction mode
     store:                optional Store instance
     store_root:           root used when creating a Store lazily
     gpu:                  whether to run vectorization on GPU
     tags:                 optional tags stored on newly written metadata
     '''
-    _validate_frame_aggregation(frame_aggregation)
     layers_list = _normalise_layers(layers)
     if store is None: store = echoframe.Store(store_root)
     phraser_key = segment.key
-    if embeddings_missing(store, phraser_key, collar, model_name, layers_list):
+    found_layers, missing_layers = _find_embedding_layers(store, phraser_key,
+        collar, model_name, layers_list)
+    if found_layers:
+        print(f'embeddings found in store for layers {found_layers}')
+    if missing_layers:
         model = store.load_model(model_name, gpu=gpu)
         outputs = _compute_embeddings(segment, collar, model, gpu)
-        _store_embeddings_from_outputs(outputs, segment, collar, layers_list,
+        _store_embeddings_from_outputs(outputs, segment, collar, missing_layers,
             model_name, store, tags)
-    return store.load_embeddings(phraser_key, model_name, layers,
-        collar=collar, frame_aggregation=frame_aggregation)
+        print(f'embeddings computed for layers {missing_layers}')
 
-def embeddings_missing(store, phraser_key, collar, model_name, layers):
-    '''Return whether any requested hidden-state layer is absent.'''
+def _find_embedding_layers(store, phraser_key, collar, model_name, layers):
+    '''Return found and missing hidden-state layers for one phraser key.'''
+    found_layers = []
+    missing_layers = []
     for layer in layers:
         echoframe_key = store.make_echoframe_key('hidden_state',
             model_name=model_name, phraser_key=phraser_key, layer=layer,
             collar=collar)
-        if store.load_metadata(echoframe_key) is None: return True
-    return False
+        if store.load_metadata(echoframe_key) is None:
+            missing_layers.append(layer)
+        else: found_layers.append(layer)
+    return found_layers, missing_layers
 
 def get_codebook_indices(segment, model_name,
     collar=500, store=None, store_root='echoframe', gpu=False, tags=None):

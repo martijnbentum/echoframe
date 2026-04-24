@@ -13,7 +13,6 @@ import numpy as np
 
 from echoframe import Store
 from echoframe.codebooks import Codebook
-from echoframe.embeddings import Embeddings
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
@@ -24,8 +23,8 @@ sys.modules.setdefault('to_vector', types.SimpleNamespace())
 import echoframe.segment_features as segment_features
 from echoframe.segment_features import (
     _segment_times,
+    compute_embeddings,
     get_codebook_indices,
-    get_embeddings,
 )
 from tests.helpers import (
     ensure_model as _ensure_model,
@@ -123,7 +122,7 @@ class TestSegmentTimes(unittest.TestCase):
         self.assertEqual(collared_end, 1.5)
 
 
-class TestGetEmbeddings(unittest.TestCase):
+class TestComputeEmbeddings(unittest.TestCase):
     def test_cache_hit_works_without_loading_model(self):
         tmpdir, store = _make_store()
         with tmpdir:
@@ -133,12 +132,13 @@ class TestGetEmbeddings(unittest.TestCase):
             with mock.patch.object(store, 'load_model') as load_model:
                 with mock.patch.object(segment_features.to_vector,
                     'filename_to_vector', create=True) as filename_to_vector:
-                    result = get_embeddings(segment, 3, 'wav2vec2',
-                        store=store)
+                    with mock.patch('builtins.print') as print_mock:
+                        result = compute_embeddings(segment, 3, 'wav2vec2',
+                            store=store)
 
-            self.assertIsInstance(result, Embeddings)
-            np.testing.assert_array_equal(result.to_numpy(),
-                np.array([[1.0, 2.0], [3.0, 4.0]]))
+            self.assertIsNone(result)
+            print_mock.assert_called_once_with(
+                'embeddings found in store for layers [3]')
             load_model.assert_not_called()
             filename_to_vector.assert_not_called()
 
@@ -162,18 +162,66 @@ class TestGetEmbeddings(unittest.TestCase):
                     with mock.patch.object(segment_features.frame,
                         'make_frames_from_outputs', create=True,
                         return_value=FakeFrames(selected_indices=[1, 2])):
-                        result = get_embeddings(segment, 3, 'wav2vec2',
-                            store=store, tags=['exp-a'])
+                        with mock.patch('builtins.print') as print_mock:
+                            result = compute_embeddings(segment, 3,
+                                'wav2vec2', store=store, tags=['exp-a'])
 
             stored_key = store.make_echoframe_key('hidden_state',
                 model_name='wav2vec2', phraser_key=segment.key, layer=3,
                 collar=500)
             stored = store.load_metadata(stored_key)
+            embedding = store.load_embedding(segment.key, 'wav2vec2', 3,
+                collar=500)
 
-            self.assertIsInstance(result, Embeddings)
-            np.testing.assert_array_equal(result.to_numpy(),
+            self.assertIsNone(result)
+            print_mock.assert_called_once_with(
+                'embeddings computed for layers [3]')
+            np.testing.assert_array_equal(embedding.data,
                 np.array([[3.0, 4.0], [5.0, 6.0]]))
             self.assertEqual(stored.tags, ['exp-a'])
+            load_model.assert_called_once_with('wav2vec2', gpu=False)
+            filename_to_vector.assert_called_once()
+
+    def test_mixed_cache_reports_found_and_computed_layers(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 1,
+                np.array([[10.0, 11.0], [12.0, 13.0]]))
+            hidden_states = [np.zeros((1, 4, 2)) for _ in range(4)]
+            hidden_states[3] = np.array([[
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+                [7.0, 8.0],
+            ]])
+            outputs = types.SimpleNamespace(hidden_states=hidden_states)
+            with mock.patch.object(store, 'load_model',
+                return_value='model') as load_model:
+                with mock.patch.object(segment_features.to_vector,
+                    'filename_to_vector', create=True,
+                    return_value=outputs) as filename_to_vector:
+                    with mock.patch.object(segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        return_value=FakeFrames(selected_indices=[1, 2])):
+                        with mock.patch('builtins.print') as print_mock:
+                            result = compute_embeddings(segment, [1, 3],
+                                'wav2vec2', store=store, tags=['exp-a'])
+
+            cached = store.load_embedding(segment.key, 'wav2vec2', 1,
+                collar=500)
+            computed = store.load_embedding(segment.key, 'wav2vec2', 3,
+                collar=500)
+
+            self.assertIsNone(result)
+            self.assertEqual(print_mock.call_args_list, [
+                mock.call('embeddings found in store for layers [1]'),
+                mock.call('embeddings computed for layers [3]'),
+            ])
+            np.testing.assert_array_equal(cached.data,
+                np.array([[10.0, 11.0], [12.0, 13.0]]))
+            np.testing.assert_array_equal(computed.data,
+                np.array([[3.0, 4.0], [5.0, 6.0]]))
             load_model.assert_called_once_with('wav2vec2', gpu=False)
             filename_to_vector.assert_called_once()
 

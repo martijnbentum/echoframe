@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 
 from .metadata import utc_now
-from .metadata import EchoframeMetadata
 
 
 def sanitize_name(value):
@@ -51,20 +50,18 @@ class Hdf5ShardStore:
     def store_with_shard(self, metadata, data, shard_id):
         '''Store payload data in a specific shard.'''
         dataset_path = self._dataset_path(metadata)
-        dataset_name = metadata.format_echoframe_key()
+        dataset_name = metadata.echoframe_key.hex()
         file_path = self.root / f'{shard_id}.h5'
+        layer = _storage_layer(metadata)
 
         with self.h5.File(file_path, 'a') as handle:
-            group = handle.require_group(f'/layer_{metadata.layer:04d}')
+            group = handle.require_group(f'/layer_{layer:04d}')
             if dataset_name in group:
                 del group[dataset_name]
             dataset = group.create_dataset(dataset_name, data=data)
             shape = tuple(getattr(dataset, 'shape', ()) or ())
-            dtype = getattr(dataset, 'dtype', None)
-            if dtype is None: dtype = getattr(data, 'dtype', 'unknown')
-            dtype = str(dtype)
         return self._copy_metadata(metadata, shard_id=shard_id,
-            dataset_path=dataset_path, shape=shape, dtype=dtype)
+            dataset_path=dataset_path, shape=shape)
 
     def load(self, metadata):
         '''Load stored payload data.'''
@@ -111,8 +108,9 @@ class Hdf5ShardStore:
             with self.h5.File(new_file_path, 'a') as target:
                 for metadata in entries:
                     dataset = source[metadata.dataset_path][()]
-                    group = target.require_group(f'/layer_{metadata.layer:04d}')
-                    dataset_name = metadata.format_echoframe_key()
+                    layer = _storage_layer(metadata)
+                    group = target.require_group(f'/layer_{layer:04d}')
+                    dataset_name = metadata.echoframe_key.hex()
                     if dataset_name in group:
                         del group[dataset_name]
                     created = group.create_dataset(dataset_name,
@@ -120,8 +118,7 @@ class Hdf5ShardStore:
                     updated.append(self._copy_metadata(metadata,
                         shard_id=target_shard_id,
                         dataset_path=self._dataset_path(metadata),
-                        shape=tuple(getattr(created, 'shape', ()) or ()),
-                        dtype=str(getattr(created, 'dtype', 'unknown'))))
+                        shape=tuple(getattr(created, 'shape', ()) or ())))
 
         if delete_source:
             self._delete_file(shard_id)
@@ -170,12 +167,16 @@ class Hdf5ShardStore:
             index += 1
 
     def _dataset_path(self, metadata):
-        return f'/layer_{metadata.layer:04d}/{metadata.format_echoframe_key()}'
+        layer = _storage_layer(metadata)
+        return f'/layer_{layer:04d}/{metadata.echoframe_key.hex()}'
 
     def _copy_metadata(self, metadata, **updates):
-        data = metadata.to_dict()
-        data.update(updates)
-        return metadata.__class__.from_dict(data)
+        allowed = {'shard_id', 'dataset_path', 'shape'}
+        invalid = set(updates) - allowed
+        if invalid:
+            message = f'invalid metadata update fields: {sorted(invalid)}'
+            raise ValueError(message)
+        return metadata.copy(**updates)
 
     def _file_size(self, file_path):
         return file_path.stat().st_size
@@ -256,7 +257,7 @@ class Hdf5ShardStore:
                     if metadata.dataset_path not in handle:
                         report['ok'] = False
                         report['missing_echoframe_keys'].append(
-                            metadata.format_echoframe_key())
+                            metadata.echoframe_key.hex())
                         continue
                     if not read_data:
                         continue
@@ -265,7 +266,7 @@ class Hdf5ShardStore:
                     except Exception as exc:
                         report['ok'] = False
                         report['unreadable_echoframe_keys'].append({
-                            'echoframe_key_hex': metadata.format_echoframe_key(),
+                            'echoframe_key_hex': metadata.echoframe_key.hex(),
                             'dataset_path': metadata.dataset_path,
                             'error': str(exc),
                         })
@@ -367,3 +368,10 @@ class Hdf5ShardStore:
         except OSError:
             return False
         return True
+
+
+def _storage_layer(metadata):
+    layer = metadata.layer
+    if layer is None:
+        return 0
+    return layer

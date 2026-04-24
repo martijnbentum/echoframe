@@ -67,7 +67,7 @@ class EchoframeMetadata:
     def phraser_object(self):
         '''Load the linked phraser object when phraser is available.'''
         if hasattr(self, '_phraser_object'): return self._phraser_object
-        from phraser import phraser_models
+        from phraser import models as phraser_models
         try: self._phraser_object = phraser_models.cache.load(self.phraser_key)
         except Exception as e:
             print(f"Error loading phraser object: {self.phraser_key}: {e}")

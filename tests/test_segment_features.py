@@ -24,6 +24,7 @@ import echoframe.segment_features as segment_features
 from echoframe.segment_features import (
     _segment_times,
     compute_embeddings,
+    compute_embeddings_batch,
     get_codebook_indices,
 )
 from tests.helpers import (
@@ -181,6 +182,65 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(stored.tags, ['exp-a'])
             load_model.assert_called_once_with('wav2vec2', gpu=False)
             filename_to_vector.assert_called_once()
+
+    def test_batch_cache_miss_computes_and_stores_selected_frames(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            hidden_states_a = [np.zeros((1, 4, 2)) for _ in range(4)]
+            hidden_states_b = [np.zeros((1, 4, 2)) for _ in range(4)]
+            hidden_states_a[3] = np.array([[
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+                [7.0, 8.0],
+            ]])
+            hidden_states_b[3] = np.array([[
+                [10.0, 11.0],
+                [12.0, 13.0],
+                [14.0, 15.0],
+                [16.0, 17.0],
+            ]])
+            outputs = [
+                types.SimpleNamespace(hidden_states=hidden_states_a),
+                types.SimpleNamespace(hidden_states=hidden_states_b),
+            ]
+            frame_values = [
+                FakeFrames(selected_indices=[1, 2]),
+                FakeFrames(selected_indices=[0, 1]),
+            ]
+            with mock.patch.object(store, 'load_model',
+                return_value='model') as load_model:
+                with mock.patch.object(segment_features.to_vector,
+                    'filename_batch_to_vector', create=True,
+                    return_value=outputs) as filename_batch_to_vector:
+                    with mock.patch.object(segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        side_effect=frame_values):
+                        with mock.patch('builtins.print') as print_mock:
+                            result = compute_embeddings_batch(
+                                [segment_a, segment_b], 3, 'wav2vec2',
+                                store=store, tags=['exp-a'], batch_size=2)
+
+            embedding_a = store.load_embedding(segment_a.key, 'wav2vec2', 3,
+                collar=500)
+            embedding_b = store.load_embedding(segment_b.key, 'wav2vec2', 3,
+                collar=500)
+
+            self.assertIsNone(result)
+            print_mock.assert_called_once_with(
+                'embeddings computed for 2 segments')
+            np.testing.assert_array_equal(embedding_a.data,
+                np.array([[3.0, 4.0], [5.0, 6.0]]))
+            np.testing.assert_array_equal(embedding_b.data,
+                np.array([[10.0, 11.0], [12.0, 13.0]]))
+            load_model.assert_called_once_with('wav2vec2', gpu=False)
+            filename_batch_to_vector.assert_called_once_with(
+                [segment_a.audio.filename, segment_b.audio.filename],
+                starts=[0.5, 0.6], ends=[1.8, 1.9], model='model',
+                gpu=False, numpify_output=True, batch_size=2)
 
     def test_mixed_cache_reports_found_and_computed_layers(self):
         tmpdir, store = _make_store()

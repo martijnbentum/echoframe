@@ -35,6 +35,52 @@ def compute_embeddings(segment, layers, model_name, collar=500, store=None,
             model_name, store, tags)
         print(f'embeddings computed for layers {missing_layers}')
 
+def compute_embeddings_batch(segments, layers, model_name, collar=500, 
+    store=None, store_root='echoframe', gpu=False, tags=None,
+    batch_size=None):
+    '''Compute and store embeddings for multiple segment objects.
+    segments:             iterable of phraser segment objects
+    layers:               layer index or iterable of layer indices
+    model_name:           registered model name for store storage
+    collar:               context window in milliseconds
+    store:                optional Store instance
+    store_root:           root used when creating a Store lazily
+    gpu:                  whether to run vectorization on GPU
+    tags:                 optional tags stored on newly written metadata
+    batch_size:           optional item count per batch
+    '''
+    layers_list = _normalise_layers(layers)
+    if store is None: store = echoframe.Store(store_root)
+    missing = _find_missing_segments(segments, collar, model_name, store, 
+        layers_list)
+    if not missing: return
+    model = store.load_model(model_name, gpu=gpu)
+    audio_filenames = [segment.audio.filename for segment, _, _, _ in missing]
+    starts = [collared_start for _, _, collared_start, _ in missing]
+    ends = [collared_end for _, _, _, collared_end in missing]
+    outputs = to_vector.filename_batch_to_vector(audio_filenames,
+        starts=starts, ends=ends, model=model, gpu=gpu,
+        numpify_output=True, batch_size=batch_size)
+    for output, (segment, missing_layers, _, _) in zip(outputs, missing):
+        _store_embeddings_from_outputs(output, segment, collar, missing_layers,
+            model_name, store, tags)
+    print(f'embeddings computed for {len(missing)} segments')
+
+def _find_missing_segments(segments, collar, model_name, store, layers_list):
+    missing, found = [], []
+    for segment in segments:
+        phraser_key = segment.key
+        found_layers, missing_layers = _find_embedding_layers(store, 
+            phraser_key, collar, model_name, layers_list)
+        if found_layers: found.append(found_layers)
+        if missing_layers:
+            _, _, collared_start, collared_end = _segment_times(segment, collar)
+            missing.append((segment, missing_layers, collared_start,
+                collared_end))
+    if found: print(f'embeddings found in store for {len(found)} segments')
+    if not missing:print('embeddings found in store for all segments and layers')
+    return missing
+
 def _find_embedding_layers(store, phraser_key, collar, model_name, layers):
     '''Return found and missing hidden-state layers for one phraser key.'''
     found_layers = []

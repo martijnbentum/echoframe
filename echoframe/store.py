@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import compaction
+from .embeddings import Embedding, Embeddings
 from . import model_loader
 from . import util_formatting
 from .index import LmdbIndex
@@ -13,8 +14,7 @@ from .metadata import EchoframeMetadata, filter_metadata
 from .metadata import utc_now
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
-from .typed_loaders import load_codebook, load_embeddings
-from .typed_loaders import load_many_codebooks, load_many_embeddings
+from .typed_loaders import load_codebook, load_many_codebooks
 
 
 class Store:
@@ -230,22 +230,36 @@ class Store:
             payloads.append(payload)
         return payloads
 
-    def load_embeddings(self, phraser_key,  model_name, layers, collar = 500,
-        frame_aggregation=None):
-        '''Load one typed Embeddings object.
-        phraser_key:         unique phraser object key
-        collar:              collar in milliseconds
-        model_name:          registered model name
-        layers:              layer indexes to load
-        frame_aggregation:   optional frame aggregation mode
+    def load_embedding(self, phraser_key, model_name, layer, collar=500):
+        '''Load one typed Embedding object.
+        phraser_key:  unique phraser object key
+        model_name:   registered model name
+        layer:        layer index to load
+        collar:       collar in milliseconds
         '''
-        embeddings = load_embeddings(self, phraser_key, collar, model_name,
-            layers, frame_aggregation=frame_aggregation)
-        return embeddings
+        echoframe_key = self.make_echoframe_key('hidden_state',
+            model_name=model_name, phraser_key=phraser_key, layer=layer,
+            collar=collar)
+        embedding = Embedding(echoframe_key, self)
+        return embedding
 
-    def load_many_embeddings(self, requests):
-        '''Load many typed Embeddings objects.'''
-        return load_many_embeddings(self, requests)
+    def load_embeddings(self, phraser_keys, model_name, layer, collar=500):
+        '''Load typed Embeddings for multiple phraser keys.
+        phraser_keys:  unique phraser object keys
+        model_name:    registered model name
+        layer:         layer index to load
+        collar:        collar in milliseconds
+        '''
+        if not isinstance(phraser_keys, (list, tuple)):
+            raise ValueError('phraser_keys must be a list or tuple')
+        echoframe_keys = []
+        for phraser_key in phraser_keys:
+            echoframe_key = self.make_echoframe_key('hidden_state',
+                model_name=model_name, phraser_key=phraser_key, layer=layer,
+                collar=collar)
+            echoframe_keys.append(echoframe_key)
+        embeddings = Embeddings.from_echoframe_keys(self, echoframe_keys)
+        return embeddings
 
     def load_codebook(self, phraser_key, collar, model_name):
         '''Load one typed Codebook object.

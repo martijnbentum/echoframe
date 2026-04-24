@@ -252,7 +252,7 @@ class TestStoreIo(unittest.TestCase):
                         _pk('phrase-10'): types.SimpleNamespace(label='hello'),
                         _pk('phrase-11'): types.SimpleNamespace(label='world'),
                     }[key])))
-            fake_phraser = types.SimpleNamespace(phraser_models=phraser_models)
+            fake_phraser = types.SimpleNamespace(models=phraser_models)
             with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
                 records = store.find_by_label('hello')
                 filtered = store.find_by_label('hello',

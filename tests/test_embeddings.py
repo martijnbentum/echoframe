@@ -77,7 +77,8 @@ class TestEmbedding(unittest.TestCase):
             metadata_to_payload=lambda metadata: np.arange(4).astype(float),
         )
 
-        with self.assertRaisesRegex(ValueError, 'missing metadata'):
+        with self.assertRaisesRegex(ValueError,
+            "no metadata found for echoframe_key b'abc'"):
             Embedding(b'abc', store)
 
     def test_raises_if_data_missing(self):
@@ -87,7 +88,8 @@ class TestEmbedding(unittest.TestCase):
             metadata_to_payload=lambda md: None,
         )
 
-        with self.assertRaisesRegex(ValueError, 'missing embedding data'):
+        with self.assertRaisesRegex(ValueError,
+            "no embedding data found for echoframe_key b'abc'"):
             Embedding(b'abc', store)
 
     def test_raises_if_output_type_is_not_hidden_state(self):

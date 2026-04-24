@@ -32,6 +32,20 @@ from echoframe import Store
 store = Store('cache')
 ```
 
+For hidden-state retrieval, `Store` now exposes two typed loaders:
+
+- `store.load_embedding(phraser_key, model_name, layer, collar=500)`
+- `store.load_embeddings(phraser_keys, model_name, layer, collar=500)`
+
+`load_embedding(...)` returns one `Embedding` object. `load_embeddings(...)`
+returns an `Embeddings` collection for multiple `phraser_key` values at one
+layer.
+
+This is an intentional API shift from the earlier loader design. The old
+multi-layer `load_embeddings(...)`, `load_many_embeddings(...)`,
+`TokenEmbeddings`, and `frame_aggregation` loader arguments are no longer part
+of the current embedding retrieval API.
+
 ## Examples
 
 Open a store and register models:
@@ -162,6 +176,44 @@ for metadata, payload in store.iter_object_frames(
     print(metadata.collar, payload)
 ```
 
+Load one typed embedding:
+
+```python
+embedding = store.load_embedding(
+    phraser_key,
+    model_name='wav2vec2',
+    layer=7,
+    collar=150,
+)
+
+print(embedding.shape)
+print(embedding.layer)
+print(embedding.data)
+```
+
+Load typed embeddings for several objects at one layer:
+
+```python
+embeddings = store.load_embeddings(
+    [phraser_key_a, phraser_key_b],
+    model_name='wav2vec2',
+    layer=7,
+    collar=150,
+)
+
+print(embeddings.count)
+print(embeddings.phraser_keys)
+stacked = embeddings.to_numpy()
+```
+
+Current `Embeddings` behavior:
+
+- all items must share one `model_name`, `output_type`, and `layer`
+- duplicate `phraser_key` values are rejected
+- invalid keys are skipped with a printed message
+- `to_numpy()` only works when all payload shapes match exactly
+- variable-length frame payloads are not automatically aggregated
+
 List everything stored for one `phraser_key`:
 
 ```python
@@ -256,3 +308,7 @@ contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
 
 The design notes and suggested storage approach are in
 [docs/approach.md](docs/approach.md).
+
+The intentional embedding loader API change is documented in
+[docs/NOTE_embedding_loader_api_2026-04-24.md](
+docs/NOTE_embedding_loader_api_2026-04-24.md).

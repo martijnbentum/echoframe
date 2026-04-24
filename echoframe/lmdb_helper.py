@@ -8,7 +8,6 @@ from pathlib import Path
 DB_NAMES = {
     'entries_db': b'entries',
     'by_phraser_db': b'by_phraser',
-    'live_by_phraser_db': b'live_by_phraser',
     'by_shard_db': b'by_shard',
     'by_tag_db': b'by_tag',
     'shard_meta_db': b'shard_meta',
@@ -89,69 +88,53 @@ def encode_phraser_key(phraser_key):
     raise ValueError('phraser_key must be bytes or string')
 
 
-def get_metadata(env, entries_db, metadata_cls, echoframe_key):
+def load(env, entries_db, echoframe_key):
     with read_txn(env) as txn:
-        return get_metadata_in_txn(txn, entries_db, metadata_cls,
-            echoframe_key)
+        return load_in_txn(txn, entries_db, echoframe_key)
 
 
-def get_many_metadata(env, entries_db, metadata_cls, echoframe_keys):
+def load_many(env, entries_db, echoframe_keys):
     if not echoframe_keys:
         return []
     with read_txn(env) as txn:
-        return [get_metadata_in_txn(txn, entries_db, metadata_cls,
-            echoframe_key) for echoframe_key in echoframe_keys]
+        return [load_in_txn(txn, entries_db, echoframe_key)
+            for echoframe_key in echoframe_keys]
 
 
-def list_metadata(env, entries_db, metadata_cls, include_deleted=False):
+def load_all_keys(env, db):
+    keys = []
     with read_txn(env) as txn:
-        return list_metadata_in_txn(txn, entries_db, metadata_cls,
-            include_deleted=include_deleted)
+        cursor = txn.cursor(db=db)
+        if not cursor.set_range(b''):
+            return keys
+        for key, _ in cursor:
+            keys.append(bytes(key))
+    return keys
 
 
-def get_metadata_in_txn(txn, entries_db, metadata_cls, echoframe_key):
+def load_in_txn(txn, entries_db, echoframe_key):
     echoframe_key = _normalize_echoframe_key(echoframe_key)
-    payload = txn.get(echoframe_key, db=entries_db)
-    if payload is None:
-        return None
-    return metadata_cls.from_dict(json.loads(payload.decode('utf-8')))
+    return txn.get(echoframe_key, db=entries_db)
 
 
-def list_metadata_in_txn(txn, entries_db, metadata_cls,
-    include_deleted=False):
-    entries = []
-    cursor = txn.cursor(db=entries_db)
-    if not cursor.set_range(b''):
-        return entries
-    for _, value in cursor:
-        metadata = metadata_cls.from_dict(json.loads(value.decode('utf-8')))
-        if not include_deleted and metadata.storage_status != 'live':
-            continue
-        entries.append(metadata)
-    return entries
-
-
-def write_metadata(txn, db_handles, metadata, payload):
+def write_metadata(txn, db_handles, metadata):
+    value = metadata.to_dict()
+    value = json.dumps(value, sort_keys=True).encode('utf-8')
     echoframe_key = metadata.echoframe_key
     phraser_key = phraser_scan_key(metadata.phraser_key,
         metadata.echoframe_key)
-    txn.put(echoframe_key, payload, db=db_handles['entries_db'])
-    if metadata.phraser_key not in (None, ''):
+    txn.put(echoframe_key, value, db=db_handles['entries_db'])
+    if metadata.phraser_key:
         txn.put(phraser_key, echoframe_key, db=db_handles['by_phraser_db'])
-        if metadata.storage_status == 'live':
-            txn.put(phraser_key, echoframe_key,
-                db=db_handles['live_by_phraser_db'])
-        else:
-            txn.delete(phraser_key, db=db_handles['live_by_phraser_db'])
-    touched = set()
+    touched_shard_ids = set()
     if metadata.shard_id:
         txn.put(shard_key(metadata.shard_id, metadata.echoframe_key),
             echoframe_key, db=db_handles['by_shard_db'])
-        touched.add(metadata.shard_id)
+        touched_shard_ids.add(metadata.shard_id)
     for tag in metadata.tags:
         txn.put(tag_key(tag, metadata.echoframe_key), echoframe_key,
             db=db_handles['by_tag_db'])
-    return touched
+    return touched_shard_ids
 
 
 def delete_tag_keys(txn, by_tag_db, metadata):
@@ -173,7 +156,6 @@ def delete_phraser_keys(txn, db_handles, metadata):
         return
     key = phraser_scan_key(metadata.phraser_key, metadata.echoframe_key)
     txn.delete(key, db=db_handles['by_phraser_db'])
-    txn.delete(key, db=db_handles['live_by_phraser_db'])
 
 
 def shard_key(shard_id, echoframe_key):

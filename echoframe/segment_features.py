@@ -101,9 +101,7 @@ def _store_embeddings_from_outputs(outputs, segment, collar, layers,
         echoframe_key = store.make_echoframe_key('hidden_state',
             model_name=model_name,phraser_key=phraser_key,layer=layer,
             collar=collar)
-        metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, layer=layer, tags=tags,
-            echoframe_key=echoframe_key, output_type='hidden_state')
+        metadata = EchoframeMetadata(echoframe_key=echoframe_key, tags=tags)
         store.save(metadata.echoframe_key, metadata, data)
 
 def _compute_codebook_indices(segment, collar, model, gpu):
@@ -122,9 +120,7 @@ def _store_codebook_indices_from_artifacts(artifacts, segment, collar,
     phraser_key = segment.key
     ci_key = store.make_echoframe_key('codebook_indices',
         model_name=model_name, phraser_key=phraser_key, collar=collar)
-    ci_metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=0, tags=tags, echoframe_key=ci_key,
-        output_type='codebook_indices')
+    ci_metadata = EchoframeMetadata(echoframe_key=ci_key, tags=tags)
     store.save(ci_metadata.echoframe_key, ci_metadata, selected_indices)
 
 def _store_codebook_matrix(codebook_matrix, phraser_key, collar,
@@ -132,9 +128,7 @@ def _store_codebook_matrix(codebook_matrix, phraser_key, collar,
     '''Persist the shared codebook matrix for one model.'''
     cm_key = store.make_echoframe_key('codebook_matrix', model_name=model_name)
     codebook_matrix = np.asarray(codebook_matrix)
-    cm_metadata = EchoframeMetadata(phraser_key=phraser_key, collar=collar,
-        model_name=model_name, layer=0, tags=tags, echoframe_key=cm_key,
-        output_type='codebook_matrix')
+    cm_metadata = EchoframeMetadata(echoframe_key=cm_key, tags=tags)
     store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
 
 def _segment_times(segment, collar):

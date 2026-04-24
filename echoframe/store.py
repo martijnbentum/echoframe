@@ -10,7 +10,7 @@ from . import util_formatting
 from .index import LmdbIndex
 from .key_helper import pack_echoframe_key
 from .metadata import EchoframeMetadata, filter_metadata
-from .metadata import metadata_class_for_output_type, utc_now
+from .metadata import utc_now
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .typed_loaders import load_codebook, load_embeddings
@@ -124,22 +124,22 @@ class Store:
         return pack_echoframe_key(output_type, record.model_id,
             phraser_key=phraser_key, layer=layer, collar=collar)
 
-    def save(self, echoframe_key, metadata_obj, data):
+    def save(self, echoframe_key, metadata, data):
         '''Store one output payload.
         echoframe_key:  canonical echoframe identifier
-        metadata_obj:   metadata record for this payload
+        metadata:       metadata record for this payload
         data:           output payload to store
         '''
-        if not isinstance(metadata_obj, EchoframeMetadata):
+        if not isinstance(metadata, EchoframeMetadata):
             raise ValueError('metadata must be an EchoframeMetadata')
         if data is None:
             raise ValueError('data must not be None for this output type')
-        if bytes(echoframe_key) != metadata_obj.echoframe_key:
+        if bytes(echoframe_key) != metadata.echoframe_key:
             message = 'metadata.echoframe_key must match the first argument'
             raise ValueError(message)
-        stored = self.storage.store(metadata_obj, data=data)
-        indexed = self.index.upsert(stored)
-        return self._bind_metadata(indexed)
+        stored_metadata = self.storage.store(metadata, data=data)
+        self.index.save(stored_metadata)
+        return stored_metadata
 
     def save_many(self, items):
         '''Store multiple output payloads.
@@ -147,67 +147,90 @@ class Store:
         '''
         prepared = []
         for item in items:
-            metadata_obj = item['metadata']
+            metadata = item['metadata']
             echoframe_key = item['echoframe_key']
-            if not isinstance(metadata_obj, EchoframeMetadata):
+            if not isinstance(metadata, EchoframeMetadata):
                 raise ValueError('metadata must be an EchoframeMetadata')
-            if bytes(echoframe_key) != metadata_obj.echoframe_key:
+            if bytes(echoframe_key) != metadata.echoframe_key:
                 message = 'metadata.echoframe_key must match the item key'
                 raise ValueError(message)
             if item['data'] is None:
                 raise ValueError('data must not be None for this output type')
-            prepared_item = {'metadata': metadata_obj, 'data': item['data']}
+            prepared_item = {'metadata': metadata, 'data': item['data']}
             prepared.append(prepared_item)
-        stored = self.storage.store_many(prepared)
-        indexed = self.index.upsert_many(stored)
-        return self._bind_metadatas(indexed)
+        stored_metadatas = self.storage.store_many(prepared)
+        self.index.save_many(stored_metadatas)
+        return stored_metadatas
 
-    def find_phraser(self, phraser_key, include_deleted=False):
-        '''List metadata records for one phraser key.
-        phraser_key:       unique phraser object key
-        include_deleted:   include tombstoned entries
-        '''
-        metadatas = self.index.find_phraser(phraser_key=phraser_key,
-            include_deleted=include_deleted)
-        return self._bind_metadatas(metadatas)
-
-    def load_metadata(self, echoframe_key):
+    def load_metadata(self, echoframe_key) :
         '''Load one metadata record by echoframe key.'''
-        metadata_obj = self.index.get(echoframe_key)
-        return self._bind_metadata(metadata_obj)
+        metadata = self.index.load(echoframe_key, store=self)
+        return metadata
+
+    def load_many_metadata(self, echoframe_keys):
+        '''Load multiple metadata records by echoframe key.'''
+        metadata_list = self.index.load_many(echoframe_keys, store=self)
+        return metadata_list
 
     def load(self, echoframe_key):
         '''Load one stored payload by echoframe key.'''
-        metadata_obj = self.load_metadata(echoframe_key)
-        if metadata_obj is None:
-            message = 'no stored output matched the requested echoframe key'
-            raise ValueError(message)
-        self._touch_accessed_at(metadata_obj)
-        return self.storage.load(metadata_obj)
+        metadata = self.load_metadata(echoframe_key)
+        if metadata is None: return None
+        self._touch_accessed_at(metadata)
+        return self.storage.load(metadata)
+
+    def load_many(self, echoframe_keys):
+        '''Load multiple stored output payloads.
+        echoframe_keys:  iterable of canonical metadata identifiers
+
+        Missing keys are skipped. The returned payload list may be shorter
+        than echoframe_keys and should not be assumed to preserve one-to-one
+        positional alignment with the input.
+        '''
+        metadata_list = self.load_many_metadata(echoframe_keys)
+        if len(metadata_list) != len(echoframe_keys):
+            print('WARNING: some echoframe keys were not found in the index')
+        payloads = self.metadatas_to_payloads(metadata_list) 
+        return payloads
 
     def delete(self, echoframe_key):
-        '''Soft-delete one stored payload by echoframe key.'''
-        metadata_obj = self.load_metadata(echoframe_key)
-        if metadata_obj is None:
-            return None
-        self.storage.delete(metadata_obj)
-        deleted = self.index.delete(metadata_obj)
-        return self._bind_metadata(deleted)
+        '''delete one stored payload by echoframe key.'''
+        metadata = self.load_metadata(echoframe_key)
+        if metadata is None: return None
+        self._delete_payload(metadata)
+        self.index.delete(metadata)
+
+    def _delete_payload(self, metadata):
+        try:self.storage.delete(metadata)
+        except Exception as e: 
+            key = metadata.echoframe_key
+            print(f'failed to delete payload for {key}: {e}')
 
     def delete_many(self, echoframe_keys):
-        '''Soft-delete multiple stored payloads by echoframe key.'''
-        deleted = []
-        for echoframe_key in echoframe_keys:
-            deleted.append(self.delete(echoframe_key))
-        return deleted
+        '''delete multiple stored payloads by echoframe key.'''
+        metadata_list = self.load_many_metadata(echoframe_keys)
+        for metadata in metadata_list:
+            self._delete_payload(metadata)
+        self.index.delete_many(metadata_list)
 
-    def metadata_to_payload(self, metadata_obj):
+    def metadata_to_payload(self, metadata):
         '''Load one stored output payload from echoframe metadata.
         metadata:    metadata record that points to a stored payload
         '''
-        return self.storage.load(metadata_obj)
+        return self.storage.load(metadata)
 
-    def load_embeddings(self, phraser_key, collar, model_name, layers,
+    def metadatas_to_payloads(self, metadata_list):
+        '''Load payloads for multiple echoframe metadata records.
+        metadata_list:   iterable of metadata records or None values
+        '''
+        payloads = []
+        for index, metadata in enumerate(metadata_list):
+            self._touch_accessed_at(metadata)
+            payload = self.storage.load(metadata)
+            payloads.append(payload)
+        return payloads
+
+    def load_embeddings(self, phraser_key,  model_name, layers, collar = 500,
         frame_aggregation=None):
         '''Load one typed Embeddings object.
         phraser_key:         unique phraser object key
@@ -237,99 +260,24 @@ class Store:
         '''Load many typed Codebook objects.'''
         return load_many_codebooks(self, requests)
 
-    def load_many(self, echoframe_keys, strict=False):
-        '''Load multiple stored output payloads.
-        echoframe_keys:  iterable of canonical metadata identifiers
-        strict:          raise when any key does not match
-        '''
-        metadata_list = self.load_many_metadata(echoframe_keys)
-        payloads = self.metadatas_to_payloads(metadata_list, strict=strict)
-        return payloads
-
-    def load_many_metadata(self, echoframe_keys):
-        '''Load multiple metadata records by echoframe key.'''
-        metadata_list = self.index.get_many(echoframe_keys)
-        return self._bind_metadatas(metadata_list)
-
-    def metadatas_to_payloads(self, metadata_list, strict=False):
-        '''Load payloads for multiple echoframe metadata records.
-        metadata_list:   iterable of metadata records or None values
-        strict:          raise when any metadata item is None
-        '''
-        payloads = []
-        for index, metadata_obj in enumerate(metadata_list):
-            if metadata_obj is None and strict:
-                message = 'no stored output matched one of the requested '
-                message += 'echoframe key at index {index}, {echoframe_key}'
-                raise ValueError(message)
-            if metadata_obj is None: 
-                print(f'WARNING: no output for echoframe key at index {index}')
-                continue
-            self._touch_accessed_at(metadata_obj)
-            payload = self.storage.load(metadata_obj)
-            payloads.append(payload)
-
-        return payloads
-
-    def phraser_key_to_output(self, phraser_key, model_name, layer, collar=500,
-        output_type='hidden_state', match='exact'):
-        '''Load frame outputs for one object.
-        phraser_key:    unique phraser object key
-        model_name:     model identifier
-        layer:          layer to match
-        collar:         exact collar or None for all collars
-        output_type:    output type to match
-        match:          exact, min, max, or nearest
-        '''
-        metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas,
-            model_name=model_name, output_type=output_type, layer=layer,
-            collar=collar, match=match)
-        if not matches:
-            raise ValueError('no stored output matched the requested criteria')
-        if len(matches) > 1:
-            print(f'{len(matches)} stored outputs matched the criteria')
-            print(f'returning echoframe_key {matches[0].echoframe_key}')
-        return self.load(matches[0].echoframe_key), matches[0]
-
-    def phraser_key_to_outputs(self, phraser_key, model_name, layer = None,
-        collar=None, output_type='hidden_state', match='exact'):
-        '''Iterate lazily over frame outputs for one object.
-        phraser_key:    unique phraser object key
-        model_name:     model identifier
-        layer:          layer to match
-        collar:         exact collar, matched collar, or None for all
-        output_type:    output type to match
-        match:          exact, min, max, or nearest
-        '''
-        metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas,
-            model_name=model_name, output_type=output_type, layer=layer,
-            collar=collar, match=match)
-        if not matches:
-            raise ValueError('no stored output matched the requested criteria')
-        keys = [metadata_obj.echoframe_key for metadata_obj in matches]
-        outputs = self.load_many(keys)
-        return outputs, matches
-
     def delete_phraser_key(self, phraser_key, model_name, output_type,
-        layer = None, collar = None, match='exact'):
+        layer = None, collar = None, collar_match='exact'):
         '''Delete stored outputs linked to phraser_key that match the criteria.
         phraser_key:    unique phraser object key
         collar:         requested collar in milliseconds
         model_name:     model identifier
         output_type:    output type to match
         layer:          layer to match
-        match:          exact, min, max, or nearest
+        collar_match:   how to match collar time: exact, min, max, or nearest
         '''
         metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas,
-            model_name=model_name, output_type=output_type, layer=layer,
-            collar=collar, match=match)
-        if not matches: return None
-        echoframe_keys = [metadata_obj.echoframe_key for metadata_obj in matches]
+        matches = filter_metadata(metadatas,model_name=model_name,
+             output_type=output_type, layer=layer, collar=collar,
+             collar_match=collar_match)
+        if not matches: return 
+        echoframe_keys = [metadata.echoframe_key for metadata in matches]
         self.delete_many(echoframe_keys)
-        print(f'deleted {len(matches)} metadata for phraser_key {phraser_key}')
+        print(f'deleted {len(matches)} metadata and payloads key:{phraser_key}')
 
     def store_summary(self):
         '''Return compact summary stats for this store.'''
@@ -344,133 +292,120 @@ class Store:
         state = self.store_state()
         return util_formatting.format_store_state(state)
 
-    def find_by_tag(self, tag, include_deleted=False):
+    def find_phraser(self, phraser_key):
+        '''List metadata records for one phraser key.
+        phraser_key:       unique phraser object key
+        '''
+        metadatas = self.index.find_phraser(phraser_key=phraser_key, store=self)
+        return metadatas
+
+    def find_by_tag(self, tag):
         '''List metadata records for one tag.
         tag:               grouping label
-        include_deleted:   include tombstoned entries
         '''
-        metadatas = self.index.find_by_tag(tag,
-            include_deleted=include_deleted)
-        return self._bind_metadatas(metadatas)
+        metadatas = self.index.find_by_tag(tag, store=self)
+        return metadatas
 
-    def find_by_tags(self, tags, match='all', include_deleted=False):
+    def find_by_tags(self, tags, match='all'):
         '''List metadata records that match a tag set.
         tags:              grouping labels to match
         match:             require all or any tags
-        include_deleted:   include tombstoned entries
         '''
-        metadatas = self.index.find_by_tags(tags, match=match,
-            include_deleted=include_deleted)
-        return self._bind_metadatas(metadatas)
+        metadatas = self.index.find_by_tags(tags, match=match, store=self)
+        return metadatas
 
     def find_by_label(self, label, model_name=None, output_type=None,
-        layer=None, include_deleted=False, collar=None, match='exact'):
+        layer=None, collar=None, collar_match='exact'):
         '''List metadata records for one phraser object label.
         label:             phraser object label to match
         model_name:        optional model filter
         output_type:       optional output type filter
         layer:             optional layer filter
-        include_deleted:   include tombstoned entries
         '''
         if not isinstance(label, str) or not label.strip():
             raise ValueError('label must be a non-empty string')
 
-        metadatas = self.index.list_entries(include_deleted=include_deleted)
+        metadatas = self.index.all_metadatas(store=self)
         metadatas = filter_metadata(metadatas, model_name=model_name,
-            output_type=output_type, layer=layer, collar=collar, match=match)
+            output_type=output_type, layer=layer, collar=collar, 
+            collar_match=collar_match)
         if len(metadatas) == 0: return None
-        phraser_models= _load_phraser_models_module()
             
         labels_by_key = {}
         matches = []
-        for metadata_obj in metadatas:
-            phraser_key = metadata_obj.phraser_key
+        for metadata in metadatas:
+            phraser_key = metadata.phraser_key
             if phraser_key not in labels_by_key:
-                labels_by_key[phraser_key] = metadata_obj.label
+                labels_by_key[phraser_key] = metadata.label
             if labels_by_key[phraser_key] == label:
-                matches.append(metadata_obj)
-        return self._bind_metadatas(matches)
+                matches.append(metadata)
+        return matches
 
-    def list_tags(self, include_deleted=False):
+    def list_tags(self):
         '''List all known tags.
-        include_deleted:   include tombstoned entries
         '''
-        return self.index.list_tags(include_deleted=include_deleted)
+        return self.index.list_tags()
 
-    def tag_counts(self, include_deleted=False):
+    def tag_counts(self):
         '''Count metadata records per tag.
-        include_deleted:   include tombstoned entries
         '''
-        return self.index.tag_counts(include_deleted=include_deleted)
+        return self.index.tag_counts()
 
     def add_tags(self, echoframe_key, tags):
         '''Add tags to one metadata record.
         echoframe_key:  canonical metadata identifier
         tags:        grouping labels to add
         '''
-        metadata_obj = self.index.add_tags(echoframe_key, tags)
-        return self._bind_metadata(metadata_obj)
+        metadata = self.index.add_tags(echoframe_key, tags, self)
+        return metadata
 
     def add_tags_many(self, echoframe_keys, tags):
         '''Add tags to multiple metadata records.
         echoframe_keys:  canonical metadata identifiers
         tags:        grouping labels to add
         '''
-        metadata_list = self.index.add_tags_many(echoframe_keys, tags)
-        return self._bind_metadatas(metadata_list)
+        metadata_list = self.index.add_tags_many(echoframe_keys, tags, self)
+        return metadata_list
 
     def remove_tags(self, echoframe_key, tags):
         '''Remove tags from one metadata record.
         echoframe_key:  canonical metadata identifier
         tags:        grouping labels to remove
         '''
-        metadata_obj = self.index.remove_tags(echoframe_key, tags)
-        return self._bind_metadata(metadata_obj)
+        metadata = self.index.remove_tags(echoframe_key, tags, self)
+        return metadata
 
     def remove_tags_many(self, echoframe_keys, tags):
         '''Remove tags from multiple metadata records.
         echoframe_keys:  canonical metadata identifiers
         tags:        grouping labels to remove
         '''
-        metadata_list = self.index.remove_tags_many(echoframe_keys, tags)
-        return self._bind_metadatas(metadata_list)
+        metadata_list = self.index.remove_tags_many(echoframe_keys, tags, self)
+        return metadata_list
 
     def shard_stats(self):
         '''Return shard-level stats.'''
         return self.index.list_shard_metadata()
 
-    def list_entries(self, include_deleted=False):
-        '''List stored metadata records across all shards.
-        include_deleted:   include tombstoned entries
-        '''
-        metadatas = self.index.list_entries(include_deleted=include_deleted)
-        metadatas.sort(key=lambda metadata: (metadata.phraser_key,
-            metadata.model_name, metadata.output_type, metadata.layer,
-            metadata.collar))
-        bound_metadatas = self._bind_metadatas(metadatas)
-        return bound_metadatas
-
     @property
-    def metadata(self):
+    def metadatas(self):
         '''Return stored metadata records.'''
-        if not hasattr(self, '_metadata'):
-            self._metadata = self.list_entries()
-        return self._metadata
+        if not hasattr(self, '_metadatas'):
+            self._metadatas = self.index.all_metadatas(store=self)
+        return self._metadatas
 
-    def overview(self, include_deleted=False, health_event_limit=20,
-        include_integrity=False):
+    def overview(self, health_event_limit=20,include_integrity=False):
         '''Return a compact overview of store contents.
-        include_deleted:      include tombstoned entries
         health_event_limit:   recent shard health events to include
         include_integrity:    run a full integrity scan
         '''
-        metadatas = self.list_entries(include_deleted=include_deleted)
+        metadatas = self.metadatas
         data = {}
         data['metadata_count'] = len(metadatas)
         data['metadatas'] = [metadata.to_dict() for metadata in metadatas]
         data['shard_count'] = len(self.index.list_shards())
         data['shards'] = self.shard_stats()
-        data['tags'] = self.list_tags(include_deleted=include_deleted)
+        data['tags'] = self.list_tags()
         if include_integrity:
             data['integrity'] = self.verify_integrity()
         else:
@@ -484,9 +419,8 @@ class Store:
         if not hasattr(self.storage, 'get_shard_health_events'): return []
         return self.storage.get_shard_health_events(limit=limit)
 
-    def find_or_compute(self, phraser_key, collar, model_name,
-        output_type, layer, compute, match='exact',
-        tags=None, add_tags_on_hit=False):
+    def find_or_compute_segment(self, phraser_key, collar, model_name,
+        output_type, layer, compute, tags=None):
         '''Load metadata if present, otherwise compute and store a payload.
         phraser_key:          unique phraser object key
         collar:               requested collar in milliseconds
@@ -494,27 +428,27 @@ class Store:
         output_type:          output type to match
         layer:                layer to match
         compute:              callback that returns the payload
-        match:                exact, min, max, or nearest
         tags:                 optional grouping labels
-        add_tags_on_hit:      add tags to an existing matching entry
         '''
         metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas,
-            model_name=model_name, output_type=output_type, layer=layer,
-            collar=collar, match=match)
+        matches = filter_metadata(metadatas, model_name=model_name,
+            output_type=output_type, layer=layer, collar=collar,
+            collar_match='exact')
+        if len(matches) > 1:
+            raise ValueError('multiple metadata records matched {phraser_key}')
         if matches:
-            metadata_obj = matches[0]
-            if tags and add_tags_on_hit:
-                metadata_obj = self.add_tags(metadata_obj.echoframe_key, tags)
-            return metadata_obj, False
+            metadata = matches[0]
+            return metadata, False
         data = compute()
-        metadata_obj = self._make_metadata(phraser_key, collar, model_name,
-            output_type, layer, tags=tags)
-        metadata_obj = self.save(metadata_obj.echoframe_key, metadata_obj, data)
-        return metadata_obj, True
+        echoframe_key = self.make_echoframe_key(output_type,
+            model_name=model_name, phraser_key=phraser_key, layer=layer,
+            collar=collar)
+        metadata = self._make_metadata(echoframe_key, tags=tags)
+        metadata = self.save(metadata.echoframe_key, metadata, data)
+        return metadata, True
 
     def evict_by_recency(self):
-        '''Soft-delete metadata older than the recency window until under budget.
+        '''delete md/payload older than the recency window until under budget.
 
         Reads ECHOFRAME_RECENCY_WINDOW_DAYS (default 30) and
         ECHOFRAME_STORAGE_BUDGET_GB (default no limit) from the environment.
@@ -531,89 +465,48 @@ class Store:
         if budget_bytes is not None and self._storage_bytes() <= budget_bytes: 
             return []
 
-        metadatas = self.list_entries()
+        metadatas = self.metadatas
         stale = []
-        for metadata_obj in metadatas:
-            if metadata_obj.accessed_at is None:
+        for metadata in metadatas:
+            if metadata.accessed_at is None:
                 continue
-            accessed = datetime.fromisoformat(metadata_obj.accessed_at)
+            accessed = datetime.fromisoformat(metadata.accessed_at)
             if accessed < cutoff:
-                stale.append(metadata_obj)
+                stale.append(metadata)
 
         stale.sort(key=lambda m: m.accessed_at)
 
         evicted = []
-        for metadata_obj in stale:
+        for metadata in stale:
             if budget_bytes is not None:
                 if self._storage_bytes() <= budget_bytes:
                     break
-            self.storage.delete(metadata_obj)
-            self.index.delete(metadata_obj)
-            evicted.append(metadata_obj)
+            self.storage.delete(metadata)
+            self.index.delete(metadata)
+            evicted.append(metadata)
         return evicted
 
     def verify_integrity(self):
-        '''Verify that live metadata records point to existing datasets.'''
-        broken = []
-        checked = 0
-        for shard_id in self.index.list_shards():
-            for metadata_obj in self.index.entries_for_shard(shard_id):
-                checked += 1
-                if metadata_obj.shard_id is None:
-                    broken_item = self._broken_reference(metadata_obj,
-                        reason='missing shard pointer')
-                    broken.append(broken_item)
-                    continue
-                if metadata_obj.dataset_path is None:
-                    broken_item = self._broken_reference(metadata_obj,
-                        reason='missing shard pointer')
-                    broken.append(broken_item)
-                    continue
-                if not self.storage.dataset_exists(metadata_obj.shard_id,
-                    metadata_obj.dataset_path):
-                    broken_item = self._broken_reference(metadata_obj,
-                        reason='missing dataset')
-                    broken.append(broken_item)
-        data = {}
-        data['ok'] = not broken
-        data['checked_metadata_count'] = checked
-        data['broken_metadata_references'] = broken
-        return data
+        '''Verify that metadata records point to existing datasets.'''
+        return compaction.verify_integrity(self)
 
     def compact_shards(self, shard_ids=None, dry_run=False,
         resume_pending=False):
-        '''Compact shard files by removing deleted payloads.
+        '''Compact shard files by rewriting existing shard contents.
         shard_ids:          optional shard identifiers to compact
         dry_run:            report what would be compacted
         resume_pending:     resume running journal entries first
         '''
-        if shard_ids is None: shard_ids = self.index.list_shards()
-        if resume_pending: self.resume_compactions()
-
-        compacted = []
-        plans = []
-        for shard_id in shard_ids:
-            plan = self._compaction_plan(shard_id)
-            if not plan['needs_compaction']: continue
-            if dry_run:
-                plans.append(plan)
-                continue
-            compacted_plan = self._run_compaction_plan(plan)
-            compacted.append(compacted_plan)
-        return plans if dry_run else compacted
+        return compaction.compact_shards(self, shard_ids=shard_ids,
+            dry_run=dry_run, resume_pending=resume_pending)
 
     def resume_compactions(self):
         '''Resume interrupted shard compactions.'''
-        completed = []
-        for record in self.index.list_compaction_journal(status='running'):
-            completed_plan = self._run_compaction_plan(record,
-                from_journal=True)
-            completed.append(completed_plan)
-        return completed
+        return compaction.resume_compactions(self)
 
     def compaction_journal(self, status=None):
         '''Return compaction journal records.'''
-        return self.index.list_compaction_journal(status=status)
+        return compaction.compaction_journal(self, status=status)
 
     def _storage_bytes(self):
         '''Return total bytes used by shard files.'''
@@ -625,49 +518,16 @@ class Store:
                 file_sizes.append(filename.stat().st_size)
         return sum(file_sizes)
 
-    def _bind_metadata(self, metadata_obj):
-        if metadata_obj is None: return None
-        return metadata_obj.bind_store(self)
+    def _make_metadata(self, echoframe_key, tags=None):
+        metadata = EchoframeMetadata(echoframe_key=echoframe_key, tags=tags,
+            store=self)
+        return metadata
 
-    def _bind_metadatas(self, metadata_list):
-        bound = []
-        for metadata_obj in metadata_list:
-            bound_metadata = self._bind_metadata(metadata_obj)
-            bound.append(bound_metadata)
-        return bound
-
-    def _make_metadata(self, phraser_key, collar, model_name, output_type,
-        layer, tags=None):
-        metadata_cls = metadata_class_for_output_type(output_type)
-        echoframe_key = self.make_echoframe_key(output_type,
-            model_name=model_name, phraser_key=phraser_key, layer=layer,
-            collar=collar)
-        return metadata_cls(phraser_key=phraser_key, collar=collar,
-            model_name=model_name, layer=layer, tags=tags,
-            echoframe_key=echoframe_key)
-
-    def _touch_accessed_at(self, metadata_obj):
+    def _touch_accessed_at(self, metadata):
         '''Update accessed_at on a metadata record and persist to index.'''
-        updated = metadata_obj.with_accessed_at(utc_now())
-        self.index.upsert(updated)
+        updated = metadata.with_accessed_at(utc_now())
+        self.index.save(updated)
         return updated
-
-    def _broken_reference(self, metadata, reason):
-        return compaction.broken_reference(metadata, reason)
-
-    def _build_shard_health_report(self, shard_id, error):
-        return compaction.build_shard_health_report(self.index,
-            self.storage, shard_id, error)
-
-    def _compaction_plan(self, shard_id):
-        plan = compaction.build_compaction_plan(self.index, self.storage,
-            shard_id)
-        return plan
-
-    def _run_compaction_plan(self, plan, from_journal=False):
-        return compaction.run_compaction_plan(self.index, self.storage,
-            plan, from_journal=from_journal)
-
 
 def _load_phraser_models_module():
     try:

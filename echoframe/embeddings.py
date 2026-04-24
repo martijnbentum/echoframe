@@ -83,17 +83,6 @@ class Embeddings:
         return self
 
     @property
-    def echoframe_key(self):
-        return self.echoframe_keys[0]
-
-    @property
-    def echoframe_key_hex(self) -> str:
-        key = self.echoframe_key
-        if isinstance(key, bytes):
-            return key.hex()
-        return key
-
-    @property
     def store(self):
         '''Return the bound store or reopen one from path metadata.'''
         store = self._store
@@ -119,9 +108,8 @@ class Embeddings:
 
     def __repr__(self):
         text = 'Embeddings('
-        text += f'echoframe_keys={self.echoframe_keys}, '
-        text += f'shape={self.shape}, dims={self.dims}, '
-        text += f'layers={self.layers}, '
+        text += f'n items={len(self.echoframe_keys)}, '
+        text += f'shape={self.shape}, text += layers={self.layers}, '
         text += f'frame_aggregation={self.frame_aggregation!r})'
         return text
 

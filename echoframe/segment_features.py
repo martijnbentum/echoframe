@@ -32,8 +32,8 @@ def get_embeddings(segment, layers, model_name, collar=500,
         outputs = _compute_embeddings(segment, collar, model, gpu)
         _store_embeddings_from_outputs(outputs, segment, collar, layers_list,
             model_name, store, tags)
-    return store.load_embeddings(phraser_key, collar, model_name, layers,
-        frame_aggregation=frame_aggregation)
+    return store.load_embeddings(phraser_key, model_name, layers,
+        collar=collar, frame_aggregation=frame_aggregation)
 
 def embeddings_missing(store, phraser_key, collar, model_name, layers):
     '''Return whether any requested hidden-state layer is absent.'''
@@ -101,7 +101,8 @@ def _store_embeddings_from_outputs(outputs, segment, collar, layers,
         echoframe_key = store.make_echoframe_key('hidden_state',
             model_name=model_name,phraser_key=phraser_key,layer=layer,
             collar=collar)
-        metadata = EchoframeMetadata(echoframe_key=echoframe_key, tags=tags)
+        metadata = EchoframeMetadata(echoframe_key=echoframe_key,
+            store=store, model_name=model_name, tags=tags)
         store.save(metadata.echoframe_key, metadata, data)
 
 def _compute_codebook_indices(segment, collar, model, gpu):
@@ -120,7 +121,8 @@ def _store_codebook_indices_from_artifacts(artifacts, segment, collar,
     phraser_key = segment.key
     ci_key = store.make_echoframe_key('codebook_indices',
         model_name=model_name, phraser_key=phraser_key, collar=collar)
-    ci_metadata = EchoframeMetadata(echoframe_key=ci_key, tags=tags)
+    ci_metadata = EchoframeMetadata(echoframe_key=ci_key, store=store,
+        model_name=model_name, tags=tags)
     store.save(ci_metadata.echoframe_key, ci_metadata, selected_indices)
 
 def _store_codebook_matrix(codebook_matrix, phraser_key, collar,
@@ -128,7 +130,8 @@ def _store_codebook_matrix(codebook_matrix, phraser_key, collar,
     '''Persist the shared codebook matrix for one model.'''
     cm_key = store.make_echoframe_key('codebook_matrix', model_name=model_name)
     codebook_matrix = np.asarray(codebook_matrix)
-    cm_metadata = EchoframeMetadata(echoframe_key=cm_key, tags=tags)
+    cm_metadata = EchoframeMetadata(echoframe_key=cm_key, store=store,
+        model_name=model_name, tags=tags)
     store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
 
 def _segment_times(segment, collar):

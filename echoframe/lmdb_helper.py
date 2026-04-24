@@ -121,10 +121,10 @@ def write_metadata(txn, db_handles, metadata):
     value = metadata.to_dict()
     value = json.dumps(value, sort_keys=True).encode('utf-8')
     echoframe_key = metadata.echoframe_key
-    phraser_key = phraser_scan_key(metadata.phraser_key,
-        metadata.echoframe_key)
     txn.put(echoframe_key, value, db=db_handles['entries_db'])
     if metadata.phraser_key:
+        phraser_key = phraser_scan_key(metadata.phraser_key,
+            metadata.echoframe_key)
         txn.put(phraser_key, echoframe_key, db=db_handles['by_phraser_db'])
     touched_shard_ids = set()
     if metadata.shard_id:

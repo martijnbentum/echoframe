@@ -95,7 +95,7 @@ def format_model_registry_str(state):
 def build_store_summary(store):
     '''Return compact stats for one store.'''
     shard_rows = store.index.list_shard_metadata()
-    tags = store.list_tags(include_deleted=False)
+    tags = store.list_tags()
     record_count = _db_entry_count(store.index, store.index.entries_db)
     live_count = sum(row.get('live_entry_count', 0) for row in shard_rows)
     deleted_count = sum(row.get('deleted_entry_count', 0)

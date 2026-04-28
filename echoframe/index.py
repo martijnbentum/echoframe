@@ -30,18 +30,20 @@ class LmdbIndex:
         return EchoframeMetadata.from_dict(data, echoframe_key=echoframe_key,
             store=store)
 
-    def load_many(self, echoframe_keys, store = None):
+    def load_many(self, echoframe_keys, store = None, keep_missing=False):
         '''Load multiple raw metadata values by echoframe key.
-
-        Missing keys are skipped. The returned metadata list may be shorter
-        than echoframe_keys and should not be assumed to preserve one-to-one
-        positional alignment with the input.
+        echoframe_keys:     list of identifiers for metadata records to load
+        store:             optional Store instance to attach to loaded metadata
+        keep_missing:      if True, preserve input alignment with None for misses
         '''
         values = lmdb_helper.load_many(self.env, self.entries_db, echoframe_keys)
         metadata_list = []
         for key, value in zip(echoframe_keys,values):
-            if value is None: 
+            if value is None and not keep_missing: 
                 print(f'Warning: missing metadata for echoframe key: {key}')
+                continue
+            elif value is None and keep_missing:
+                metadata_list.append(None)
                 continue
             data = json.loads(value.decode('utf-8'))
             md = EchoframeMetadata.from_dict(data,echoframe_key=key,store=store)

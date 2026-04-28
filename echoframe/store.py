@@ -167,9 +167,13 @@ class Store:
         metadata = self.index.load(echoframe_key, store=self)
         return metadata
 
-    def load_many_metadata(self, echoframe_keys):
-        '''Load multiple metadata records by echoframe key.'''
-        metadata_list = self.index.load_many(echoframe_keys, store=self)
+    def load_many_metadata(self, echoframe_keys, keep_missing=False):
+        '''Load multiple metadata records by echoframe key.
+        echoframe_keys:  iterable of canonical metadata identifiers
+        keep_missing:    whether to keep None for missing keys or skip them
+        '''
+        metadata_list = self.index.load_many(echoframe_keys, store=self,
+            keep_missing=keep_missing)
         return metadata_list
 
     def load(self, echoframe_key):

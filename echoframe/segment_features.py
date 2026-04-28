@@ -61,6 +61,10 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     outputs = to_vector.filename_batch_to_vector(audio_filenames,
         starts=starts, ends=ends, model=model, gpu=gpu,
         numpify_output=True, batch_size=batch_size)
+    if len(outputs) != len(missing):
+        m = f'number of outputs {len(outputs)} '
+        m += f'does not match number of segments {len(missing)}'
+        raise ValueError(m)
     for output, (segment, missing_layers, _, _) in zip(outputs, missing):
         _store_embeddings_from_outputs(output, segment, collar, missing_layers,
             model_name, store, tags)
@@ -77,21 +81,29 @@ def _find_missing_segments(segments, collar, model_name, store, layers_list):
             _, _, collared_start, collared_end = _segment_times(segment, collar)
             missing.append((segment, missing_layers, collared_start,
                 collared_end))
-    if found: print(f'embeddings found in store for {len(found)} segments')
-    if not missing:print('embeddings found in store for all segments and layers')
+    found_layer_count = sum(len(layers) for layers in found)
+    missing_layer_count = sum(len(l) for _,l,_,_ in missing)
+    if found and not missing: print(f'all items in store: {found_layer_count}')
+    if missing and not found: print(f'items to compute: {missing_layer_count}')
+    if found and missing:
+        m = f'items in store: {found_layer_count}\n'
+        m += f'items to compute: {missing_layer_count}'
+        print(m)
     return missing
 
 def _find_embedding_layers(store, phraser_key, collar, model_name, layers):
     '''Return found and missing hidden-state layers for one phraser key.'''
-    found_layers = []
-    missing_layers = []
+    echoframe_keys = []
     for layer in layers:
         echoframe_key = store.make_echoframe_key('hidden_state',
             model_name=model_name, phraser_key=phraser_key, layer=layer,
             collar=collar)
-        if store.load_metadata(echoframe_key) is None:
-            missing_layers.append(layer)
-        else: found_layers.append(layer)
+        echoframe_keys.append(echoframe_key)
+    metadatas = store.load_many_metadata(echoframe_keys, keep_missing=True)
+    found_layers, missing_layers = [], []
+    for layer, metadata in zip(layers, metadatas):
+        if metadata is not None: found_layers.append(layer)
+        else: missing_layers.append(layer)
     return found_layers, missing_layers
 
 def get_codebook_indices(segment, model_name,

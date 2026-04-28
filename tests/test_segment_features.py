@@ -230,17 +230,23 @@ class TestComputeEmbeddings(unittest.TestCase):
                 collar=500)
 
             self.assertIsNone(result)
-            print_mock.assert_called_once_with(
-                'embeddings computed for 2 segments')
+            self.assertEqual(print_mock.call_args_list, [
+                mock.call('items to compute: 2'),
+                mock.call('embeddings computed for 2 segments'),
+            ])
             np.testing.assert_array_equal(embedding_a.data,
                 np.array([[3.0, 4.0], [5.0, 6.0]]))
             np.testing.assert_array_equal(embedding_b.data,
                 np.array([[10.0, 11.0], [12.0, 13.0]]))
             load_model.assert_called_once_with('wav2vec2', gpu=False)
-            filename_batch_to_vector.assert_called_once_with(
-                [segment_a.audio.filename, segment_b.audio.filename],
-                starts=[0.5, 0.6], ends=[1.8, 1.9], model='model',
-                gpu=False, numpify_output=True, batch_size=2)
+            filename_batch_to_vector.assert_called_once()
+            args, kwargs = filename_batch_to_vector.call_args
+            self.assertEqual(args, (
+                [segment_a.audio.filename, segment_b.audio.filename],))
+            np.testing.assert_allclose(kwargs.pop('starts'), [0.5, 0.6])
+            np.testing.assert_allclose(kwargs.pop('ends'), [1.8, 1.9])
+            self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
+                'numpify_output': True, 'batch_size': 2})
 
     def test_mixed_cache_reports_found_and_computed_layers(self):
         tmpdir, store = _make_store()

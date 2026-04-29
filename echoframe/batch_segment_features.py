@@ -141,15 +141,19 @@ class MissingSegments:
 
     def _find_missing(self):
         missing, found = [], []
-        echoframe_keys = self.echoframe_keys
-        metadatas = self.metadatas
-        em = zip(echoframe_keys, metadatas, strict=True)
-        for echoframe_key, metadata in em:
-            item = self.echoframe_key_to_segment_request_dict[echoframe_key]
-            if metadata is None: 
-                if item not in missing: missing.append(item)
+        seen_missing, seen_found = set(), set()
+        key_to_request = self.echoframe_key_to_segment_request_dict
+        for echoframe_key, metadata in zip(self.echoframe_keys, self.metadatas,
+            strict=True):
+            item = key_to_request[echoframe_key]
+            if metadata is None:
+                if item.segment.key not in seen_missing:
+                    seen_missing.add(item.segment.key)
+                    missing.append(item)
             else:
-                if item not in found: found.append(item)
+                if item.segment.key not in seen_found:
+                    seen_found.add(item.segment.key)
+                    found.append(item)
         self.missing = missing
         self.found = found
 
@@ -162,10 +166,13 @@ class MissingSegments:
 
     @property
     def echoframe_key_to_segment_request_dict(self):
+        if hasattr(self, '_echoframe_key_to_segment_request_dict'):
+            return self._echoframe_key_to_segment_request_dict
         d = {}
         for item in self.segment_requests:
             d.update(item.echoframe_key_to_self_dict)
-        return d
+        self._echoframe_key_to_segment_request_dict = d
+        return self._echoframe_key_to_segment_request_dict
 
     @property
     def echoframe_key_to_metadata_dict(self):

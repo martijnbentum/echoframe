@@ -119,16 +119,19 @@ class MissingSegments:
         self._find_missing()
 
     def __repr__(self):
-        m = f'MissingSegments( {len(self.segments)}, '
+        m = f'MissingSegments( {len(self.missing)}, '
         m += f'model={self.model_name}, ' 
         m += f'layers={self.layers}, '
         m += f'collar={self.collar}ms)'
+        m += f' with {len(self.found)} found in store'
         return m
 
     def __str__(self):
         m = f'MissingSegments model={self.model_name} layers={self.layers}\n'
         m += f'collar: {self.collar}ms\n'
         m += f'n segments: {len(self.segments)}\n'
+        m += f'missing segments: {len(self.missing)}\n'
+        m += f'found segments: {len(self.found)}\n'
         m += f'missing layer items: {self.layer_items_missing}\n'
         m += f'found layer items: {self.layer_items_found}'
         return m

@@ -118,10 +118,8 @@ class Store:
         layer:          optional layer index
         collar:         optional collar in milliseconds
         '''
-        record = self.registry.load_model_metadata(model_name)
-        if record is None:
-            raise ValueError(f'model_name is not registered: {model_name!r}')
-        return pack_echoframe_key(output_type, record.model_id,
+        model_id = self.registry.load_model_id(model_name)
+        return pack_echoframe_key(output_type, model_id,
             phraser_key=phraser_key, layer=layer, collar=collar)
 
     def save(self, echoframe_key, metadata, data):

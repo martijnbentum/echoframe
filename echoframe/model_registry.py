@@ -14,6 +14,7 @@ class ModelRegistry:
         config_path:  path to the store config.json file
         '''
         self.config_path = Path(config_path)
+        self._model_name_to_id: dict[str, int] = {}
 
     def __repr__(self):
         m = f'ModelRegistry(config_path={self.config_path})'
@@ -46,6 +47,7 @@ class ModelRegistry:
         metadata.model_id = _next_model_id(config['models'].values())
         config['models'][model_name] = metadata
         self.write_config(config)
+        self._model_name_to_id.clear()
         return metadata
 
     def registry_summary(self):
@@ -62,6 +64,15 @@ class ModelRegistry:
         '''Return the model metadata object for model_name, or None.'''
         config = self.read_config()
         return config['models'].get(model_name)
+
+    def load_model_id(self, model_name):
+        '''Return the model_id for model_name, cached after first lookup.'''
+        if model_name not in self._model_name_to_id:
+            record = self.load_model_metadata(model_name)
+            if record is None:
+                raise ValueError(f'model_name is not registered: {model_name!r}')
+            self._model_name_to_id[model_name] = record.model_id
+        return self._model_name_to_id[model_name]
 
     def register_models_from_file(self, path):
         '''Import model definitions from a JSON file into config.json.'''
@@ -82,6 +93,7 @@ class ModelRegistry:
             stored.append(metadata)
             next_id += 1
         self.write_config(config)
+        self._model_name_to_id.clear()
         return stored
 
     def read_config_dict(self):

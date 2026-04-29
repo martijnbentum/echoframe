@@ -27,8 +27,8 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     layers_list = normalise_layers(layers)
     if store is None: store = echoframe.Store(store_root)
     missing = MissingSegments(segments, layers_list, model_name, collar, store)
+    print(missing)
     if not missing.missing:
-        print(missing)
         return
     model = store.load_model(model_name, gpu=gpu)
     outputs = to_vector.iter_filename_batch_to_vector(missing.audio_filenames,

@@ -119,7 +119,9 @@ class MissingSegments:
         self._find_missing()
 
     def __repr__(self):
-        m = f'MissingSegments(model={self.model_name} layers={self.layers}, '
+        m = f'MissingSegments( {len(self.segments)}, '
+        m += f'model={self.model_name}, ' 
+        m += f'layers={self.layers}, '
         m += f'collar={self.collar}ms)'
         return m
 

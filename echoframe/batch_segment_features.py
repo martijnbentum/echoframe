@@ -159,10 +159,12 @@ class MissingSegments:
 
     @property
     def echoframe_keys(self):
+        if hasattr(self, '_echoframe_keys'): return self._echoframe_keys
         keys = []
         for item in self.segment_requests:
             keys.extend(item.echoframe_keys)
-        return keys
+        self._echoframe_keys = keys
+        return self._echoframe_keys
 
     @property
     def echoframe_key_to_segment_request_dict(self):

@@ -34,12 +34,17 @@ store = Store('cache')
 
 For hidden-state retrieval, `Store` now exposes two typed loaders:
 
-- `store.load_embedding(phraser_key, model_name, layer, collar=500)`
-- `store.load_embeddings(phraser_keys, model_name, layer, collar=500)`
+- `store.load_embedding(echoframe_key)`
+- `store.load_embeddings(echoframe_keys)`
+- `store.phraser_key_to_embedding(phraser_key, model_name, layer, collar=500)`
+- `store.phraser_keys_to_embeddings(phraser_keys, model_name, layer,
+  collar=500)`
 
 `load_embedding(...)` returns one `Embedding` object. `load_embeddings(...)`
-returns an `Embeddings` collection for multiple `phraser_key` values at one
-layer.
+returns an `Embeddings` collection for multiple `echoframe_key` values.
+`phraser_key_to_embedding(...)` and `phraser_keys_to_embeddings(...)` are
+convenience helpers that derive hidden-state `echoframe_key` values from
+`phraser` inputs.
 
 This is an intentional API shift from the earlier loader design. The old
 multi-layer `load_embeddings(...)`, `load_many_embeddings(...)`,
@@ -179,31 +184,61 @@ for metadata, payload in store.iter_object_frames(
 Load one typed embedding:
 
 ```python
-embedding = store.load_embedding(
-    phraser_key,
+embedding_key = store.make_echoframe_key(
+    'hidden_state',
     model_name='wav2vec2',
+    phraser_key=phraser_key,
     layer=7,
     collar=150,
 )
+embedding = store.load_embedding(embedding_key)
 
 print(embedding.shape)
 print(embedding.layer)
 print(embedding.data)
 ```
 
-Load typed embeddings for several objects at one layer:
+Load typed embeddings for several echoframe keys:
 
 ```python
-embeddings = store.load_embeddings(
-    [phraser_key_a, phraser_key_b],
+embedding_key_a = store.make_echoframe_key(
+    'hidden_state',
+    model_name='wav2vec2',
+    phraser_key=phraser_key_a,
+    layer=7,
+    collar=150,
+)
+embedding_key_b = store.make_echoframe_key(
+    'hidden_state',
+    model_name='wav2vec2',
+    phraser_key=phraser_key_b,
+    layer=7,
+    collar=150,
+)
+
+embeddings = store.load_embeddings([embedding_key_a, embedding_key_b])
+
+print(embeddings.count)
+print(embeddings.phraser_keys)
+stacked = embeddings.to_numpy()
+```
+
+Load typed embeddings from phraser keys with the convenience helpers:
+
+```python
+embedding = store.phraser_key_to_embedding(
+    phraser_key,
     model_name='wav2vec2',
     layer=7,
     collar=150,
 )
 
-print(embeddings.count)
-print(embeddings.phraser_keys)
-stacked = embeddings.to_numpy()
+embeddings = store.phraser_keys_to_embeddings(
+    [phraser_key_a, phraser_key_b],
+    model_name='wav2vec2',
+    layer=7,
+    collar=150,
+)
 ```
 
 Current `Embeddings` behavior:

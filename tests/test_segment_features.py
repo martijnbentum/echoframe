@@ -186,6 +186,8 @@ class TestComputeEmbeddings(unittest.TestCase):
                 'MissingSegments model=wav2vec2 layers=[3]\n'
                 'collar: 500ms\n'
                 'n segments: 1\n'
+                'missing segments: 0\n'
+                'found segments: 1\n'
                 'missing layer items: 0\n'
                 'found layer items: 1')
             load_model.assert_not_called()
@@ -239,8 +241,8 @@ class TestComputeEmbeddings(unittest.TestCase):
                 model_name='wav2vec2', phraser_key=segment.key, layer=3,
                 collar=500)
             stored = store.load_metadata(stored_key)
-            embedding = store.load_embedding(segment.key, 'wav2vec2', 3,
-                collar=500)
+            embedding = store.phraser_key_to_embedding(segment.key,
+                'wav2vec2', 3, collar=500)
 
             self.assertIsNone(result)
             print_mock.assert_called_once_with(
@@ -293,14 +295,14 @@ class TestComputeEmbeddings(unittest.TestCase):
                                 [segment_a, segment_b], 3, 'wav2vec2',
                                 store=store, tags=['exp-a'], batch_size=2)
 
-            embedding_a = store.load_embedding(segment_a.key, 'wav2vec2', 3,
-                collar=500)
-            embedding_b = store.load_embedding(segment_b.key, 'wav2vec2', 3,
-                collar=500)
+            embedding_a = store.phraser_key_to_embedding(segment_a.key,
+                'wav2vec2', 3, collar=500)
+            embedding_b = store.phraser_key_to_embedding(segment_b.key,
+                'wav2vec2', 3, collar=500)
 
             self.assertIsNone(result)
-            print_mock.assert_called_once_with(
-                'embeddings computed for 2 segments')
+            self.assertEqual(print_mock.call_args_list[-1],
+                mock.call('embeddings computed for 2 segments'))
             np.testing.assert_array_equal(embedding_a.data,
                 np.array([[3.0, 4.0], [5.0, 6.0]]))
             np.testing.assert_array_equal(embedding_b.data,
@@ -348,10 +350,10 @@ class TestComputeEmbeddings(unittest.TestCase):
                             result = compute_embeddings_batch([segment], [1, 3],
                                 'wav2vec2', store=store, tags=['exp-a'])
 
-            cached = store.load_embedding(segment.key, 'wav2vec2', 1,
-                collar=500)
-            computed = store.load_embedding(segment.key, 'wav2vec2', 3,
-                collar=500)
+            cached = store.phraser_key_to_embedding(segment.key, 'wav2vec2',
+                1, collar=500)
+            computed = store.phraser_key_to_embedding(segment.key,
+                'wav2vec2', 3, collar=500)
             cached_key = store.make_echoframe_key('hidden_state',
                 model_name='wav2vec2', phraser_key=segment.key, layer=1,
                 collar=500)
@@ -360,8 +362,8 @@ class TestComputeEmbeddings(unittest.TestCase):
                 collar=500)
 
             self.assertIsNone(result)
-            print_mock.assert_called_once_with(
-                'embeddings computed for 1 segments')
+            self.assertEqual(print_mock.call_args_list[-1],
+                mock.call('embeddings computed for 1 segments'))
             np.testing.assert_array_equal(cached.data, cached_data)
             np.testing.assert_array_equal(computed.data,
                 np.array([[3.0, 4.0], [5.0, 6.0]]))
@@ -403,10 +405,10 @@ class TestComputeEmbeddings(unittest.TestCase):
                                 'wav2vec2', store=store, tags=['exp-a'],
                                 verbose=True)
 
-            cached = store.load_embedding(segment.key, 'wav2vec2', 1,
-                collar=500)
-            computed = store.load_embedding(segment.key, 'wav2vec2', 3,
-                collar=500)
+            cached = store.phraser_key_to_embedding(segment.key, 'wav2vec2',
+                1, collar=500)
+            computed = store.phraser_key_to_embedding(segment.key,
+                'wav2vec2', 3, collar=500)
 
             self.assertIsNone(result)
             self.assertEqual(print_mock.call_args_list, [
@@ -501,22 +503,22 @@ class TestComputeEmbeddings(unittest.TestCase):
                                 store=store, tags=['exp-a'])
 
             self.assertIsNone(result)
-            print_mock.assert_called_once_with(
-                'embeddings computed for 2 segments')
+            self.assertEqual(print_mock.call_args_list[-1],
+                mock.call('embeddings computed for 2 segments'))
             np.testing.assert_array_equal(
-                store.load_embedding(segment_a.key, 'wav2vec2', 1,
+                store.phraser_key_to_embedding(segment_a.key, 'wav2vec2', 1,
                     collar=500).data,
                 np.array([[10.0, 11.0], [12.0, 13.0]]))
             np.testing.assert_array_equal(
-                store.load_embedding(segment_a.key, 'wav2vec2', 3,
+                store.phraser_key_to_embedding(segment_a.key, 'wav2vec2', 3,
                     collar=500).data,
                 np.array([[3.0, 4.0], [5.0, 6.0]]))
             np.testing.assert_array_equal(
-                store.load_embedding(segment_b.key, 'wav2vec2', 1,
+                store.phraser_key_to_embedding(segment_b.key, 'wav2vec2', 1,
                     collar=500).data,
                 np.array([[10.0, 11.0], [12.0, 13.0]]))
             np.testing.assert_array_equal(
-                store.load_embedding(segment_b.key, 'wav2vec2', 3,
+                store.phraser_key_to_embedding(segment_b.key, 'wav2vec2', 3,
                     collar=500).data,
                 np.array([[30.0, 31.0], [32.0, 33.0]]))
             load_model.assert_called_once_with('wav2vec2', gpu=False)

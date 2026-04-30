@@ -7,13 +7,20 @@ the current worktree.
 
 Hidden-state loading now uses two store methods:
 
-- `Store.load_embedding(phraser_key, model_name, layer, collar=500)`
-- `Store.load_embeddings(phraser_keys, model_name, layer, collar=500)`
+- `Store.load_embedding(echoframe_key)`
+- `Store.load_embeddings(echoframe_keys)`
+
+Phraser convenience helpers are also available:
+
+- `Store.phraser_key_to_embedding(phraser_key, model_name, layer, collar=500)`
+- `Store.phraser_keys_to_embeddings(phraser_keys, model_name, layer,
+  collar=500)`
 
 The new shape is:
 
-- one `phraser_key` plus one `layer` returns one `Embedding`
-- many `phraser_key` values plus one `layer` returns `Embeddings`
+- one `echoframe_key` returns one `Embedding`
+- many `echoframe_key` values return `Embeddings`
+- `phraser_key`-based loading is an explicit convenience layer
 
 ## Removed Or Replaced Surface
 

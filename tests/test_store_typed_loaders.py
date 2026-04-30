@@ -27,14 +27,17 @@ def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
 
 
 class TestLoadEmbedding(unittest.TestCase):
-    def test_returns_embedding_for_one_phraser_key_and_layer(self):
+    def test_returns_embedding_for_one_echoframe_key(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data = np.arange(6).reshape(2, 3).astype(float)
             phraser_key = _pk('phrase-1')
             _put_hidden_state(store, phraser_key, 500, 'wav2vec2', 4, data)
+            echoframe_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key, layer=4,
+                collar=500)
 
-            result = store.load_embedding(phraser_key, 'wav2vec2', 4, 500)
+            result = store.load_embedding(echoframe_key)
 
             self.assertIsInstance(result, Embedding)
             self.assertEqual(result.phraser_key, phraser_key)
@@ -45,7 +48,7 @@ class TestLoadEmbedding(unittest.TestCase):
 
 
 class TestLoadEmbeddings(unittest.TestCase):
-    def test_returns_embeddings_for_many_phraser_keys_at_one_layer(self):
+    def test_returns_embeddings_for_many_echoframe_keys(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data_1 = np.arange(6).reshape(2, 3).astype(float)
@@ -54,9 +57,14 @@ class TestLoadEmbeddings(unittest.TestCase):
             phraser_key_2 = _pk('phrase-2')
             _put_hidden_state(store, phraser_key_1, 500, 'wav2vec2', 3, data_1)
             _put_hidden_state(store, phraser_key_2, 500, 'wav2vec2', 3, data_2)
+            echoframe_key_1 = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key_1, layer=3,
+                collar=500)
+            echoframe_key_2 = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key_2, layer=3,
+                collar=500)
 
-            result = store.load_embeddings(
-                [phraser_key_1, phraser_key_2], 'wav2vec2', 3, 500)
+            result = store.load_embeddings([echoframe_key_1, echoframe_key_2])
 
             self.assertIsInstance(result, Embeddings)
             self.assertEqual(result.count, 2)
@@ -70,7 +78,7 @@ class TestLoadEmbeddings(unittest.TestCase):
                 data_2,
             ], axis=0))
 
-    def test_preserves_requested_phraser_key_order(self):
+    def test_preserves_requested_echoframe_key_order(self):
         tmpdir, store = _make_store()
         with tmpdir:
             data_1 = np.arange(6).reshape(2, 3).astype(float)
@@ -79,9 +87,14 @@ class TestLoadEmbeddings(unittest.TestCase):
             phraser_key_2 = _pk('phrase-2')
             _put_hidden_state(store, phraser_key_1, 500, 'wav2vec2', 3, data_1)
             _put_hidden_state(store, phraser_key_2, 500, 'wav2vec2', 3, data_2)
+            echoframe_key_1 = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key_1, layer=3,
+                collar=500)
+            echoframe_key_2 = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key_2, layer=3,
+                collar=500)
 
-            result = store.load_embeddings(
-                [phraser_key_2, phraser_key_1], 'wav2vec2', 3, 500)
+            result = store.load_embeddings([echoframe_key_2, echoframe_key_1])
 
             self.assertEqual(result.count, 2)
             self.assertEqual(result.phraser_keys,

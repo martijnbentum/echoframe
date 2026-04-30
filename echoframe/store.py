@@ -232,8 +232,23 @@ class Store:
             payloads.append(payload)
         return payloads
 
-    def load_embedding(self, phraser_key, model_name, layer, collar=500):
+    def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object.
+        echoframe_key:  canonical echoframe identifier
+        '''
+        return Embedding(echoframe_key, self)
+
+    def load_embeddings(self, echoframe_keys):
+        '''Load typed Embeddings for multiple echoframe keys.
+        echoframe_keys:  canonical echoframe identifiers
+        '''
+        if not isinstance(echoframe_keys, (list, tuple)):
+            raise ValueError('echoframe_keys must be a list or tuple')
+        return Embeddings.from_echoframe_keys(self, echoframe_keys)
+
+    def phraser_key_to_embedding(self, phraser_key, model_name, layer,
+        collar=500):
+        '''Load one typed Embedding object from one phraser key.
         phraser_key:  unique phraser object key
         model_name:   registered model name
         layer:        layer index to load
@@ -242,10 +257,10 @@ class Store:
         echoframe_key = self.make_echoframe_key('hidden_state',
             model_name=model_name, phraser_key=phraser_key, layer=layer,
             collar=collar)
-        embedding = Embedding(echoframe_key, self)
-        return embedding
+        return self.load_embedding(echoframe_key)
 
-    def load_embeddings(self, phraser_keys, model_name, layer, collar=500):
+    def phraser_keys_to_embeddings(self, phraser_keys, model_name, layer,
+        collar=500):
         '''Load typed Embeddings for multiple phraser keys.
         phraser_keys:  unique phraser object keys
         model_name:    registered model name
@@ -260,8 +275,7 @@ class Store:
                 model_name=model_name, phraser_key=phraser_key, layer=layer,
                 collar=collar)
             echoframe_keys.append(echoframe_key)
-        embeddings = Embeddings.from_echoframe_keys(self, echoframe_keys)
-        return embeddings
+        return self.load_embeddings(echoframe_keys)
 
     def load_codebook(self, phraser_key, collar, model_name):
         '''Load one typed Codebook object.

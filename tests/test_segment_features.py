@@ -12,7 +12,7 @@ from unittest import mock
 import numpy as np
 
 from echoframe import Store
-from echoframe.codebooks import Codebook
+from echoframe.codebooks import Codevector
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
@@ -604,9 +604,7 @@ class TestGetCodebookIndices(unittest.TestCase):
                     ) as filename_to_artifacts:
                     result = get_codebook_indices(segment, 'wav2vec2',
                         store=store)
-            result.bind_store(store)
-
-            self.assertIsInstance(result, Codebook)
+            self.assertIsInstance(result, Codevector)
             np.testing.assert_array_equal(result.to_numpy(),
                 np.array([[0, 1], [2, 3]]))
             np.testing.assert_array_equal(result.codebook_matrix,
@@ -639,8 +637,6 @@ class TestGetCodebookIndices(unittest.TestCase):
                         FakeFrames(n_frames, start_time, [0, 2])):
                         result = get_codebook_indices(segment, 'wav2vec2',
                             store=store, tags=['exp-a'])
-            result.bind_store(store)
-
             indices_key = store.make_echoframe_key('codebook_indices',
                 model_name='wav2vec2', phraser_key=segment.key, collar=500)
             matrix_key = store.make_echoframe_key('codebook_matrix',
@@ -648,7 +644,7 @@ class TestGetCodebookIndices(unittest.TestCase):
             indices_md = store.load_metadata(indices_key)
             matrix_md = store.load_metadata(matrix_key)
 
-            self.assertIsInstance(result, Codebook)
+            self.assertIsInstance(result, Codevector)
             np.testing.assert_array_equal(result.to_numpy(),
                 np.array([[0, 1], [1, 0]]))
             np.testing.assert_array_equal(result.codebook_matrix,
@@ -690,8 +686,6 @@ class TestGetCodebookIndices(unittest.TestCase):
                         FakeFrames(n_frames, start_time, [0, 2])):
                         result = get_codebook_indices(segment, 'wav2vec2',
                             store=store)
-            result.bind_store(store)
-
             matrix_key = store.make_echoframe_key('codebook_matrix',
                 model_name='wav2vec2')
             stored_matrix = store.load(matrix_key)

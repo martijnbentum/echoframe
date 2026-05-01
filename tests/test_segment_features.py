@@ -12,7 +12,6 @@ from unittest import mock
 import numpy as np
 
 from echoframe import Store
-from echoframe.codebooks import Codevector
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
@@ -29,8 +28,8 @@ from echoframe.batch_segment_features import (
 )
 from echoframe.segment_features import (
     _segment_times,
+    compute_codebook_indices,
     compute_embeddings,
-    get_codebook_indices,
 )
 from tests.helpers import (
     ensure_model as _ensure_model,
@@ -588,8 +587,8 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(len(missing_segments.missing), 2)
 
 
-class TestGetCodebookIndices(unittest.TestCase):
-    def test_cache_hit_returns_codebook_without_loading_model(self):
+class TestComputeCodebookIndices(unittest.TestCase):
+    def test_cache_hit_skips_model_and_leaves_store_unchanged(self):
         tmpdir, store = _make_store()
         with tmpdir:
             _put_codebook_indices(store, 'aabb', 500, 'wav2vec2',
@@ -602,12 +601,13 @@ class TestGetCodebookIndices(unittest.TestCase):
                 with mock.patch.object(utils_segment_features.to_vector,
                     'filename_to_codebook_artifacts', create=True
                     ) as filename_to_artifacts:
-                    result = get_codebook_indices(segment, 'wav2vec2',
-                        store=store)
-            self.assertIsInstance(result, Codevector)
-            np.testing.assert_array_equal(result.to_numpy(),
+                    compute_codebook_indices(segment, 'wav2vec2', store=store)
+            echoframe_key = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
+            codevector = store.load_codevector(echoframe_key)
+            np.testing.assert_array_equal(codevector.to_numpy(),
                 np.array([[0, 1], [2, 3]]))
-            np.testing.assert_array_equal(result.codebook_matrix,
+            np.testing.assert_array_equal(codevector.codebook_matrix,
                 np.array([[10.0, 11.0], [20.0, 21.0], [30.0, 31.0],
                     [40.0, 41.0]]))
             load_model.assert_not_called()
@@ -635,7 +635,7 @@ class TestGetCodebookIndices(unittest.TestCase):
                         'Frames',
                         create=True, side_effect=lambda n_frames, start_time:
                         FakeFrames(n_frames, start_time, [0, 2])):
-                        result = get_codebook_indices(segment, 'wav2vec2',
+                        compute_codebook_indices(segment, 'wav2vec2',
                             store=store, tags=['exp-a'])
             indices_key = store.make_echoframe_key('codebook_indices',
                 model_name='wav2vec2', phraser_key=segment.key, collar=500)
@@ -644,10 +644,10 @@ class TestGetCodebookIndices(unittest.TestCase):
             indices_md = store.load_metadata(indices_key)
             matrix_md = store.load_metadata(matrix_key)
 
-            self.assertIsInstance(result, Codevector)
-            np.testing.assert_array_equal(result.to_numpy(),
+            codevector = store.load_codevector(indices_key)
+            np.testing.assert_array_equal(codevector.to_numpy(),
                 np.array([[0, 1], [1, 0]]))
-            np.testing.assert_array_equal(result.codebook_matrix,
+            np.testing.assert_array_equal(codevector.codebook_matrix,
                 artifacts.codebook_matrix)
             self.assertEqual(indices_md.tags, ['exp-a'])
             self.assertEqual(matrix_md.tags, ['exp-a'])
@@ -684,13 +684,16 @@ class TestGetCodebookIndices(unittest.TestCase):
                         'Frames',
                         create=True, side_effect=lambda n_frames, start_time:
                         FakeFrames(n_frames, start_time, [0, 2])):
-                        result = get_codebook_indices(segment, 'wav2vec2',
+                        compute_codebook_indices(segment, 'wav2vec2',
                             store=store)
+            indices_key = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
             matrix_key = store.make_echoframe_key('codebook_matrix',
                 model_name='wav2vec2')
+            codevector = store.load_codevector(indices_key)
             stored_matrix = store.load(matrix_key)
 
-            np.testing.assert_array_equal(result.codebook_matrix,
+            np.testing.assert_array_equal(codevector.codebook_matrix,
                 original_matrix)
             np.testing.assert_array_equal(stored_matrix, original_matrix)
 

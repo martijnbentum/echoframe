@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from . import compaction
+from .codebooks import Codevector, Codevectors
 from .embeddings import Embedding, Embeddings
 from . import model_loader
 from . import util_formatting
@@ -11,7 +12,6 @@ from .key_helper import pack_echoframe_key
 from .metadata import EchoframeMetadata, filter_metadata
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
-from .typed_loaders import load_codebook, load_many_codebooks
 
 
 class Store:
@@ -293,18 +293,19 @@ class Store:
             echoframe_keys.append(echoframe_key)
         return self.load_embeddings(echoframe_keys)
 
-    def load_codebook(self, phraser_key, collar, model_name):
-        '''Load one typed Codebook object.
-        phraser_key:  unique phraser object key
-        collar:       collar in milliseconds
-        model_name:   registered model name
+    def load_codevector(self, echoframe_key):
+        '''Load one typed Codevector object.
+        echoframe_key:  canonical echoframe identifier
         '''
-        codebook = load_codebook(self, phraser_key, collar, model_name)
-        return codebook
+        return Codevector(echoframe_key, self)
 
-    def load_many_codebooks(self, requests):
-        '''Load many typed Codebook objects.'''
-        return load_many_codebooks(self, requests)
+    def load_codevectors(self, echoframe_keys):
+        '''Load typed Codevectors for multiple echoframe keys.
+        echoframe_keys:  canonical echoframe identifiers
+        '''
+        if not isinstance(echoframe_keys, (list, tuple)):
+            raise ValueError('echoframe_keys must be a list or tuple')
+        return Codevectors.from_echoframe_keys(self, echoframe_keys)
 
     def delete_phraser_key(self, phraser_key, model_name, output_type,
         layer = None, collar = None, collar_match='exact'):

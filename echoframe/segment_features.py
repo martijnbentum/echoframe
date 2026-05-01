@@ -57,7 +57,9 @@ def get_codebook_indices(segment, model_name,
         if codebook_matrix_missing(store, model_name):
             store_codebook_matrix(artifacts.codebook_matrix, phraser_key,
                 collar, model_name, store, tags)
-    return store.load_codebook(phraser_key, collar, model_name)
+    echoframe_key = store.make_echoframe_key('codebook_indices',
+        model_name=model_name, phraser_key=phraser_key, collar=collar)
+    return store.load_codevector(echoframe_key)
 
 
 _segment_times = segment_times

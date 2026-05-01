@@ -193,6 +193,28 @@ class Store:
         payloads = self.metadatas_to_payloads(metadata_list)
         return payloads
 
+    def load_frame(self, echoframe_key, frame='center'):
+        '''Load one frame vector or reduction from a matrix payload.
+        echoframe_key:  canonical metadata identifier
+        frame:          center, mean, first, or last
+        '''
+        metadata = self.load_metadata(echoframe_key)
+        if metadata is None: return None
+        return self.storage.load_frame(metadata, frame=frame)
+
+    def load_many_frames(self, echoframe_keys, frame='center',
+        keep_missing=False):
+        '''Load frame vectors for multiple matrix payloads.
+        echoframe_keys:  iterable of canonical metadata identifiers
+        frame:           center, mean, first, or last
+        keep_missing:    whether to keep None for missing keys or skip them
+        '''
+        echoframe_keys = list(echoframe_keys)
+        metadata_list = self.load_many_metadata(echoframe_keys, keep_missing)
+        if not keep_missing and len(metadata_list) != len(echoframe_keys):
+            print('WARNING: some echoframe keys were not found in the index')
+        return self.storage.load_many_frames(metadata_list, frame=frame)
+
     def delete(self, echoframe_key):
         '''delete one stored payload by echoframe key.'''
         metadata = self.load_metadata(echoframe_key)

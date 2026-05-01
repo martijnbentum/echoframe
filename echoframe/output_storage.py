@@ -90,6 +90,35 @@ class Hdf5ShardStore:
                     payloads[index] = handle[metadata.dataset_path][()]
         return payloads
 
+    def load_frame(self, metadata, frame='center'):
+        '''Load one frame vector or frame reduction from a matrix payload.'''
+        _validate_frame_mode(frame)
+        _validate_matrix_metadata(metadata)
+        file_path = self.root / f'{metadata.shard_id}.h5'
+        with self.h5.File(file_path, 'r') as handle:
+            dataset = handle[metadata.dataset_path]
+            return _read_frame(dataset, metadata.shape, frame)
+
+    def load_many_frames(self, metadata_list, frame='center'):
+        '''Load frame vectors for multiple matrix payloads.'''
+        _validate_frame_mode(frame)
+        rows = [None] * len(metadata_list)
+        by_shard = {}
+        for index, metadata in enumerate(metadata_list):
+            if metadata is None:
+                continue
+            _validate_matrix_metadata(metadata)
+            by_shard.setdefault(metadata.shard_id, []).append(
+                (index, metadata))
+
+        for shard_id, shard_items in by_shard.items():
+            file_path = self.root / f'{shard_id}.h5'
+            with self.h5.File(file_path, 'r') as handle:
+                for index, metadata in shard_items:
+                    dataset = handle[metadata.dataset_path]
+                    rows[index] = _read_frame(dataset, metadata.shape, frame)
+        return rows
+
     def delete(self, metadata):
         '''Best-effort payload deletion.
 
@@ -394,3 +423,31 @@ def _storage_layer(metadata):
     if layer is None:
         return 0
     return layer
+
+
+def _validate_frame_mode(frame):
+    if frame not in {'center', 'mean', 'first', 'last'}:
+        message = "frame must be one of 'center', 'mean', 'first', 'last'"
+        raise ValueError(message)
+
+
+def _validate_matrix_metadata(metadata):
+    if metadata.shard_id is None or metadata.dataset_path is None:
+        raise ValueError('metadata does not point to a stored payload')
+    shape = getattr(metadata, 'shape', None)
+    if shape is None or len(shape) != 2:
+        raise ValueError('frame loading requires a 2D matrix payload')
+    if shape[0] <= 0:
+        raise ValueError('frame loading requires at least one frame')
+
+
+def _read_frame(dataset, shape, frame):
+    if frame == 'mean':
+        return dataset[:, :].mean(axis=0).astype(float)
+    if frame == 'first':
+        index = 0
+    elif frame == 'last':
+        index = shape[0] - 1
+    else:
+        index = shape[0] // 2
+    return dataset[index, :]

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
+import numpy as np
+
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata, filter_metadata
 from echoframe.output_storage import Hdf5ShardStore
@@ -78,6 +80,14 @@ class FakeDataset:
     def __getitem__(self, item: object) -> object:
         if item == ():
             return self.data
+        if isinstance(item, tuple):
+            array = np.asarray(self.data)
+            value = array[item]
+            if all(isinstance(part, slice) for part in item):
+                return value
+            if hasattr(value, 'tolist'):
+                value = value.tolist()
+            return value
         raise KeyError(item)
 
     def _shape(self, data: object) -> tuple[int, ...]:

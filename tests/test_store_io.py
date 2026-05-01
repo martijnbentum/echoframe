@@ -158,6 +158,64 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(skipped, [[[1.0]]])
         self.assertEqual(kept, [[[1.0]], None])
 
+    def test_load_frame_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1, 2], [3, 4], [5, 6], [7, 8]])
+
+            first = store.load_frame(created.echoframe_key, frame='first')
+            center = store.load_frame(created.echoframe_key, frame='center')
+            last = store.load_frame(created.echoframe_key, frame='last')
+            mean = store.load_frame(created.echoframe_key, frame='mean')
+
+        self.assertEqual(first, [1, 2])
+        self.assertEqual(center, [5, 6])
+        self.assertEqual(last, [7, 8])
+        self.assertEqual(mean.tolist(), [4.0, 5.0])
+        self.assertEqual(mean.dtype.kind, 'f')
+
+    def test_load_many_frames_batches_reads_and_keeps_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0], [2.0], [3.0]])
+            second = _put(store, phraser_key='phrase-2', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[4.0], [5.0], [6.0]])
+            missing_key = b'\xff' * len(first.echoframe_key)
+            h5_module = store.storage.h5
+            original_file = h5_module.File
+            read_paths = []
+
+            def counting_file(path, mode):
+                if mode == 'r':
+                    read_paths.append(str(path))
+                return original_file(path, mode)
+
+            with mock.patch.object(h5_module, 'File',
+                side_effect=counting_file):
+                rows = store.load_many_frames([first.echoframe_key,
+                    missing_key, second.echoframe_key],
+                    frame='last', keep_missing=True)
+
+        self.assertEqual(rows, [[3.0], None, [6.0]])
+        self.assertEqual(len(read_paths), 1)
+
+    def test_load_frame_validates_mode_and_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            vector = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[1.0, 2.0])
+
+            with self.assertRaisesRegex(ValueError, 'frame must be one of'):
+                store.load_frame(vector.echoframe_key, frame='middle')
+            with self.assertRaisesRegex(ValueError, '2D matrix payload'):
+                store.load_frame(vector.echoframe_key)
+
     def test_delete_and_delete_many_by_echoframe_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

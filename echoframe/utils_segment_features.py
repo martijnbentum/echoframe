@@ -76,8 +76,17 @@ def store_codebook_indices_from_artifacts(artifacts, segment, collar,
     model_name, store, tags):
     '''Persist selected codebook indices for one segment from artifacts.'''
     validate_codebook_artifacts(artifacts)
-    indices = get_selected_codebook_frame_indices(artifacts, segment, collar)
-    selected_indices = np.asarray(artifacts.indices)[indices]
+    store_codebook_indices(artifacts.indices, segment, collar, model_name,
+        store, tags)
+
+
+def store_codebook_indices(indices, segment, collar, model_name, store, tags):
+    '''Persist selected codebook indices for one segment.'''
+    indices = np.asarray(indices)
+    validate_codebook_indices(indices)
+    frame_indices = get_selected_codebook_indices_frame_indices(indices,
+        segment, collar)
+    selected_indices = indices[frame_indices]
     phraser_key = segment.key
     ci_key = store.make_echoframe_key('codebook_indices',
         model_name=model_name, phraser_key=phraser_key, collar=collar)
@@ -199,6 +208,17 @@ def validate_codebook_artifacts(artifacts):
         raise ValueError(m)
 
 
+def validate_codebook_indices(indices):
+    '''Validate codebook indices before frame selection.'''
+    if not isinstance(indices, np.ndarray):
+        m = 'codebook indices must be a numpy array, '
+        m += f'got {type(indices)}'
+        raise ValueError(m)
+    if len(indices.shape) != 2:
+        m = f'codebook indices have invalid shape {indices.shape}'
+        raise ValueError(m)
+
+
 def get_selected_frame_indices(outputs, segment, collar, layers):
     '''Return frame indices fully contained in the original segment span.'''
     start, end, collared_start, _ = segment_times(segment, collar)
@@ -221,8 +241,14 @@ def get_selected_frame_indices(outputs, segment, collar, layers):
 
 def get_selected_codebook_frame_indices(artifacts, segment, collar):
     '''Return selected frame indices using artifact frame count only.'''
+    return get_selected_codebook_indices_frame_indices(artifacts.indices,
+        segment, collar)
+
+
+def get_selected_codebook_indices_frame_indices(indices, segment, collar):
+    '''Return selected frame indices using codebook-index frame count only.'''
     start, end, collared_start, _ = segment_times(segment, collar)
-    n_frames = artifacts.indices.shape[0]
+    n_frames = indices.shape[0]
     frames = frame.Frames(n_frames, start_time=collared_start)
     selected = frames.select_frames(start, end, percentage_overlap=100)
     if not selected:

@@ -80,15 +80,29 @@ class Store:
         model_name:   registered model name
         gpu:          whether the returned model should be on GPU
         '''
+        return self._load_cached_model(model_name, gpu, flush_model_cache,
+            model_loader.load_model)
+
+    def load_codebook_model(self, model_name, gpu=False,
+        flush_model_cache=False):
+        '''Load one registered Wav2Vec2 pretraining model for codebooks.
+        model_name:   registered model name
+        gpu:          whether the returned model should be on GPU
+        '''
+        return self._load_cached_model(model_name, gpu, flush_model_cache,
+            model_loader.load_codebook_model)
+
+    def _load_cached_model(self, model_name, gpu, flush_model_cache,
+        load_func):
         if flush_model_cache: self.remove_cached_model()
         model_metadata = self.load_model_metadata(model_name)
         if model_metadata is None:
             raise ValueError(f'model_name is not registered: {model_name!r}')
         if self._model_name == model_name and self._model is None:
-            return self.load_model(model_name, gpu=gpu, flush_model_cache=True)
-        if self._model_name != model_name: 
+            return self._load_cached_model(model_name, gpu, True, load_func)
+        if self._model_name != model_name:
             if self._model is not None: self.remove_cached_model()
-            model = model_loader.load_model(model_metadata, gpu=gpu)
+            model = load_func(model_metadata, gpu=gpu)
             self._model = model
             self._model_name = model_name
             return model
@@ -96,7 +110,6 @@ class Store:
             self._model = model_loader.move_model_to_gpu(self._model) 
         if not gpu and model_loader.model_is_on_gpu(self._model):
             self._model = model_loader.move_model_to_cpu(self._model)
-
         return self._model
 
     def remove_cached_model(self):

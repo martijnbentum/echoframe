@@ -16,6 +16,17 @@ def load_model(model_metadata, gpu=False):
     return model
 
 
+def load_codebook_model(model_metadata, gpu=False):
+    '''Load one Wav2Vec2 pretraining model for codebook extraction.
+    model_metadata:  registered model metadata record
+    gpu:             whether to move the model to GPU
+    '''
+    _validate_model_metadata(model_metadata)
+    source = model_name_or_path(model_metadata)
+    model = to_vector_load.load_model_pt(source, gpu=gpu)
+    return model
+
+
 def load_model_for_attention_extraction(model_metadata, gpu=False):
     '''Load one model configured for attention extraction.
     model_metadata:  registered model metadata record

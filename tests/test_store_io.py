@@ -117,6 +117,50 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(sorted(all_frames), [100, 200])
         self.assertEqual(len(iterated), 2)
 
+    def test_load_many_batches_payload_reads_and_access_touch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            second = _put(store, phraser_key='phrase-2', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[2.0]])
+            h5_module = store.storage.h5
+            original_file = h5_module.File
+            read_paths = []
+
+            def counting_file(path, mode):
+                if mode == 'r':
+                    read_paths.append(str(path))
+                return original_file(path, mode)
+
+            keys = (key for key in [first.echoframe_key,
+                second.echoframe_key])
+            with mock.patch.object(h5_module, 'File',
+                side_effect=counting_file):
+                with mock.patch.object(store.index, 'save_many',
+                    wraps=store.index.save_many) as save_many:
+                    payloads = store.load_many(keys)
+
+        self.assertEqual(payloads, [[[1.0]], [[2.0]]])
+        self.assertEqual(len(read_paths), 1)
+        self.assertEqual(save_many.call_count, 1)
+
+    def test_load_many_can_preserve_missing_payload_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            missing_key = b'\xff' * len(created.echoframe_key)
+            skipped = store.load_many([created.echoframe_key, missing_key])
+            kept = store.load_many([created.echoframe_key, missing_key],
+                keep_missing=True)
+
+        self.assertEqual(skipped, [[[1.0]]])
+        self.assertEqual(kept, [[[1.0]], None])
+
     def test_delete_and_delete_many_by_echoframe_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

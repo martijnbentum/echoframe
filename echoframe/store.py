@@ -181,18 +181,20 @@ class Store:
         self._touch_accessed_at(metadata)
         return self.storage.load(metadata)
 
-    def load_many(self, echoframe_keys):
+    def load_many(self, echoframe_keys, keep_missing=False):
         '''Load multiple stored output payloads.
         echoframe_keys:  iterable of canonical metadata identifiers
+        keep_missing:    whether to keep None for missing keys or skip them
 
-        Missing keys are skipped. The returned payload list may be shorter
-        than echoframe_keys and should not be assumed to preserve one-to-one
-        positional alignment with the input.
+        By default, missing keys are skipped. With keep_missing=True, the
+        returned payload list preserves input alignment and contains None for
+        missing keys.
         '''
-        metadata_list = self.load_many_metadata(echoframe_keys)
-        if len(metadata_list) != len(echoframe_keys):
+        echoframe_keys = list(echoframe_keys)
+        metadata_list = self.load_many_metadata(echoframe_keys, keep_missing)
+        if not keep_missing and len(metadata_list) != len(echoframe_keys):
             print('WARNING: some echoframe keys were not found in the index')
-        payloads = self.metadatas_to_payloads(metadata_list) 
+        payloads = self.metadatas_to_payloads(metadata_list)
         return payloads
 
     def delete(self, echoframe_key):
@@ -225,12 +227,9 @@ class Store:
         '''Load payloads for multiple echoframe metadata records.
         metadata_list:   iterable of metadata records or None values
         '''
-        payloads = []
-        for index, metadata in enumerate(metadata_list):
-            self._touch_accessed_at(metadata)
-            payload = self.storage.load(metadata)
-            payloads.append(payload)
-        return payloads
+        metadata_list = list(metadata_list)
+        self._touch_many_accessed_at(metadata_list)
+        return self.storage.load_many(metadata_list)
 
     def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object.
@@ -557,6 +556,16 @@ class Store:
         '''Update accessed_at on a metadata record and persist to index.'''
         updated = metadata.with_accessed_at(utc_now())
         self.index.save(updated)
+        return updated
+
+    def _touch_many_accessed_at(self, metadata_list):
+        '''Update accessed_at on metadata records in one index transaction.'''
+        timestamp = utc_now()
+        updated = []
+        for metadata in metadata_list:
+            if metadata is not None:
+                updated.append(metadata.with_accessed_at(timestamp))
+        self.index.save_many(updated)
         return updated
 
 def _load_phraser_models_module():

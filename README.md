@@ -292,7 +292,7 @@ created = store.save_many([
 ])
 
 metadatas = store.load_many_metadata([echoframe_key])
-payloads = store.load_many([echoframe_key], strict=False)
+payloads = store.load_many([echoframe_key], keep_missing=True)
 ```
 
 Run maintenance checks:

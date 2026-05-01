@@ -71,6 +71,25 @@ class Hdf5ShardStore:
         with self.h5.File(file_path, 'r') as handle:
             return handle[metadata.dataset_path][()]
 
+    def load_many(self, metadata_list):
+        '''Load multiple payloads, opening each shard only once.'''
+        payloads = [None] * len(metadata_list)
+        by_shard = {}
+        for index, metadata in enumerate(metadata_list):
+            if metadata is None:
+                continue
+            if metadata.shard_id is None or metadata.dataset_path is None:
+                raise ValueError('metadata does not point to a stored payload')
+            by_shard.setdefault(metadata.shard_id, []).append(
+                (index, metadata))
+
+        for shard_id, shard_items in by_shard.items():
+            file_path = self.root / f'{shard_id}.h5'
+            with self.h5.File(file_path, 'r') as handle:
+                for index, metadata in shard_items:
+                    payloads[index] = handle[metadata.dataset_path][()]
+        return payloads
+
     def delete(self, metadata):
         '''Best-effort payload deletion.
 

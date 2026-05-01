@@ -18,10 +18,17 @@ from echoframe.output_storage import Hdf5ShardStore
 
 sys.modules.setdefault('frame', types.SimpleNamespace())
 sys.modules.setdefault('to_vector', types.SimpleNamespace())
+if not hasattr(sys.modules['to_vector'], 'wav2vec2_codebook'):
+    sys.modules['to_vector'].wav2vec2_codebook = types.SimpleNamespace()
 
 import echoframe.segment_features as segment_features
+import echoframe.batch_codebook_indices as batch_codebook_indices
 import echoframe.batch_segment_features as batch_segment_features
 import echoframe.utils_segment_features as utils_segment_features
+from echoframe.batch_codebook_indices import (
+    MissingIndices,
+    compute_codebook_indices_batch,
+)
 from echoframe.batch_segment_features import (
     MissingSegments,
     compute_embeddings_batch,
@@ -696,6 +703,159 @@ class TestComputeCodebookIndices(unittest.TestCase):
             np.testing.assert_array_equal(codevector.codebook_matrix,
                 original_matrix)
             np.testing.assert_array_equal(stored_matrix, original_matrix)
+
+
+class TestComputeCodebookIndicesBatch(unittest.TestCase):
+    def test_missing_indices_reports_found_missing_and_matrix_state(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            _put_codebook_indices(store, 'aabb', 500, 'wav2vec2',
+                np.array([[0, 1], [2, 3]]))
+
+            missing = MissingIndices([segment_a, segment_b], 'wav2vec2',
+                500, store)
+
+            self.assertEqual(len(missing.segments), 2)
+            self.assertEqual(len(missing.segment_requests), 2)
+            self.assertEqual(len(missing.found), 1)
+            self.assertEqual(len(missing.missing), 1)
+            self.assertIs(missing.found[0].segment, segment_a)
+            self.assertIs(missing.missing[0].segment, segment_b)
+            self.assertEqual(missing.indices_items_found, 1)
+            self.assertEqual(missing.indices_items_missing, 1)
+            self.assertTrue(missing.matrix_missing)
+            self.assertEqual(missing.audio_filenames,
+                [segment_b.audio.filename])
+            np.testing.assert_allclose(missing.starts, [0.6])
+            np.testing.assert_allclose(missing.ends, [1.9])
+
+    def test_batch_cache_hit_skips_model_and_iterator(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            _put_codebook_indices(store, 'aabb', 500, 'wav2vec2',
+                np.array([[0, 1], [2, 3]]))
+            with mock.patch.object(store, 'load_codebook_model'
+                ) as load_codebook_model:
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'iter_filename_batch_to_codebook_indices', create=True
+                    ) as iter_indices:
+                    with mock.patch('builtins.print') as print_mock:
+                        result = compute_codebook_indices_batch([segment],
+                            'wav2vec2', store=store)
+
+            self.assertIsNone(result)
+            print_mock.assert_called_once()
+            self.assertIn('missing segments: 0',
+                str(print_mock.call_args.args[0]))
+            load_codebook_model.assert_not_called()
+            iter_indices.assert_not_called()
+
+    def test_batch_cache_miss_stores_indices_and_matrix(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            matrix = np.array([
+                [10.0, 11.0],
+                [20.0, 21.0],
+                [30.0, 31.0],
+                [40.0, 41.0],
+            ])
+            outputs = [
+                np.array([[0, 1], [2, 3], [1, 0]]),
+                np.array([[3, 2], [1, 1], [0, 0]]),
+            ]
+            frame_values = [
+                FakeFrames(selected_indices=[0, 2]),
+                FakeFrames(selected_indices=[1, 2]),
+            ]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model') as load_codebook_model:
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'load_codebook', return_value=matrix) as load_codebook:
+                    with mock.patch.object(
+                        batch_codebook_indices.wav2vec2_codebook,
+                        'iter_filename_batch_to_codebook_indices',
+                        return_value=iter(outputs)) as iter_indices:
+                        with mock.patch.object(
+                            utils_segment_features.frame, 'Frames',
+                            side_effect=lambda n_frames, start_time:
+                            frame_values.pop(0), create=True):
+                            with mock.patch('builtins.print') as print_mock:
+                                result = compute_codebook_indices_batch(
+                                    [segment_a, segment_b], 'wav2vec2',
+                                    store=store, tags=['exp-a'], batch_size=2)
+
+            key_a = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
+            key_b = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
+            matrix_key = store.make_echoframe_key('codebook_matrix',
+                model_name='wav2vec2')
+
+            self.assertIsNone(result)
+            self.assertEqual(print_mock.call_args_list[-1],
+                mock.call('codebook indices computed for 2 segments'))
+            np.testing.assert_array_equal(store.load(key_a),
+                np.array([[0, 1], [1, 0]]))
+            np.testing.assert_array_equal(store.load(key_b),
+                np.array([[1, 1], [0, 0]]))
+            np.testing.assert_array_equal(store.load(matrix_key), matrix)
+            self.assertEqual(store.load_metadata(key_a).tags, ['exp-a'])
+            self.assertEqual(store.load_metadata(matrix_key).tags, ['exp-a'])
+            load_codebook_model.assert_called_once_with('wav2vec2', gpu=False)
+            load_codebook.assert_called_once_with('model')
+            iter_indices.assert_called_once()
+            args, kwargs = iter_indices.call_args
+            self.assertEqual(args, (
+                [segment_a.audio.filename, segment_b.audio.filename],))
+            np.testing.assert_allclose(kwargs.pop('starts'), [0.5, 0.6])
+            np.testing.assert_allclose(kwargs.pop('ends'), [1.8, 1.9])
+            self.assertEqual(kwargs, {'model_pt': 'model', 'gpu': False,
+                'batch_size': 2})
+
+    def test_batch_does_not_overwrite_existing_matrix(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            original_matrix = np.array([
+                [10.0, 11.0],
+                [20.0, 21.0],
+                [30.0, 31.0],
+                [40.0, 41.0],
+            ])
+            _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2',
+                original_matrix)
+            segment = _make_segment(key=_pk('aabb'))
+            output = np.array([[0, 1], [2, 3], [1, 0]])
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'load_codebook') as load_codebook:
+                    with mock.patch.object(
+                        batch_codebook_indices.wav2vec2_codebook,
+                        'iter_filename_batch_to_codebook_indices',
+                        return_value=iter([output])):
+                        with mock.patch.object(
+                            utils_segment_features.frame, 'Frames',
+                            side_effect=lambda n_frames, start_time:
+                            FakeFrames(n_frames, start_time, [0, 2]),
+                            create=True):
+                            compute_codebook_indices_batch([segment],
+                                'wav2vec2', store=store)
+
+            matrix_key = store.make_echoframe_key('codebook_matrix',
+                model_name='wav2vec2')
+            np.testing.assert_array_equal(store.load(matrix_key),
+                original_matrix)
+            load_codebook.assert_not_called()
 
 
 if __name__ == '__main__':

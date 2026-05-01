@@ -83,6 +83,41 @@ class TestStoreLoadModel(unittest.TestCase):
         move_cpu.assert_called_once_with('m1')
         model_is_on_gpu.assert_called_once_with('m1')
 
+    def test_load_codebook_model_uses_codebook_loader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            store.register_model('wav2vec2',
+                huggingface_id='facebook/wav2vec2-base')
+
+            with mock.patch(
+                'echoframe.store.model_loader.load_codebook_model',
+                return_value='codebook-model') as load_codebook_model, (
+                mock.patch('echoframe.store.model_loader.model_is_on_gpu',
+                    return_value=False)):
+                result = store.load_codebook_model('wav2vec2')
+
+        self.assertEqual(result, 'codebook-model')
+        load_codebook_model.assert_called_once()
+
+    def test_load_codebook_model_reuses_same_name_cache_ambiguity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            store.register_model('wav2vec2',
+                huggingface_id='facebook/wav2vec2-base')
+
+            with mock.patch('echoframe.store.model_loader.load_model',
+                return_value='embedding-model') as load_model, mock.patch(
+                'echoframe.store.model_loader.load_codebook_model',
+                return_value='codebook-model') as load_codebook_model, (
+                mock.patch('echoframe.store.model_loader.model_is_on_gpu',
+                    return_value=False)):
+                store.load_model('wav2vec2')
+                result = store.load_codebook_model('wav2vec2')
+
+        self.assertEqual(result, 'embedding-model')
+        load_model.assert_called_once()
+        load_codebook_model.assert_not_called()
+
     def test_remove_cached_model_clears_model_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)

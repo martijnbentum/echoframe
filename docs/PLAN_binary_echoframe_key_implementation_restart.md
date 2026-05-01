@@ -33,7 +33,6 @@ as if every output type shares the same identity and payload shape.
   - `tags`
   - `created_at`
   - `deleted_at`
-  - `accessed_at`
 - Keep current ordinary-artifact identity behavior working during this stage
 - Make metadata copy helpers preserve the concrete subclass
 - Make `from_dict()` dispatch to the concrete subclass by `output_type`

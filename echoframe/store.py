@@ -1,7 +1,5 @@
 '''Public store facade for echoframe.'''
 
-import os
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import compaction
@@ -11,7 +9,6 @@ from . import util_formatting
 from .index import LmdbIndex
 from .key_helper import pack_echoframe_key
 from .metadata import EchoframeMetadata, filter_metadata
-from .metadata import utc_now
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .typed_loaders import load_codebook, load_many_codebooks
@@ -178,7 +175,6 @@ class Store:
         '''Load one stored payload by echoframe key.'''
         metadata = self.load_metadata(echoframe_key)
         if metadata is None: return None
-        self._touch_accessed_at(metadata)
         return self.storage.load(metadata)
 
     def load_many(self, echoframe_keys, keep_missing=False):
@@ -228,7 +224,6 @@ class Store:
         metadata_list:   iterable of metadata records or None values
         '''
         metadata_list = list(metadata_list)
-        self._touch_many_accessed_at(metadata_list)
         return self.storage.load_many(metadata_list)
 
     def load_embedding(self, echoframe_key):
@@ -476,45 +471,6 @@ class Store:
         metadata = self.save(metadata.echoframe_key, metadata, data)
         return metadata, True
 
-    def evict_by_recency(self):
-        '''delete md/payload older than the recency window until under budget.
-
-        Reads ECHOFRAME_RECENCY_WINDOW_DAYS (default 30) and
-        ECHOFRAME_STORAGE_BUDGET_GB (default no limit) from the environment.
-        Metadata without accessed_at are skipped. Oldest metadata are deleted
-        first until storage is within the budget.
-        '''
-        window_days_text = os.environ.get('ECHOFRAME_RECENCY_WINDOW_DAYS', 30)
-        window_days = int(window_days_text)
-        budget_gb = os.environ.get('ECHOFRAME_STORAGE_BUDGET_GB')
-        budget_bytes = float(budget_gb) * 1_000_000_000 if budget_gb else None
-
-        cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
-
-        if budget_bytes is not None and self._storage_bytes() <= budget_bytes: 
-            return []
-
-        metadatas = self.metadatas
-        stale = []
-        for metadata in metadatas:
-            if metadata.accessed_at is None:
-                continue
-            accessed = datetime.fromisoformat(metadata.accessed_at)
-            if accessed < cutoff:
-                stale.append(metadata)
-
-        stale.sort(key=lambda m: m.accessed_at)
-
-        evicted = []
-        for metadata in stale:
-            if budget_bytes is not None:
-                if self._storage_bytes() <= budget_bytes:
-                    break
-            self.storage.delete(metadata)
-            self.index.delete(metadata)
-            evicted.append(metadata)
-        return evicted
-
     def verify_integrity(self):
         '''Verify that metadata records point to existing datasets.'''
         return compaction.verify_integrity(self)
@@ -551,22 +507,6 @@ class Store:
         metadata = EchoframeMetadata(echoframe_key=echoframe_key, tags=tags,
             store=self)
         return metadata
-
-    def _touch_accessed_at(self, metadata):
-        '''Update accessed_at on a metadata record and persist to index.'''
-        updated = metadata.with_accessed_at(utc_now())
-        self.index.save(updated)
-        return updated
-
-    def _touch_many_accessed_at(self, metadata_list):
-        '''Update accessed_at on metadata records in one index transaction.'''
-        timestamp = utc_now()
-        updated = []
-        for metadata in metadata_list:
-            if metadata is not None:
-                updated.append(metadata.with_accessed_at(timestamp))
-        self.index.save_many(updated)
-        return updated
 
 def _load_phraser_models_module():
     try:

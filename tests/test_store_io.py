@@ -117,7 +117,7 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(sorted(all_frames), [100, 200])
         self.assertEqual(len(iterated), 2)
 
-    def test_load_many_batches_payload_reads_and_access_touch(self) -> None:
+    def test_load_many_batches_payload_reads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
             first = _put(store, phraser_key='phrase-1', collar=100,
@@ -139,13 +139,10 @@ class TestStoreIo(unittest.TestCase):
                 second.echoframe_key])
             with mock.patch.object(h5_module, 'File',
                 side_effect=counting_file):
-                with mock.patch.object(store.index, 'save_many',
-                    wraps=store.index.save_many) as save_many:
-                    payloads = store.load_many(keys)
+                payloads = store.load_many(keys)
 
         self.assertEqual(payloads, [[[1.0]], [[2.0]]])
         self.assertEqual(len(read_paths), 1)
-        self.assertEqual(save_many.call_count, 1)
 
     def test_load_many_can_preserve_missing_payload_slots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -389,20 +386,21 @@ class TestStoreIo(unittest.TestCase):
             found = _find_one(store, phraser_key='phrase-1', collar=120,
                 model_name='wav2vec2', output_type='hidden_state', layer=7)
             data = found.to_dict()
-            round_tripped = EchoframeMetadata.from_dict(data,
+            legacy_data = dict(data)
+            legacy_data['accessed_at'] = '2026-01-01T00:00:00+00:00'
+            round_tripped = EchoframeMetadata.from_dict(legacy_data,
                 found.echoframe_key, store=store)
             retagged = found.with_tags(['review', 'subset-1'])
-            touched = found.with_accessed_at('2026-01-01T00:00:00+00:00')
             self.assertEqual(data['model_name'], 'wav2vec2')
             self.assertEqual(data['shard_id'], found.shard_id)
             self.assertEqual(data['dataset_path'], found.dataset_path)
             self.assertEqual(tuple(data['shape']), found.shape)
             self.assertEqual(data['tags'], ['exp-a'])
+            self.assertNotIn('accessed_at', data)
             self.assertEqual(round_tripped.echoframe_key, found.echoframe_key)
             self.assertIs(round_tripped.store, store)
             self.assertEqual(round_tripped.to_dict(), data)
             self.assertEqual(retagged.tags, ['review', 'subset-1'])
             self.assertEqual(retagged.shard_id, found.shard_id)
-            self.assertEqual(touched.accessed_at, '2026-01-01T00:00:00+00:00')
             self.assertEqual(found.load_payload(), [[1.0, 2.0], [3.0, 4.0]])
             self.assertEqual(created.echoframe_key, found.echoframe_key)

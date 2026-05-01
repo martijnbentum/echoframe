@@ -60,28 +60,6 @@ place; new instances are derived via methods.
 
 ---
 
-## F6 — `accessed_at` + recency eviction
-
-**What:** Track last access per entry and evict entries not accessed
-within a configurable window when over storage budget.
-
-**Requirements:**
-- Add `accessed_at` field to `EchoframeMetadata`; updated on every
-  `load`/`load_many`
-- `ECHOFRAME_RECENCY_WINDOW_DAYS` (default 30) and
-  `ECHOFRAME_STORAGE_BUDGET_GB` in `.env`
-- `Store.evict_by_recency()` — soft-deletes entries with `accessed_at`
-  older than window, oldest-first, until under budget; skips entries
-  with no `accessed_at`
-
-**Tests** (`tests/test_eviction.py`)**:**
-- `load` updates `accessed_at`
-- `evict_by_recency` skips entries within the window
-- Entries older than window are deleted oldest-first until budget is met
-- Budget already met → no deletions
-
----
-
 ## Notes
 
 - `Embeddings` is exported from `echoframe/__init__.py` so phraser can

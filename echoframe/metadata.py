@@ -24,7 +24,6 @@ class EchoframeMetadata:
         self.shape = None
         self.tags = tags
         self.created_at = None
-        self.accessed_at = None
         self._validate()
 
     def __repr__(self):
@@ -91,13 +90,13 @@ class EchoframeMetadata:
             'shape': self.shape,
             'tags': self.tags,
             'created_at': self.created_at,
-            'accessed_at': self.accessed_at,
         }
 
     @classmethod
     def from_dict(cls, metadata, echoframe_key, store=None):
         '''Create one metadata record from serialized metadata data.'''
         data = dict(metadata)
+        data.pop('accessed_at', None)
         return cls._from_state(
             echoframe_key=echoframe_key,
             store=store,
@@ -106,17 +105,11 @@ class EchoframeMetadata:
             shard_id=data.pop('shard_id', None),
             dataset_path=data.pop('dataset_path', None),
             shape=data.pop('shape', None),
-            created_at=data.pop('created_at', None),
-            accessed_at=data.pop('accessed_at', None))
+            created_at=data.pop('created_at', None))
 
     def with_tags(self, tags):
         '''Return a copy with a replaced normalized tag set.'''
         return self.copy(tags=tags)
-
-    def with_accessed_at(self, timestamp):
-        '''Return a copy with an updated accessed_at timestamp.'''
-        return self.copy(accessed_at=timestamp)
-
 
     def _validate(self):
         if self.created_at is None:
@@ -135,21 +128,18 @@ class EchoframeMetadata:
             shard_id=updates.pop('shard_id', self.shard_id),
             dataset_path=updates.pop('dataset_path', self.dataset_path),
             shape=updates.pop('shape', self.shape),
-            created_at=updates.pop('created_at', self.created_at),
-            accessed_at=updates.pop('accessed_at', self.accessed_at))
+            created_at=updates.pop('created_at', self.created_at))
         return metadata
 
     @classmethod
     def _from_state(cls, echoframe_key, store, model_name=None, tags=None,
-        shard_id=None, dataset_path=None, shape=None, created_at=None,
-        accessed_at=None):
+        shard_id=None, dataset_path=None, shape=None, created_at=None):
         metadata = cls(echoframe_key=echoframe_key, store=store, tags=tags,
             model_name=model_name)
         metadata.shard_id = shard_id
         metadata.dataset_path = dataset_path
         metadata.shape = shape
         metadata.created_at = created_at
-        metadata.accessed_at = accessed_at
         metadata._validate()
         return metadata
 
@@ -164,13 +154,10 @@ class EchoframeMetadata:
         data = self._display_header_dict()
         storage = _display_storage_dict(self)
         created_at = storage.pop('created_at', None)
-        accessed_at = storage.pop('accessed_at', None)
         data.update(storage)
         if self.phraser_object is not None:
             data['phraser_object'] = repr(self.phraser_object)
         data['created_at'] = created_at
-        if accessed_at is not None:
-            data['accessed_at'] = accessed_at
         return data
 
     def _display_header_dict(self):
@@ -266,8 +253,6 @@ def _display_storage_dict(metadata):
         data['tags'] = metadata.tags
     if metadata.created_at is not None:
         data['created_at'] = metadata.created_at
-    if metadata.accessed_at is not None:
-        data['accessed_at'] = metadata.accessed_at
     return data
 
 
@@ -288,7 +273,6 @@ STABLE_METADATA_FIELDS = (
     'shape',
     'tags',
     'created_at',
-    'accessed_at',
 )
 
 VALID_MATCHES = {'exact', 'min', 'max', 'nearest'}

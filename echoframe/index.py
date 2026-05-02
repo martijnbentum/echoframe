@@ -10,7 +10,7 @@ from .metadata import EchoframeMetadata, normalize_tags, utc_now
 class LmdbIndex:
     '''Store and query raw LMDB values for echoframe metadata.'''
 
-    def __init__(self, path, map_size=1 << 30, env=None, shards_root=None):
+    def __init__(self, path, map_size=30 << 30, env=None, shards_root=None):
         self.path = Path(path)
         self.shards_root = None if shards_root is None else Path(shards_root)
         self.env = env or lmdb_helper.open_env(self.path, map_size=map_size)

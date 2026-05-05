@@ -12,6 +12,51 @@ def sanitize_name(value):
     return re.sub(r'[^a-zA-Z0-9_.-]+', '_', value).strip('_') or 'unknown'
 
 
+def _group_indexed_metadata_by_shard(metadata_list):
+    by_shard = {}
+    for index, metadata in enumerate(metadata_list):
+        if metadata is None:
+            continue
+        by_shard.setdefault(metadata.shard_id, []).append((index, metadata))
+    return by_shard
+
+
+def _group_store_items_by_shard(items, get_shard_id, get_next_shard_id,
+    get_shard_size, max_shard_size_bytes):
+    by_shard = {}
+    batch_shard_ids = {}
+    batch_shard_sizes = {}
+    for item in items:
+        metadata = item['metadata']
+        key = (metadata.model_name, metadata.output_type)
+        item_size = _estimated_item_size(item)
+
+        shard_id = batch_shard_ids.get(key)
+        if shard_id is None:
+            shard_id = get_shard_id(metadata)
+            batch_shard_ids[key] = shard_id
+            batch_shard_sizes[shard_id] = get_shard_size(metadata, shard_id)
+
+        projected_size = batch_shard_sizes[shard_id] + item_size
+        if projected_size > max_shard_size_bytes:
+            shard_id = get_next_shard_id(metadata, shard_id)
+            batch_shard_ids[key] = shard_id
+            batch_shard_sizes[shard_id] = get_shard_size(metadata, shard_id)
+
+        by_shard.setdefault(shard_id, []).append(item)
+        batch_shard_sizes[shard_id] += item_size
+    return by_shard
+
+
+def _estimated_item_size(item):
+    data = item['data']
+    if hasattr(data, 'nbytes'):
+        return int(data.nbytes)
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return len(data)
+    return 0
+
+
 class Hdf5ShardStore:
     '''Store payloads in rolling HDF5 shard files.'''
 
@@ -26,6 +71,7 @@ class Hdf5ShardStore:
         self.h5 = h5_module or self._import_h5()
         self.health_events = []
         self.max_health_events = 500
+        self.active_shard_ids = {}
 
     def _import_h5(self):
         try:
@@ -36,32 +82,32 @@ class Hdf5ShardStore:
 
     def store(self, metadata, data):
         '''Store payload data and return updated metadata.'''
-        shard_id = self._active_shard_id(model_name=metadata.model_name,
-            output_type=metadata.output_type)
+        shard_id = self._cached_active_shard_id(metadata)
         return self.store_with_shard(metadata, data=data, shard_id=shard_id)
 
     def store_many(self, items):
         '''Store multiple payloads and return updated metadata records.'''
         stored = []
-        for item in items:
-            stored.append(self.store(item['metadata'], data=item['data']))
+        by_shard = _group_store_items_by_shard(items,
+            self._cached_active_shard_id, self._next_cached_active_shard_id,
+            self._cached_shard_size, self.max_shard_size_bytes)
+        for shard_id, shard_items in by_shard.items():
+            file_path = self.root / f'{shard_id}.h5'
+            with self.h5.File(file_path, 'a') as handle:
+                for item in shard_items:
+                    stored.append(self._store_item_in_handle(handle, item,
+                        shard_id))
+            self._refresh_cached_shard_size(shard_id)
         return stored
 
     def store_with_shard(self, metadata, data, shard_id):
         '''Store payload data in a specific shard.'''
-        dataset_path = self._dataset_path(metadata)
-        dataset_name = metadata.echoframe_key.hex()
         file_path = self.root / f'{shard_id}.h5'
-        layer = _storage_layer(metadata)
-
+        item = {'metadata': metadata, 'data': data}
         with self.h5.File(file_path, 'a') as handle:
-            group = handle.require_group(f'/layer_{layer:04d}')
-            if dataset_name in group:
-                del group[dataset_name]
-            dataset = group.create_dataset(dataset_name, data=data)
-            shape = tuple(getattr(dataset, 'shape', ()) or ())
-        return self._copy_metadata(metadata, shard_id=shard_id,
-            dataset_path=dataset_path, shape=shape)
+            stored = self._store_item_in_handle(handle, item, shard_id)
+        self._refresh_cached_shard_size(shard_id)
+        return stored
 
     def load(self, metadata):
         '''Load stored payload data.'''
@@ -74,14 +120,12 @@ class Hdf5ShardStore:
     def load_many(self, metadata_list):
         '''Load multiple payloads, opening each shard only once.'''
         payloads = [None] * len(metadata_list)
-        by_shard = {}
-        for index, metadata in enumerate(metadata_list):
+        for metadata in metadata_list:
             if metadata is None:
                 continue
             if metadata.shard_id is None or metadata.dataset_path is None:
                 raise ValueError('metadata does not point to a stored payload')
-            by_shard.setdefault(metadata.shard_id, []).append(
-                (index, metadata))
+        by_shard = _group_indexed_metadata_by_shard(metadata_list)
 
         for shard_id, shard_items in by_shard.items():
             file_path = self.root / f'{shard_id}.h5'
@@ -103,13 +147,11 @@ class Hdf5ShardStore:
         '''Load frame vectors for multiple matrix payloads.'''
         _validate_frame_mode(frame)
         rows = [None] * len(metadata_list)
-        by_shard = {}
-        for index, metadata in enumerate(metadata_list):
+        for metadata in metadata_list:
             if metadata is None:
                 continue
             _validate_matrix_metadata(metadata)
-            by_shard.setdefault(metadata.shard_id, []).append(
-                (index, metadata))
+        by_shard = _group_indexed_metadata_by_shard(metadata_list)
 
         for shard_id, shard_items in by_shard.items():
             file_path = self.root / f'{shard_id}.h5'
@@ -189,7 +231,10 @@ class Hdf5ShardStore:
 
     def _active_shard_id(self, model_name, output_type):
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'
-        index = 1
+        return self._active_shard_id_from(stem, start_index=1)
+
+    def _active_shard_id_from(self, stem, start_index):
+        index = start_index
         scanned = 0
         while True:
             scanned += 1
@@ -213,6 +258,61 @@ class Hdf5ShardStore:
             if state['byte_size'] < self.max_shard_size_bytes:
                 return shard_id
             index += 1
+
+    def _cached_active_shard_id(self, metadata):
+        key = (metadata.model_name, metadata.output_type)
+        cached = self.active_shard_ids.get(key)
+        if cached is not None:
+            if cached['byte_size'] < self.max_shard_size_bytes:
+                return cached['shard_id']
+        shard_id = self._active_shard_id(metadata.model_name,
+            metadata.output_type)
+        self._set_cached_shard_id(key, shard_id)
+        return shard_id
+
+    def _next_cached_active_shard_id(self, metadata, current_shard_id):
+        key = (metadata.model_name, metadata.output_type)
+        shard_id = self._next_active_shard_id(current_shard_id)
+        self._set_cached_shard_id(key, shard_id)
+        return shard_id
+
+    def _next_active_shard_id(self, shard_id):
+        stem, _, suffix = shard_id.rpartition('_')
+        if not stem or not suffix.isdigit():
+            raise ValueError('invalid shard_id')
+        return self._active_shard_id_from(stem, start_index=int(suffix) + 1)
+
+    def _cached_shard_size(self, metadata, shard_id):
+        key = (metadata.model_name, metadata.output_type)
+        cached = self.active_shard_ids.get(key)
+        if cached is not None and cached['shard_id'] == shard_id:
+            return cached['byte_size']
+        return self.shard_size(shard_id)
+
+    def _set_cached_shard_id(self, key, shard_id):
+        self.active_shard_ids[key] = {
+            'shard_id': shard_id,
+            'byte_size': self.shard_size(shard_id),
+        }
+
+    def _refresh_cached_shard_size(self, shard_id):
+        byte_size = self.shard_size(shard_id)
+        for cached in self.active_shard_ids.values():
+            if cached['shard_id'] == shard_id:
+                cached['byte_size'] = byte_size
+
+    def _store_item_in_handle(self, handle, item, shard_id):
+        metadata = item['metadata']
+        dataset_path = self._dataset_path(metadata)
+        dataset_name = metadata.echoframe_key.hex()
+        layer = _storage_layer(metadata)
+        group = handle.require_group(f'/layer_{layer:04d}')
+        if dataset_name in group:
+            del group[dataset_name]
+        dataset = group.create_dataset(dataset_name, data=item['data'])
+        shape = tuple(getattr(dataset, 'shape', ()) or ())
+        return self._copy_metadata(metadata, shard_id=shard_id,
+            dataset_path=dataset_path, shape=shape)
 
     def _dataset_path(self, metadata):
         layer = _storage_layer(metadata)

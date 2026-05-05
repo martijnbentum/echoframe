@@ -7,11 +7,19 @@ import tempfile
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore, sanitize_name
 from echoframe.store import Store
-from tests.helpers import FakeEnv, FakeH5Module, make_fake_store, put as _put
+from tests.helpers import (
+    FakeEnv,
+    FakeH5Module,
+    make_fake_store,
+    put as _put,
+    put_item as _put_item,
+)
 
 
 class FlakySizeStorage(Hdf5ShardStore):
@@ -28,6 +36,93 @@ class FlakySizeStorage(Hdf5ShardStore):
 
 
 class TestStorageRuntime(unittest.TestCase):
+    def test_store_many_batches_writes_by_shard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            items = [
+                _put_item(store, phraser_key='phrase-1', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.zeros((2, 2), dtype='float32')),
+                _put_item(store, phraser_key='phrase-2', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.ones((2, 2), dtype='float32')),
+            ]
+            h5_module = store.storage.h5
+            original_file = h5_module.File
+            write_paths = []
+
+            def counting_file(path, mode):
+                if mode == 'a':
+                    write_paths.append(str(path))
+                return original_file(path, mode)
+
+            with mock.patch.object(h5_module, 'File',
+                side_effect=counting_file):
+                stored = store.save_many(items)
+
+        self.assertEqual(len(write_paths), 1)
+        self.assertEqual(stored[0].shard_id, stored[1].shard_id)
+
+    def test_store_many_reuses_cached_active_shard_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            items = [
+                _put_item(store, phraser_key='phrase-1', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.zeros((2, 2), dtype='float32')),
+                _put_item(store, phraser_key='phrase-2', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.ones((2, 2), dtype='float32')),
+            ]
+
+            with mock.patch.object(store.storage, '_active_shard_id',
+                wraps=store.storage._active_shard_id) as active_shard_id:
+                store.save_many(items)
+
+        self.assertEqual(active_shard_id.call_count, 1)
+
+    def test_store_many_rolls_over_by_estimated_item_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            store.storage.max_shard_size_bytes = 10
+            items = [
+                _put_item(store, phraser_key='phrase-1', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.zeros(8, dtype='uint8')),
+                _put_item(store, phraser_key='phrase-2', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=np.ones(8, dtype='uint8')),
+            ]
+
+            stored = store.save_many(items)
+
+        self.assertEqual(stored[0].shard_id,
+            'wav2vec2_hidden_state_0001')
+        self.assertEqual(stored[1].shard_id,
+            'wav2vec2_hidden_state_0002')
+
+    def test_store_many_validates_all_items_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            valid = _put_item(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=np.array([[1.0]], dtype='float32'))
+            invalid = _put_item(store, phraser_key='phrase-2', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=np.array([[2.0]], dtype='float32'))
+            invalid['data'] = None
+
+            with mock.patch.object(store.storage, 'store_many',
+                wraps=store.storage.store_many) as store_many:
+                with self.assertRaisesRegex(ValueError,
+                    'data must not be None'):
+                    store.save_many([valid, invalid])
+
+            loaded = store.load_metadata(valid['echoframe_key'])
+
+        store_many.assert_not_called()
+        self.assertIsNone(loaded)
+
     def test_index_size_probe_fallbacks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             storage = FlakySizeStorage(Path(tmpdir), h5_module=FakeH5Module())

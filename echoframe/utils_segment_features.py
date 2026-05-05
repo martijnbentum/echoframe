@@ -1,9 +1,10 @@
 '''Shared helpers for segment-level feature extraction.'''
 
 import numpy as np
-from .metadata import EchoframeMetadata
 import frame
 import to_vector
+
+from .metadata import EchoframeMetadata
 
 _VALID_FRAME_AGGREGATIONS = (None, 'mean', 'centroid')
 
@@ -82,6 +83,25 @@ def store_codebook_indices_from_artifacts(artifacts, segment, collar,
 
 def store_codebook_indices(indices, segment, collar, model_name, store, tags):
     '''Persist selected codebook indices for one segment.'''
+    item = make_codebook_indices_item(indices, segment, collar, model_name,
+        store, tags)
+    return store.save(item['echoframe_key'], item['metadata'], item['data'])
+
+
+def batch_store_codebook_indices(outputs, segments, collar, model_name, store,
+    tags):
+    '''Persist selected codebook indices for multiple segments.'''
+    items = []
+    for indices, segment in zip(outputs, segments, strict=True):
+        item = make_codebook_indices_item(indices, segment, collar,
+            model_name, store, tags)
+        items.append(item)
+    return store.save_many(items)
+
+
+def make_codebook_indices_item(indices, segment, collar, model_name, store,
+    tags):
+    '''Build one save_many item for selected codebook indices.'''
     indices = np.asarray(indices)
     validate_codebook_indices(indices)
     frame_indices = get_selected_codebook_indices_frame_indices(indices,
@@ -92,7 +112,11 @@ def store_codebook_indices(indices, segment, collar, model_name, store, tags):
         model_name=model_name, phraser_key=phraser_key, collar=collar)
     ci_metadata = EchoframeMetadata(echoframe_key=ci_key, store=store,
         model_name=model_name, tags=tags)
-    store.save(ci_metadata.echoframe_key, ci_metadata, selected_indices)
+    return {
+        'echoframe_key': ci_metadata.echoframe_key,
+        'metadata': ci_metadata,
+        'data': selected_indices,
+    }
 
 
 def store_codebook_matrix(codebook_matrix, phraser_key, collar,

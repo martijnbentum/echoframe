@@ -9,9 +9,9 @@ import echoframe
 from to_vector import wav2vec2_codebook
 
 from .utils_segment_features import (
+    batch_store_codebook_indices,
     codebook_matrix_missing,
     segment_times,
-    store_codebook_indices,
     store_codebook_matrix,
 )
 
@@ -46,12 +46,10 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     outputs = wav2vec2_codebook.iter_filename_batch_to_codebook_indices(
         missing.audio_filenames, starts=missing.starts, ends=missing.ends,
         model_pt=model, gpu=gpu, batch_size=batch_size)
-    output_count = 0
-    for indices, item in zip(outputs, missing.missing, strict=True):
-        store_codebook_indices(indices, item.segment, collar, model_name,
-            store, tags)
-        output_count += 1
-    print(f'codebook indices computed for {output_count} segments')
+    segments = [item.segment for item in missing.missing]
+    stored = batch_store_codebook_indices(outputs, segments, collar,
+        model_name, store, tags)
+    print(f'codebook indices computed for {len(stored)} segments')
 
 
 class SegmentRequest:

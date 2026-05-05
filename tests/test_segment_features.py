@@ -857,6 +857,39 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
                 original_matrix)
             load_codebook.assert_not_called()
 
+    def test_batch_output_count_must_match_missing_segments(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            matrix = np.array([
+                [10.0, 11.0],
+                [20.0, 21.0],
+                [30.0, 31.0],
+                [40.0, 41.0],
+            ])
+            outputs = [np.array([[0, 1], [2, 3], [1, 0]])]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'load_codebook', return_value=matrix):
+                    with mock.patch.object(
+                        batch_codebook_indices.wav2vec2_codebook,
+                        'iter_filename_batch_to_codebook_indices',
+                        return_value=iter(outputs)):
+                        with mock.patch.object(
+                            utils_segment_features.frame, 'Frames',
+                            side_effect=lambda n_frames, start_time:
+                            FakeFrames(n_frames, start_time, [0, 2]),
+                            create=True):
+                            with self.assertRaisesRegex(ValueError,
+                                'zip\\(\\) argument'):
+                                compute_codebook_indices_batch(
+                                    [segment_a, segment_b], 'wav2vec2',
+                                    store=store)
+
 
 if __name__ == '__main__':
     unittest.main()

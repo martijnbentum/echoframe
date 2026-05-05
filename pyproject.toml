@@ -4,7 +4,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'echoframe'
-version = '0.1.108'
+version = '0.1.109'
 description = 'Store hidden states, attention tensors, and codebooks on disk.'
 readme = 'README.md'
 requires-python = '>=3.12'
@@ -13,6 +13,7 @@ dependencies = [
     'frame @ git+https://github.com/martijnbentum/frame.git',
     'h5py>=3.0',
     'lmdb>=1.4',
+    'numpy>=1.26',
     'to-vector @ git+https://github.com/martijnbentum/to_vector.git',
 ]
 authors = [

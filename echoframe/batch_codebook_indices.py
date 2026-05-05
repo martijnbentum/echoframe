@@ -9,8 +9,9 @@ import echoframe
 from to_vector import wav2vec2_codebook
 
 from .utils_segment_features import (
-    batch_store_codebook_indices,
+    StoreWriter,
     codebook_matrix_missing,
+    make_codebook_indices_item,
     segment_times,
     store_codebook_matrix,
 )
@@ -18,7 +19,7 @@ from .utils_segment_features import (
 
 def compute_codebook_indices_batch(segments, model_name, collar=500,
     store=None, store_root='echoframe', gpu=False, tags=None,
-    batch_size=None):
+    batch_size=None, store_queue_size=4):
     '''Compute and store Wav2Vec2 codebook indices for segment objects.
     segments:             iterable of phraser segment objects
     model_name:           registered Wav2Vec2 model name
@@ -28,6 +29,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     gpu:                  whether to run codebook extraction on GPU
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
+    store_queue_size:     queued save chunks before compute waits
 
     SpidR codebook batching is not implemented in this Wav2Vec2-specific
     batch path.
@@ -44,9 +46,13 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     outputs = wav2vec2_codebook.iter_filename_batch_to_codebook_indices(
         missing.audio_filenames, starts=missing.starts, ends=missing.ends,
         model_pt=model, gpu=gpu, batch_size=batch_size)
-    segments = [item.segment for item in missing.missing]
-    stored_count = batch_store_codebook_indices(outputs, segments, collar,
-        model_name, store, tags)
+    stored_count = 0
+    with StoreWriter(store, max_queue_size=store_queue_size) as writer:
+        for indices, item in zip(outputs, missing.missing, strict=True):
+            save_item = make_codebook_indices_item(indices, item.segment,
+                collar, model_name, store, tags)
+            writer.submit([save_item])
+            stored_count += 1
     print(f'codebook indices computed for {stored_count} segments')
 
 

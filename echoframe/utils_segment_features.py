@@ -1,7 +1,10 @@
 '''Shared helpers for segment-level feature extraction.'''
 
-import numpy as np
+import queue
+import threading
+
 import frame
+import numpy as np
 import to_vector
 
 from .metadata import EchoframeMetadata
@@ -51,9 +54,18 @@ def compute_embeddings_for_segment(segment, collar, model, gpu):
 def store_embeddings_from_outputs(outputs, segment, collar, layers,
     model_name, store, tags):
     '''Select segment frames from model outputs and store layer specific data.'''
+    items = make_embedding_items(outputs, segment, collar, layers, model_name,
+        store, tags)
+    return store.save_many(items)
+
+
+def make_embedding_items(outputs, segment, collar, layers, model_name, store,
+    tags):
+    '''Build save_many items for selected segment frames.'''
     validate_hidden_states(outputs, layers)
     indices = get_selected_frame_indices(outputs, segment, collar, layers)
     phraser_key = segment.key
+    items = []
     for layer in layers:
         hs = outputs.hidden_states[layer]
         data = hs[0, indices, :] if hs.ndim == 3 else hs[indices, :]
@@ -62,7 +74,12 @@ def store_embeddings_from_outputs(outputs, segment, collar, layers,
             collar=collar)
         metadata = EchoframeMetadata(echoframe_key=echoframe_key,
             store=store, model_name=model_name, tags=tags)
-        store.save(metadata.echoframe_key, metadata, data)
+        items.append({
+            'echoframe_key': metadata.echoframe_key,
+            'metadata': metadata,
+            'data': data,
+        })
+    return items
 
 
 def compute_codebook_indices(segment, collar, model, gpu):
@@ -86,17 +103,6 @@ def store_codebook_indices(indices, segment, collar, model_name, store, tags):
     item = make_codebook_indices_item(indices, segment, collar, model_name,
         store, tags)
     return store.save(item['echoframe_key'], item['metadata'], item['data'])
-
-
-def batch_store_codebook_indices(outputs, segments, collar, model_name, store,
-    tags):
-    '''Persist selected codebook indices for multiple segments.'''
-    items = []
-    for indices, segment in zip(outputs, segments, strict=True):
-        item = make_codebook_indices_item(indices, segment, collar,
-            model_name, store, tags)
-        items.append(item)
-    return store.save_many(items)
 
 
 def make_codebook_indices_item(indices, segment, collar, model_name, store,
@@ -126,6 +132,68 @@ def store_codebook_matrix(codebook_matrix, model_name, store, tags):
     cm_metadata = EchoframeMetadata(echoframe_key=cm_key, store=store,
         model_name=model_name, tags=tags)
     store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
+
+
+class StoreWriter:
+    '''Write save_many chunks on one background thread.'''
+    def __init__(self, store, max_queue_size=4):
+        maxsize = 0 if max_queue_size is None else int(max_queue_size)
+        if maxsize < 0:
+            raise ValueError('max_queue_size must be non-negative or None')
+        self.store = store
+        self.queue = queue.Queue(maxsize=maxsize)
+        self.error = None
+        self.error_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self._stop_thread()
+        if exc_type is None: self._raise_if_error()
+        return False
+
+    def submit(self, items):
+        '''Queue one save_many chunk and surface writer failures.'''
+        self._raise_if_error()
+        if not items: return
+        chunk = list(items)
+        while True:
+            self._raise_if_error()
+            try:
+                self.queue.put(chunk, timeout=0.1)
+                return
+            except queue.Full:
+                continue
+
+    def close(self):
+        '''Stop the writer thread and re-raise any writer exception.'''
+        self._stop_thread()
+        self._raise_if_error()
+
+    def _stop_thread(self):
+        if self.thread.is_alive():
+            self.queue.put(None)
+            self.thread.join()
+
+    def _run(self):
+        while True:
+            items = self.queue.get()
+            try:
+                if items is None: return
+                if self.error is None:
+                    self.store.save_many(items)
+            except Exception as exc:
+                self.error = exc
+                self.error_event.set()
+            finally:
+                self.queue.task_done()
+
+    def _raise_if_error(self):
+        if self.error_event.is_set():
+            raise self.error
 
 
 def segment_times(segment, collar):

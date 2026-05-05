@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest import mock
@@ -105,6 +106,128 @@ class FakeFrames:
             list(selected_indices))
         self.select_frames = mock.Mock(
             return_value=_make_selected_frames(self.selected_indices))
+
+
+class RecordingBatchWriter:
+    instances = []
+
+    def __init__(self, store, max_queue_size=4):
+        self.store = store
+        self.max_queue_size = max_queue_size
+        self.submitted = []
+        RecordingBatchWriter.instances.append(self)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def submit(self, items):
+        self.submitted.append(items)
+
+
+class RecordingSaveManyStore:
+    def __init__(self, return_count=None):
+        self.calls = []
+        self.return_count = return_count
+
+    def save_many(self, items):
+        self.calls.append(items)
+        if self.return_count is not None:
+            return self.return_count
+        return len(items)
+
+
+class RaisingSaveManyStore:
+    def __init__(self):
+        self.error = RuntimeError('save failed')
+
+    def save_many(self, items):
+        raise self.error
+
+
+class PartiallyRaisingSaveManyStore:
+    def __init__(self):
+        self.error = RuntimeError('save failed')
+        self.calls = 0
+
+    def save_many(self, items):
+        self.calls += 1
+        if self.calls == 1: return len(items)
+        raise self.error
+
+
+class TestStoreWriter(unittest.TestCase):
+    def _wait_for_writer_error(self, writer):
+        if writer.error_event.wait(timeout=2): return
+        self.fail('writer error was not captured')
+
+    def test_writes_chunks(self):
+        store = RecordingSaveManyStore()
+
+        with utils_segment_features.StoreWriter(store) as writer:
+            writer.submit(['a'])
+            writer.submit(['b', 'c'])
+            writer.submit(['d', 'e', 'f'])
+
+        self.assertEqual(store.calls, [
+            ['a'],
+            ['b', 'c'],
+            ['d', 'e', 'f'],
+        ])
+
+    def test_writer_error_surfaces_on_close(self):
+        store = RaisingSaveManyStore()
+
+        with self.assertRaisesRegex(RuntimeError, 'save failed'):
+            with utils_segment_features.StoreWriter(store) as writer:
+                writer.submit(['a'])
+
+    def test_partial_failure_keeps_successful_writes(self):
+        store = PartiallyRaisingSaveManyStore()
+
+        with self.assertRaisesRegex(RuntimeError, 'save failed'):
+            with utils_segment_features.StoreWriter(store) as writer:
+                writer.submit(['a'])
+                writer.submit(['b'])
+
+        self.assertEqual(store.calls, 2)
+
+    def test_writer_error_surfaces_on_submit(self):
+        store = RaisingSaveManyStore()
+
+        writer = utils_segment_features.StoreWriter(store)
+        writer.__enter__()
+        try:
+            writer.submit(['a'])
+            self._wait_for_writer_error(writer)
+            with self.assertRaisesRegex(RuntimeError, 'save failed'):
+                writer.submit(['b'])
+        finally:
+            with self.assertRaisesRegex(RuntimeError, 'save failed'):
+                writer.close()
+
+    def test_queue_size_contract(self):
+        with self.assertRaisesRegex(ValueError,
+            'max_queue_size must be non-negative or None'):
+            utils_segment_features.StoreWriter(RecordingSaveManyStore(),
+                max_queue_size=-1)
+
+        for max_queue_size in (None, 0):
+            store = RecordingSaveManyStore()
+            with utils_segment_features.StoreWriter(store,
+                max_queue_size=max_queue_size) as writer:
+                writer.submit(['a'])
+            self.assertEqual(store.calls, [['a']])
+
+    def test_empty_submit_is_no_op(self):
+        store = RecordingSaveManyStore()
+
+        with utils_segment_features.StoreWriter(store) as writer:
+            writer.submit([])
+
+        self.assertEqual(store.calls, [])
 
 
 class TestSegmentTimes(unittest.TestCase):
@@ -322,6 +445,47 @@ class TestComputeEmbeddings(unittest.TestCase):
             np.testing.assert_allclose(kwargs.pop('ends'), [1.8, 1.9])
             self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
                 'numpify_output': True, 'batch_size': 2})
+
+    def test_batch_uses_writer_and_queue_size(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            outputs = [
+                types.SimpleNamespace(name='output-a'),
+                types.SimpleNamespace(name='output-b'),
+            ]
+            save_items = [
+                [{'item': 'a'}],
+                [{'item': 'b'}],
+            ]
+            with mock.patch.object(store, 'load_model',
+                return_value='model'):
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True,
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_segment_features,
+                        'make_embedding_items',
+                        side_effect=save_items) as make_items:
+                        with mock.patch.object(batch_segment_features,
+                            'StoreWriter', RecordingBatchWriter):
+                            with mock.patch('builtins.print'):
+                                compute_embeddings_batch(
+                                    [segment_a, segment_b], 3, 'wav2vec2',
+                                    store=store, store_queue_size=9)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.store, store)
+            self.assertEqual(writer.max_queue_size, 9)
+            self.assertEqual(writer.submitted, save_items)
+            self.assertEqual(make_items.call_args_list, [
+                mock.call(outputs[0], segment_a, 500, [3], 'wav2vec2',
+                    store, None),
+                mock.call(outputs[1], segment_b, 500, [3], 'wav2vec2',
+                    store, None),
+            ])
 
     def test_batch_mixed_cache_only_stores_missing_layers(self):
         tmpdir, store = _make_store()
@@ -821,6 +985,53 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
             self.assertEqual(kwargs, {'model_pt': 'model', 'gpu': False,
                 'batch_size': 2})
 
+    def test_batch_uses_writer_and_queue_size(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2',
+                np.array([[10.0, 11.0], [20.0, 21.0]]))
+            outputs = [
+                np.array([[0, 1], [1, 0]]),
+                np.array([[1, 1], [0, 0]]),
+            ]
+            save_items = [
+                {'item': 'a'},
+                {'item': 'b'},
+            ]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'iter_filename_batch_to_codebook_indices',
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_codebook_indices,
+                        'make_codebook_indices_item',
+                        side_effect=save_items) as make_item:
+                        with mock.patch.object(batch_codebook_indices,
+                            'StoreWriter', RecordingBatchWriter):
+                            with mock.patch('builtins.print'):
+                                compute_codebook_indices_batch(
+                                    [segment_a, segment_b], 'wav2vec2',
+                                    store=store, store_queue_size=8)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.store, store)
+            self.assertEqual(writer.max_queue_size, 8)
+            self.assertEqual(writer.submitted, [
+                [save_items[0]],
+                [save_items[1]],
+            ])
+            self.assertEqual(make_item.call_args_list, [
+                mock.call(outputs[0], segment_a, 500, 'wav2vec2', store,
+                    None),
+                mock.call(outputs[1], segment_b, 500, 'wav2vec2', store,
+                    None),
+            ])
+
     def test_batch_does_not_overwrite_existing_matrix(self):
         tmpdir, store = _make_store()
         with tmpdir:
@@ -889,6 +1100,48 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
                                 compute_codebook_indices_batch(
                                     [segment_a, segment_b], 'wav2vec2',
                                     store=store)
+
+    def test_batch_output_count_mismatch_keeps_submitted_writes(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_a = _make_segment(key=_pk('aabb'))
+            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
+                end_seconds=1.4)
+            matrix = np.array([
+                [10.0, 11.0],
+                [20.0, 21.0],
+                [30.0, 31.0],
+                [40.0, 41.0],
+            ])
+            outputs = [np.array([[0, 1], [2, 3], [1, 0]])]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'load_codebook', return_value=matrix):
+                    with mock.patch.object(
+                        batch_codebook_indices.wav2vec2_codebook,
+                        'iter_filename_batch_to_codebook_indices',
+                        return_value=iter(outputs)):
+                        with mock.patch.object(
+                            utils_segment_features.frame, 'Frames',
+                            side_effect=lambda n_frames, start_time:
+                            FakeFrames(n_frames, start_time, [0, 2]),
+                            create=True):
+                            with self.assertRaisesRegex(ValueError,
+                                'zip\\(\\) argument'):
+                                compute_codebook_indices_batch(
+                                    [segment_a, segment_b], 'wav2vec2',
+                                    store=store)
+
+            key_a = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
+            key_b = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
+
+            np.testing.assert_array_equal(store.load(key_a),
+                np.array([[0, 1], [1, 0]]))
+            self.assertIsNone(store.load_metadata(key_b))
 
 
 if __name__ == '__main__':

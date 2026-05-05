@@ -5,14 +5,15 @@ import echoframe
 import to_vector
 
 from .utils_segment_features import (
+    StoreWriter,
+    make_embedding_items,
     normalise_layers, segment_times,
-    store_embeddings_from_outputs,
 )
 
 
 def compute_embeddings_batch(segments, layers, model_name, collar=500,
     store=None, store_root='echoframe', gpu=False, tags=None,
-    batch_size=None):
+    batch_size=None, store_queue_size=4):
     '''Compute and store embeddings for multiple segment objects.
     segments:             iterable of phraser segment objects
     layers:               layer index or iterable of layer indices
@@ -23,6 +24,7 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     gpu:                  whether to run vectorization on GPU
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
+    store_queue_size:     queued save chunks before compute waits
     '''
     layers_list = normalise_layers(layers)
     if store is None: store = echoframe.Store(store_root)
@@ -35,10 +37,12 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
         starts=missing.starts, ends=missing.ends, model=model, gpu=gpu,
         numpify_output=True, batch_size=batch_size)
     output_count = 0
-    for output, item in zip(outputs, missing.missing, strict=True):
-        store_embeddings_from_outputs(output, item.segment, collar,
-            item.missing_layers, model_name, store, tags)
-        output_count += 1
+    with StoreWriter(store, max_queue_size=store_queue_size) as writer:
+        for output, item in zip(outputs, missing.missing, strict=True):
+            save_items = make_embedding_items(output, item.segment, collar,
+                item.missing_layers, model_name, store, tags)
+            writer.submit(save_items)
+            output_count += 1
     print(f'embeddings computed for {output_count} segments')
 
 

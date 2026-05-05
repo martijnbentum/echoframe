@@ -367,7 +367,7 @@ class TestStoreIo(unittest.TestCase):
             store = make_fake_store(tmpdir)
             self.assertEqual(_find_many(store, []), [])
             self.assertEqual(_load_many_queries(store, []), [])
-            self.assertEqual(store.save_many([]), [])
+            self.assertEqual(store.save_many([]), 0)
             self.assertEqual(store.add_tags_many([], ['exp-a']), [])
             self.assertEqual(store.remove_tags_many([], ['exp-a']), [])
             self.assertIsNone(_delete(store, phraser_key='missing',

@@ -58,8 +58,11 @@ class TestStorageRuntime(unittest.TestCase):
 
             with mock.patch.object(h5_module, 'File',
                 side_effect=counting_file):
-                stored = store.save_many(items)
+                stored_count = store.save_many(items)
+            keys = [item['echoframe_key'] for item in items]
+            stored = store.load_many_metadata(keys)
 
+        self.assertEqual(stored_count, 2)
         self.assertEqual(len(write_paths), 1)
         self.assertEqual(stored[0].shard_id, stored[1].shard_id)
 
@@ -94,8 +97,11 @@ class TestStorageRuntime(unittest.TestCase):
                     layer=1, data=np.ones(8, dtype='uint8')),
             ]
 
-            stored = store.save_many(items)
+            stored_count = store.save_many(items)
+            keys = [item['echoframe_key'] for item in items]
+            stored = store.load_many_metadata(keys)
 
+        self.assertEqual(stored_count, 2)
         self.assertEqual(stored[0].shard_id,
             'wav2vec2_hidden_state_0001')
         self.assertEqual(stored[1].shard_id,

@@ -47,9 +47,9 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
         missing.audio_filenames, starts=missing.starts, ends=missing.ends,
         model_pt=model, gpu=gpu, batch_size=batch_size)
     segments = [item.segment for item in missing.missing]
-    stored = batch_store_codebook_indices(outputs, segments, collar,
+    stored_count = batch_store_codebook_indices(outputs, segments, collar,
         model_name, store, tags)
-    print(f'codebook indices computed for {len(stored)} segments')
+    print(f'codebook indices computed for {stored_count} segments')
 
 
 class SegmentRequest:

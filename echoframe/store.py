@@ -168,7 +168,7 @@ class Store:
             prepared.append(prepared_item)
         stored_metadatas = self.storage.store_many(prepared)
         self.index.save_many(stored_metadatas)
-        return stored_metadatas
+        return len(stored_metadatas)
 
     def load_metadata(self, echoframe_key) :
         '''Load one metadata record by echoframe key.'''

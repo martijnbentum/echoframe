@@ -59,8 +59,8 @@ def compute_codebook_indices(segment, model_name, collar=500, store=None,
     store_codebook_indices_from_artifacts(artifacts, segment, collar,
         model_name, store, tags)
     if codebook_matrix_missing(store, model_name):
-        store_codebook_matrix(artifacts.codebook_matrix, phraser_key, collar,
-            model_name, store, tags)
+        store_codebook_matrix(artifacts.codebook_matrix, model_name, store,
+            tags)
     if verbose: print('codebook indices computed and stored')
 
 

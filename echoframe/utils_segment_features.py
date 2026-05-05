@@ -119,8 +119,7 @@ def make_codebook_indices_item(indices, segment, collar, model_name, store,
     }
 
 
-def store_codebook_matrix(codebook_matrix, phraser_key, collar,
-    model_name, store, tags):
+def store_codebook_matrix(codebook_matrix, model_name, store, tags):
     '''Persist the shared codebook matrix for one model.'''
     cm_key = store.make_echoframe_key('codebook_matrix', model_name=model_name)
     codebook_matrix = np.asarray(codebook_matrix)

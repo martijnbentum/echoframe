@@ -40,9 +40,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     model = store.load_codebook_model(model_name, gpu=gpu)
     if missing.matrix_missing:
         codebook_matrix = wav2vec2_codebook.load_codebook(model)
-        first = missing.missing[0]
-        store_codebook_matrix(codebook_matrix, first.segment.key, collar,
-            model_name, store, tags)
+        store_codebook_matrix(codebook_matrix, model_name, store, tags)
     outputs = wav2vec2_codebook.iter_filename_batch_to_codebook_indices(
         missing.audio_filenames, starts=missing.starts, ends=missing.ends,
         model_pt=model, gpu=gpu, batch_size=batch_size)

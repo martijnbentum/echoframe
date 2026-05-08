@@ -261,6 +261,13 @@ class Store:
         metadata_list = list(metadata_list)
         return self.storage.load_many(metadata_list)
 
+    def phraser_key_to_echoframe_key(self, phraser_key, model_name, 
+        layer = None, collar=500):
+        echoframe_key = self.make_echoframe_key('codebook_indices', 
+            model_name=model_name, phraser_key=phraser_key, layer=layer, 
+            collar=collar)
+        return echoframe_key
+
     def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object.
         echoframe_key:  canonical echoframe identifier
@@ -275,36 +282,6 @@ class Store:
             raise ValueError('echoframe_keys must be a list or tuple')
         return Embeddings.from_echoframe_keys(self, echoframe_keys)
 
-    def phraser_key_to_embedding(self, phraser_key, model_name, layer,
-        collar=500):
-        '''Load one typed Embedding object from one phraser key.
-        phraser_key:  unique phraser object key
-        model_name:   registered model name
-        layer:        layer index to load
-        collar:       collar in milliseconds
-        '''
-        echoframe_key = self.make_echoframe_key('hidden_state',
-            model_name=model_name, phraser_key=phraser_key, layer=layer,
-            collar=collar)
-        return self.load_embedding(echoframe_key)
-
-    def phraser_keys_to_embeddings(self, phraser_keys, model_name, layer,
-        collar=500):
-        '''Load typed Embeddings for multiple phraser keys.
-        phraser_keys:  unique phraser object keys
-        model_name:    registered model name
-        layer:         layer index to load
-        collar:        collar in milliseconds
-        '''
-        if not isinstance(phraser_keys, (list, tuple)):
-            raise ValueError('phraser_keys must be a list or tuple')
-        echoframe_keys = []
-        for phraser_key in phraser_keys:
-            echoframe_key = self.make_echoframe_key('hidden_state',
-                model_name=model_name, phraser_key=phraser_key, layer=layer,
-                collar=collar)
-            echoframe_keys.append(echoframe_key)
-        return self.load_embeddings(echoframe_keys)
 
     def load_codevector(self, echoframe_key):
         '''Load one typed Codevector object.

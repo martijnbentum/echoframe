@@ -40,13 +40,9 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     output_count = 0
     with StoreWriter(store, max_queue_size=store_queue_size) as writer:
         for output, item in zip(outputs, missing.missing, strict=True):
-            if phraser_source_id is None:
-                save_items = make_embedding_items(output, item.segment, collar,
-                    item.missing_layers, model_name, store, tags)
-            else:
-                save_items = make_embedding_items(output, item.segment, collar,
-                    item.missing_layers, model_name, store, tags,
-                    phraser_source_id=phraser_source_id)
+            save_items = make_embedding_items(output, item.segment, collar,
+                item.missing_layers, model_name, store, tags,
+                phraser_source_id=phraser_source_id)
             writer.submit(save_items)
             output_count += 1
     print(f'embeddings computed for {output_count} segments')

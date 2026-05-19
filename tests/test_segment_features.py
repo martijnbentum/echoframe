@@ -482,9 +482,9 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(writer.submitted, save_items)
             self.assertEqual(make_items.call_args_list, [
                 mock.call(outputs[0], segment_a, 500, [3], 'wav2vec2',
-                    store, None),
+                    store, None, phraser_source_id=None),
                 mock.call(outputs[1], segment_b, 500, [3], 'wav2vec2',
-                    store, None),
+                    store, None, phraser_source_id=None),
             ])
 
     def test_batch_mixed_cache_only_stores_missing_layers(self):

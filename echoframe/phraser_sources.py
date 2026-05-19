@@ -34,7 +34,10 @@ class PhraserSource:
         '''Build one source record from serialized config data.'''
         if not isinstance(data, dict):
             raise ValueError('phraser source records must be JSON objects')
-        return cls(source_id=source_id, root=data.get('root'))
+        if 'root' not in data:
+            message = "phraser source config is missing required 'root' key"
+            raise ValueError(message)
+        return cls(source_id=source_id, root=data['root'])
 
     def _validate(self):
         _validate_source_id(self.source_id)

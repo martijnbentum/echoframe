@@ -269,6 +269,10 @@ class TestPhraserSources(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'already registered'):
                 store.register_phraser_source('cgn-main', '/other')
 
+    def test_phraser_source_config_requires_root_key(self):
+        with self.assertRaisesRegex(ValueError, "missing required 'root' key"):
+            config_from_dict({'phraser_sources': {'cgn-main': {}}})
+
     def test_select_phraser_source_id_uses_only_registered_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)

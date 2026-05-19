@@ -143,8 +143,12 @@ class Store:
         source = self.load_phraser_source(source_id)
         return source.open().load(phraser_key)
 
-    def backfill_phraser_source_id(self, phraser_source_id):
-        '''Set phraser_source_id on metadata records that do not have one.'''
+    def backfill_phraser_source_id(self, phraser_source_id=None):
+        '''Set phraser_source_id on metadata records that do not have one.
+
+        If phraser_source_id is None, use the only registered phraser source.
+        Raises when the store has zero or multiple registered sources.
+        '''
         source_id = self.select_phraser_source_id(phraser_source_id)
         metadatas = self.index.all_metadatas(store=self)
         updates = []

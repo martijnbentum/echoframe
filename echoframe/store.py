@@ -98,8 +98,6 @@ class Store:
 
     def load_phraser_source(self, source_id):
         '''Return one registered phraser source, or None.'''
-        if not hasattr(self, '_attached_phraser_sources'):
-            self._attached_phraser_sources = {}
         if source_id in self._attached_phraser_sources:
             return self._attached_phraser_sources[source_id]
         return self.registry.load_phraser_source(source_id)

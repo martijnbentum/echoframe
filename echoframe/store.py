@@ -105,7 +105,7 @@ class Store:
     def list_phraser_sources(self):
         '''Return all registered phraser source records.'''
         sources = self.registry.list_phraser_sources()
-        attached = getattr(self, '_attached_phraser_sources', {})
+        attached = self._attached_phraser_sources
         by_id = {source.source_id: source for source in sources}
         by_id.update(attached)
         return [by_id[source_id] for source_id in sorted(by_id)]

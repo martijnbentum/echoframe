@@ -52,15 +52,15 @@ def compute_embeddings_for_segment(segment, collar, model, gpu):
 
 
 def store_embeddings_from_outputs(outputs, segment, collar, layers,
-    model_name, store, tags):
+    model_name, store, tags, phraser_source_id=None):
     '''Select segment frames from model outputs and store layer specific data.'''
     items = make_embedding_items(outputs, segment, collar, layers, model_name,
-        store, tags)
+        store, tags, phraser_source_id=phraser_source_id)
     return store.save_many(items)
 
 
 def make_embedding_items(outputs, segment, collar, layers, model_name, store,
-    tags):
+    tags, phraser_source_id=None):
     '''Build save_many items for selected segment frames.'''
     validate_hidden_states(outputs, layers)
     indices = get_selected_frame_indices(outputs, segment, collar, layers)
@@ -73,7 +73,8 @@ def make_embedding_items(outputs, segment, collar, layers, model_name, store,
             model_name=model_name, phraser_key=phraser_key, layer=layer,
             collar=collar)
         metadata = EchoframeMetadata(echoframe_key=echoframe_key,
-            store=store, model_name=model_name, tags=tags)
+            store=store, model_name=model_name, tags=tags,
+            phraser_source_id=phraser_source_id)
         items.append({
             'echoframe_key': metadata.echoframe_key,
             'metadata': metadata,
@@ -91,22 +92,23 @@ def compute_codebook_indices(segment, collar, model, gpu):
 
 
 def store_codebook_indices_from_artifacts(artifacts, segment, collar,
-    model_name, store, tags):
+    model_name, store, tags, phraser_source_id=None):
     '''Persist selected codebook indices for one segment from artifacts.'''
     validate_codebook_artifacts(artifacts)
     store_codebook_indices(artifacts.indices, segment, collar, model_name,
-        store, tags)
+        store, tags, phraser_source_id=phraser_source_id)
 
 
-def store_codebook_indices(indices, segment, collar, model_name, store, tags):
+def store_codebook_indices(indices, segment, collar, model_name, store, tags,
+    phraser_source_id=None):
     '''Persist selected codebook indices for one segment.'''
     item = make_codebook_indices_item(indices, segment, collar, model_name,
-        store, tags)
+        store, tags, phraser_source_id=phraser_source_id)
     return store.save(item['echoframe_key'], item['metadata'], item['data'])
 
 
 def make_codebook_indices_item(indices, segment, collar, model_name, store,
-    tags):
+    tags, phraser_source_id=None):
     '''Build one save_many item for selected codebook indices.'''
     indices = np.asarray(indices)
     validate_codebook_indices(indices)
@@ -117,7 +119,8 @@ def make_codebook_indices_item(indices, segment, collar, model_name, store,
     ci_key = store.make_echoframe_key('codebook_indices',
         model_name=model_name, phraser_key=phraser_key, collar=collar)
     ci_metadata = EchoframeMetadata(echoframe_key=ci_key, store=store,
-        model_name=model_name, tags=tags)
+        model_name=model_name, tags=tags,
+        phraser_source_id=phraser_source_id)
     return {
         'echoframe_key': ci_metadata.echoframe_key,
         'metadata': ci_metadata,

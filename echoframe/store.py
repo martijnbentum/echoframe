@@ -37,6 +37,7 @@ class Store:
         self.registry = ModelRegistry(self.config_path)
         self._model = None
         self._model_name = None
+        self._attached_phraser_sources = {}
 
     def __repr__(self):
         m = f'Store(root={str(self.root)})'
@@ -74,6 +75,86 @@ class Store:
         Returns a ModelMetadata object, or None.
         '''
         return self.registry.load_model_metadata(model_name)
+
+    def register_phraser_source(self, source_id, root):
+        '''Register one phraser source in this store config.'''
+        return self.registry.register_phraser_source(source_id, root)
+
+    def attach_phraser_store(self, source_id, phraser_store, root=None):
+        '''Attach an already-open phraser Store for this process.
+        Registers the source when it is not already present.
+        '''
+        source = self.load_phraser_source(source_id)
+        if source is None:
+            if root is None:
+                root = getattr(phraser_store, 'path', None)
+            if root is None:
+                raise ValueError('root is required for an unregistered '
+                    'phraser store')
+            source = self.register_phraser_source(source_id, root)
+        source._phraser_store = phraser_store
+        self._attached_phraser_sources[source_id] = source
+        return source
+
+    def load_phraser_source(self, source_id):
+        '''Return one registered phraser source, or None.'''
+        if not hasattr(self, '_attached_phraser_sources'):
+            self._attached_phraser_sources = {}
+        if source_id in self._attached_phraser_sources:
+            return self._attached_phraser_sources[source_id]
+        return self.registry.load_phraser_source(source_id)
+
+    def list_phraser_sources(self):
+        '''Return all registered phraser source records.'''
+        sources = self.registry.list_phraser_sources()
+        attached = getattr(self, '_attached_phraser_sources', {})
+        by_id = {source.source_id: source for source in sources}
+        by_id.update(attached)
+        return [by_id[source_id] for source_id in sorted(by_id)]
+
+    def list_phraser_source_ids(self):
+        '''Return registered phraser source identifiers.'''
+        return [source.source_id for source in self.list_phraser_sources()]
+
+    def select_phraser_source_id(self, phraser_source_id=None):
+        '''Return the explicit source id, or the only registered source.
+
+        Raises when no source id is provided and the store has zero or multiple
+        registered phraser sources.
+        '''
+        if phraser_source_id is not None:
+            if self.load_phraser_source(phraser_source_id) is None:
+                raise ValueError(
+                    f'unknown phraser_source_id: {phraser_source_id!r}')
+            return phraser_source_id
+        source_ids = self.list_phraser_source_ids()
+        if len(source_ids) == 1:
+            return source_ids[0]
+        if not source_ids:
+            message = 'metadata has no phraser_source_id and this echoframe '
+            message += 'store has no registered phraser sources'
+            raise ValueError(message)
+        message = 'metadata has no phraser_source_id and this echoframe '
+        message += 'store has multiple registered phraser sources: '
+        message += f'{source_ids}'
+        raise ValueError(message)
+
+    def load_phraser_object(self, phraser_key, phraser_source_id=None):
+        '''Load one phraser object through a registered phraser source.'''
+        source_id = self.select_phraser_source_id(phraser_source_id)
+        source = self.load_phraser_source(source_id)
+        return source.open().load(phraser_key)
+
+    def backfill_phraser_source_id(self, phraser_source_id):
+        '''Set phraser_source_id on metadata records that do not have one.'''
+        source_id = self.select_phraser_source_id(phraser_source_id)
+        metadatas = self.index.all_metadatas(store=self)
+        updates = []
+        for metadata in metadatas:
+            if metadata.phraser_source_id is None:
+                updates.append(metadata.copy(phraser_source_id=source_id))
+        self.index.save_many(updates)
+        return len(updates)
 
     def load_model(self, model_name, gpu=False, flush_model_cache=False):
         '''Load one registered model and cache only one model.
@@ -267,6 +348,24 @@ class Store:
             model_name=model_name, phraser_key=phraser_key, layer=layer, 
             collar=collar)
         return echoframe_key
+
+    def phraser_key_to_embedding(self, phraser_key, model_name, layer,
+        collar=500):
+        '''Load one hidden-state embedding from a phraser key.'''
+        echoframe_key = self.make_echoframe_key('hidden_state',
+            model_name=model_name, phraser_key=phraser_key, layer=layer,
+            collar=collar)
+        return self.load_embedding(echoframe_key)
+
+    def phraser_keys_to_embeddings(self, phraser_keys, model_name, layer,
+        collar=500):
+        '''Load hidden-state embeddings from multiple phraser keys.'''
+        echoframe_keys = [
+            self.make_echoframe_key('hidden_state', model_name=model_name,
+                phraser_key=phraser_key, layer=layer, collar=collar)
+            for phraser_key in phraser_keys
+        ]
+        return self.load_embeddings(echoframe_keys)
 
     def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object.
@@ -516,9 +615,10 @@ class Store:
                 file_sizes.append(filename.stat().st_size)
         return sum(file_sizes)
 
-    def _make_metadata(self, echoframe_key, tags=None):
+    def _make_metadata(self, echoframe_key, tags=None,
+        phraser_source_id=None):
         metadata = EchoframeMetadata(echoframe_key=echoframe_key, tags=tags,
-            store=self)
+            store=self, phraser_source_id=phraser_source_id)
         return metadata
 
 def _load_phraser_models_module():

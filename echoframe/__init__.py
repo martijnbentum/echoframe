@@ -5,6 +5,7 @@ from .embeddings import Embeddings
 from .metadata import EchoframeMetadata, OUTPUT_TYPES
 from .metadata import STABLE_METADATA_FIELDS, filter_metadata
 from .model_registry import ModelMetadata
+from .phraser_sources import PhraserSource
 from .store import Store
 
 __all__ = [
@@ -15,6 +16,7 @@ __all__ = [
     'OUTPUT_TYPES',
     'EchoframeMetadata',
     'ModelMetadata',
+    'PhraserSource',
     'STABLE_METADATA_FIELDS',
     'filter_metadata',
 ]

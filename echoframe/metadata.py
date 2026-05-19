@@ -9,7 +9,8 @@ from .util_formatting import format_pretty_dict, truncate_text
 class EchoframeMetadata:
     '''Metadata for one stored echoframe output.'''
 
-    def __init__(self, echoframe_key, store = None, tags=None, model_name=None):
+    def __init__(self, echoframe_key, store = None, tags=None, model_name=None,
+        phraser_source_id=None):
         '''Initialize one metadata record.
         echoframe_key:  canonical binary echoframe key
         store:          store used for model-name resolution
@@ -18,6 +19,7 @@ class EchoframeMetadata:
         self.echoframe_key = echoframe_key
         self.store = store
         self._model_name = model_name
+        self.phraser_source_id = phraser_source_id
         self._set_echoframe_key_attributes()
         self.shard_id = None
         self.dataset_path = None
@@ -66,11 +68,12 @@ class EchoframeMetadata:
     def phraser_object(self):
         '''Load the linked phraser object when phraser is available.'''
         if hasattr(self, '_phraser_object'): return self._phraser_object
-        from phraser import models as phraser_models
-        try: self._phraser_object = phraser_models.cache.load(self.phraser_key)
-        except Exception as e:
-            print(f"Error loading phraser object: {self.phraser_key}: {e}")
-            self._phraser_object = None
+        if self.store is None:
+            raise ValueError('store is not attached to metadata')
+        source_id = self.store.select_phraser_source_id(
+            self.phraser_source_id)
+        self._phraser_object = self.store.load_phraser_object(
+            self.phraser_key, source_id)
         return self._phraser_object
 
     @property
@@ -85,6 +88,7 @@ class EchoframeMetadata:
         '''Serialize one metadata record to a JSON-friendly dictionary.'''
         return {
             'model_name': self.model_name,
+            'phraser_source_id': self.phraser_source_id,
             'shard_id': self.shard_id,
             'dataset_path': self.dataset_path,
             'shape': self.shape,
@@ -101,6 +105,7 @@ class EchoframeMetadata:
             echoframe_key=echoframe_key,
             store=store,
             model_name=data.pop('model_name', None),
+            phraser_source_id=data.pop('phraser_source_id', None),
             tags=data.pop('tags', None),
             shard_id=data.pop('shard_id', None),
             dataset_path=data.pop('dataset_path', None),
@@ -124,6 +129,8 @@ class EchoframeMetadata:
             echoframe_key=self.echoframe_key,
             store=self.store,
             model_name=updates.pop('model_name', self._model_name),
+            phraser_source_id=updates.pop('phraser_source_id',
+                self.phraser_source_id),
             tags=updates.pop('tags', self.tags),
             shard_id=updates.pop('shard_id', self.shard_id),
             dataset_path=updates.pop('dataset_path', self.dataset_path),
@@ -132,10 +139,11 @@ class EchoframeMetadata:
         return metadata
 
     @classmethod
-    def _from_state(cls, echoframe_key, store, model_name=None, tags=None,
-        shard_id=None, dataset_path=None, shape=None, created_at=None):
+    def _from_state(cls, echoframe_key, store, model_name=None,
+        phraser_source_id=None, tags=None, shard_id=None, dataset_path=None,
+        shape=None, created_at=None):
         metadata = cls(echoframe_key=echoframe_key, store=store, tags=tags,
-            model_name=model_name)
+            model_name=model_name, phraser_source_id=phraser_source_id)
         metadata.shard_id = shard_id
         metadata.dataset_path = dataset_path
         metadata.shape = shape
@@ -155,14 +163,19 @@ class EchoframeMetadata:
         storage = _display_storage_dict(self)
         created_at = storage.pop('created_at', None)
         data.update(storage)
-        if self.phraser_object is not None:
-            data['phraser_object'] = repr(self.phraser_object)
+        try:
+            phraser_object = self.phraser_object
+        except Exception:
+            phraser_object = None
+        if phraser_object is not None:
+            data['phraser_object'] = repr(phraser_object)
         data['created_at'] = created_at
         return data
 
     def _display_header_dict(self):
         data = {'output_type': self.output_type}
         data['model_name'] = self.model_name
+        data['phraser_source_id'] = self.phraser_source_id
         data['phraser_key'] = self.phraser_key
         data['collar'] = self.collar
         data['layer'] = self.layer

@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from .phraser_sources import PhraserSource
 from . import util_formatting
 
 
@@ -95,6 +96,35 @@ class ModelRegistry:
         self.write_config(config)
         self._model_name_to_id.clear()
         return stored
+
+    def register_phraser_source(self, source_id, root):
+        '''Register one phraser source in config.json.
+        source_id:   stable source identifier stored on metadata
+        root:        phraser store root/path
+        '''
+        source = PhraserSource(source_id=source_id, root=root)
+        config = self.read_config()
+        if source_id in config['phraser_sources']:
+            message = f'phraser_source_id already registered: {source_id!r}'
+            raise ValueError(message)
+        config['phraser_sources'][source_id] = source
+        self.write_config(config)
+        return source
+
+    def load_phraser_source(self, source_id):
+        '''Return one registered phraser source, or None.'''
+        config = self.read_config()
+        return config['phraser_sources'].get(source_id)
+
+    def list_phraser_sources(self):
+        '''Return all registered phraser source records.'''
+        config = self.read_config()
+        return list(config['phraser_sources'].values())
+
+    def list_phraser_source_ids(self):
+        '''Return registered phraser source identifiers.'''
+        config = self.read_config()
+        return sorted(config['phraser_sources'])
 
     def read_config_dict(self):
         '''Return the raw serialized config dictionary.'''
@@ -202,6 +232,13 @@ def config_from_dict(data):
         record['model_name'] = model_name
         models[model_name] = ModelMetadata.from_dict(record)
     config['models'] = models
+    raw_sources = data.get('phraser_sources', {})
+    if not isinstance(raw_sources, dict):
+        raise ValueError('config.json phraser_sources must be a JSON object')
+    sources = {}
+    for source_id, record in raw_sources.items():
+        sources[source_id] = PhraserSource.from_dict(source_id, record)
+    config['phraser_sources'] = sources
     return config
 
 
@@ -210,7 +247,10 @@ def config_to_dict(config):
     models = {}
     for model_name, metadata in config['models'].items():
         models[model_name] = metadata.to_dict()
-    return {'models': models}
+    phraser_sources = {}
+    for source_id, source in config.get('phraser_sources', {}).items():
+        phraser_sources[source_id] = source.to_dict()
+    return {'models': models, 'phraser_sources': phraser_sources}
 
 
 def check_model_name_conflict(config, metadata):
@@ -282,7 +322,7 @@ def _next_model_id(model_metadatas):
 
 
 def _default_config():
-    return {'models': {}}
+    return {'models': {}, 'phraser_sources': {}}
 
 
 def _validate_model_name(model_name):

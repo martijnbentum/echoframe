@@ -238,12 +238,68 @@ class TestPersistence(unittest.TestCase):
             payload = json.loads(config_path.read_text())
         self.assertEqual(payload['models']['bert-base-uncased']['model_id'], 0)
         self.assertNotIn('output_type_ids', payload)
+        self.assertEqual(payload['phraser_sources'], {})
+
+
+class TestPhraserSources(unittest.TestCase):
+
+    def test_register_phraser_source_persists_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            source = store.register_phraser_source('cgn-main',
+                '/data/cgn/phraser.lmdb')
+            payload = json.loads((Path(tmp) / 'config.json').read_text())
+        self.assertEqual(source.source_id, 'cgn-main')
+        self.assertEqual(
+            payload['phraser_sources']['cgn-main']['root'],
+            '/data/cgn/phraser.lmdb')
+
+    def test_load_phraser_source_from_second_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = _make_store(tmp)
+            first.register_phraser_source('cgn-main', '/data/cgn')
+            second = _make_store(tmp)
+            source = second.load_phraser_source('cgn-main')
+        self.assertEqual(source.root, '/data/cgn')
+
+    def test_duplicate_phraser_source_id_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            store.register_phraser_source('cgn-main', '/data/cgn')
+            with self.assertRaisesRegex(ValueError, 'already registered'):
+                store.register_phraser_source('cgn-main', '/other')
+
+    def test_select_phraser_source_id_uses_only_registered_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            store.register_phraser_source('cgn-main', '/data/cgn')
+            selected = store.select_phraser_source_id()
+        self.assertEqual(selected, 'cgn-main')
+
+    def test_select_phraser_source_id_rejects_ambiguous_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            store.register_phraser_source('cgn-main', '/data/cgn')
+            store.register_phraser_source('cgn-alt', '/data/cgn-alt')
+            with self.assertRaisesRegex(ValueError, 'multiple registered'):
+                store.select_phraser_source_id()
+
+    def test_attach_phraser_store_allows_runtime_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            phraser_store = type('FakePhraserStore', (), {
+                'path': '/data/cgn',
+                'load': lambda self, key: ('loaded', key),
+            })()
+            store.attach_phraser_store('cgn-main', phraser_store)
+            loaded = store.load_phraser_object(b'phrase-key')
+        self.assertEqual(loaded, ('loaded', b'phrase-key'))
 
     def test_read_config_dict_returns_default_when_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             config = store.registry.read_config_dict()
-        self.assertEqual(config, {'models': {}})
+        self.assertEqual(config, {'models': {}, 'phraser_sources': {}})
 
 
 class TestModelMetadataListing(unittest.TestCase):

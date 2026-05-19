@@ -38,6 +38,7 @@ class TestStoreIo(unittest.TestCase):
         self.assertIn('Codevector', echoframe.__all__)
         self.assertIn('Codevectors', echoframe.__all__)
         self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
+        self.assertIn('PhraserSource', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)
         self.assertFalse(hasattr(echoframe, '__version__'))
@@ -346,21 +347,29 @@ class TestStoreIo(unittest.TestCase):
             _put(store, phraser_key='phrase-11', collar=90,
                 model_name='hubert', output_type='hidden_state',
                 layer=5, data=[[3.0]])
-            phraser_models = types.SimpleNamespace(
-                cache=types.SimpleNamespace(load=mock.Mock(
-                    side_effect=lambda key: {
-                        _pk('phrase-10'): types.SimpleNamespace(label='hello'),
-                        _pk('phrase-11'): types.SimpleNamespace(label='world'),
-                    }[key])))
-            fake_phraser = types.SimpleNamespace(models=phraser_models)
-            with mock.patch.dict(sys.modules, {'phraser': fake_phraser}):
-                records = store.find_by_label('hello')
-                filtered = store.find_by_label('hello',
-                    model_name='wav2vec2', layer=6)
+            phraser_store = types.SimpleNamespace(load=mock.Mock(
+                side_effect=lambda key: {
+                    _pk('phrase-10'): types.SimpleNamespace(label='hello'),
+                    _pk('phrase-11'): types.SimpleNamespace(label='world'),
+                }[key]))
+            store.attach_phraser_store('cgn-main', phraser_store,
+                root='/phraser/cgn-main')
+            records = store.find_by_label('hello')
+            filtered = store.find_by_label('hello',
+                model_name='wav2vec2', layer=6)
 
         self.assertEqual(sorted(_hex(item) for item in records),
             sorted([_hex(first), _hex(second)]))
         self.assertEqual([_hex(item) for item in filtered], [_hex(second)])
+
+    def test_find_by_label_requires_unambiguous_phraser_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _put(store, phraser_key='phrase-10', collar=90,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=5, data=[[1.0]])
+            with self.assertRaisesRegex(ValueError, 'no registered'):
+                store.find_by_label('hello')
 
     def test_missing_and_validation_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -436,6 +445,31 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(len(listed), 1)
         self.assertIs(listed[0].store, store)
 
+    def test_metadata_round_trips_phraser_source_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            store.register_model('wav2vec2')
+            echoframe_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=_pk('phrase-1'),
+                layer=7, collar=120)
+            metadata = EchoframeMetadata(echoframe_key, store=store,
+                model_name='wav2vec2', phraser_source_id='cgn-main')
+            stored = store.save(echoframe_key, metadata, [[1.0]])
+            loaded = store.load_metadata(stored.echoframe_key)
+        self.assertEqual(loaded.phraser_source_id, 'cgn-main')
+
+    def test_backfill_phraser_source_id_updates_legacy_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            store.register_phraser_source('cgn-main', '/data/cgn')
+            created = _put(store, phraser_key='phrase-1', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[1.0]])
+            count = store.backfill_phraser_source_id('cgn-main')
+            loaded = store.load_metadata(created.echoframe_key)
+        self.assertEqual(count, 1)
+        self.assertEqual(loaded.phraser_source_id, 'cgn-main')
+
     def test_metadata_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
@@ -451,6 +485,7 @@ class TestStoreIo(unittest.TestCase):
                 found.echoframe_key, store=store)
             retagged = found.with_tags(['review', 'subset-1'])
             self.assertEqual(data['model_name'], 'wav2vec2')
+            self.assertEqual(data['phraser_source_id'], None)
             self.assertEqual(data['shard_id'], found.shard_id)
             self.assertEqual(data['dataset_path'], found.dataset_path)
             self.assertEqual(tuple(data['shape']), found.shape)

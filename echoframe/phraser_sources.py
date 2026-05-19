@@ -1,7 +1,5 @@
 '''Phraser source records for linked phraser databases.'''
 
-from pathlib import Path
-
 
 class PhraserSource:
     '''Persisted reference to a phraser database source.'''
@@ -51,4 +49,3 @@ def _validate_source_id(source_id):
 def _validate_root(root):
     if not isinstance(root, str) or not root.strip():
         raise ValueError('phraser source root must be a non-empty string')
-    Path(root)

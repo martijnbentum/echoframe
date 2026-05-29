@@ -97,7 +97,7 @@ print([record.model_name for record in records])
 Store hidden states for a `phraser` object key:
 
 ```python
-from echoframe.metadata import metadata_class_for_output_type
+from echoframe.metadata import EchoframeMetadata
 
 store = Store('cache')
 store.register_model('wav2vec2')
@@ -110,14 +110,11 @@ echoframe_key = store.make_echoframe_key(
     collar=150,
     layer=7,
 )
-metadata_cls = metadata_class_for_output_type('hidden_state')
-metadata = metadata_cls(
-    phraser_key=phraser_key,
-    collar=150,
+metadata = EchoframeMetadata(
+    echoframe_key,
+    store=store,
     model_name='wav2vec2',
-    layer=7,
     tags=['exp-a', 'speaker-01'],
-    echoframe_key=echoframe_key,
 )
 
 stored = store.save(
@@ -134,32 +131,7 @@ Load a stored output:
 ```python
 payload = store.load(echoframe_key)
 payload = store.metadata_to_payload(stored)
-payloads = store.metadatas_to_payloads([stored], strict=True)
-```
-
-Load hidden-state frames for one object and layer:
-
-```python
-payload = store.load_object_frames(
-    phraser_key,
-    model_name='wav2vec2',
-    layer=7,
-    collar=150,
-)
-
-all_payloads = store.load_object_frames(
-    phraser_key,
-    model_name='wav2vec2',
-    layer=7,
-    collar=None,
-)
-
-for metadata, payload in store.iter_object_frames(
-    phraser_key,
-    model_name='wav2vec2',
-    layer=7,
-):
-    print(metadata.collar, payload)
+payloads = store.metadatas_to_payloads([stored])
 ```
 
 Load one typed embedding:
@@ -321,22 +293,15 @@ Only metadata records without a `phraser_source_id` are updated.
 ## Metadata Contract
 
 `EchoframeMetadata` contains internal and operational fields, but the stable
-public
-contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
+public contract is limited to `echoframe.STABLE_METADATA_FIELDS`:
 
-- `phraser_key`
-- `collar`
 - `model_name`
 - `output_type`
-- `layer`
-- `storage_status`
 - `shard_id`
 - `dataset_path`
 - `shape`
-- `dtype`
 - `tags`
 - `created_at`
-- `deleted_at`
 
 ## Docs
 

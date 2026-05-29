@@ -70,10 +70,8 @@ class EchoframeMetadata:
         if hasattr(self, '_phraser_object'): return self._phraser_object
         if self.store is None:
             raise ValueError('store is not attached to metadata')
-        source_id = self.store.select_phraser_source_id(
-            self.phraser_source_id)
         self._phraser_object = self.store.load_phraser_object(
-            self.phraser_key, source_id)
+            self.phraser_key, self.phraser_source_id)
         return self._phraser_object
 
     @property

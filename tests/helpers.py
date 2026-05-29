@@ -344,16 +344,3 @@ def iter_object_frames(store: Store, *, phraser_key, model_name, layer,
     payloads = [store.load(metadata.echoframe_key)]
     metadata_list = [metadata]
     return zip(metadata_list, payloads)
-
-
-def find_or_compute(store: Store, *, phraser_key, collar, model_name,
-    output_type, layer, compute, collar_match='exact', tags=None,
-    add_tags_on_hit=False):
-    ensure_model(store, model_name)
-    if collar_match != 'exact':
-        raise ValueError('only exact collar_match is supported in test helper')
-    if add_tags_on_hit:
-        raise ValueError('add_tags_on_hit is no longer supported')
-    return store.find_or_compute_segment(phraser_key=pk(phraser_key),
-        collar=collar, model_name=model_name, output_type=output_type,
-        layer=layer, compute=compute, tags=tags)

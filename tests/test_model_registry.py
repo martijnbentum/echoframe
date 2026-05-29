@@ -273,20 +273,20 @@ class TestPhraserSources(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required 'root' key"):
             config_from_dict({'phraser_sources': {'cgn-main': {}}})
 
-    def test_select_phraser_source_id_uses_only_registered_source(self):
+    def test_load_phraser_object_requires_source_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_phraser_source('cgn-main', '/data/cgn')
-            selected = store.select_phraser_source_id()
-        self.assertEqual(selected, 'cgn-main')
+            with self.assertRaisesRegex(ValueError,
+                'phraser_source_id is required'):
+                store.load_phraser_object(b'phrase-key', None)
 
-    def test_select_phraser_source_id_rejects_ambiguous_default(self):
+    def test_load_phraser_object_rejects_unknown_source_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             store.register_phraser_source('cgn-main', '/data/cgn')
-            store.register_phraser_source('cgn-alt', '/data/cgn-alt')
-            with self.assertRaisesRegex(ValueError, 'multiple registered'):
-                store.select_phraser_source_id()
+            with self.assertRaisesRegex(ValueError, 'unknown phraser_source_id'):
+                store.load_phraser_object(b'phrase-key', 'missing')
 
     def test_attach_phraser_store_allows_runtime_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -296,7 +296,7 @@ class TestPhraserSources(unittest.TestCase):
                 'load': lambda self, key: ('loaded', key),
             })()
             store.attach_phraser_store('cgn-main', phraser_store)
-            loaded = store.load_phraser_object(b'phrase-key')
+            loaded = store.load_phraser_object(b'phrase-key', 'cgn-main')
         self.assertEqual(loaded, ('loaded', b'phrase-key'))
 
     def test_read_config_dict_returns_default_when_file_missing(self):

@@ -18,7 +18,6 @@ from tests.helpers import (
     find as _find,
     find_many as _find_many,
     find_one as _find_one,
-    find_or_compute as _find_or_compute,
     hex_key as _hex,
     iter_object_frames as _iter_object_frames,
     load_many_queries as _load_many_queries,
@@ -265,23 +264,6 @@ class TestStoreIo(unittest.TestCase):
         self.assertIsNone(_find_one(store, phraser_key='phrase-1', collar=200,
             model_name='wav2vec2', output_type='hidden_state', layer=1))
 
-    def test_find_or_compute(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = make_fake_store(tmpdir)
-            compute = mock.Mock(return_value=np.array([[1.0, 2.0]]))
-
-            metadata, created = _find_or_compute(store, phraser_key='phrase-1',
-                collar=100, model_name='wav2vec2', output_type='hidden_state',
-                layer=1, compute=compute, tags=['exp-a'])
-            cached, cached_created = _find_or_compute(store,
-                phraser_key='phrase-1', collar=100, model_name='wav2vec2',
-                output_type='hidden_state', layer=1, compute=compute)
-
-        self.assertTrue(created)
-        self.assertFalse(cached_created)
-        self.assertEqual(compute.call_count, 1)
-        self.assertEqual(metadata.echoframe_key, cached.echoframe_key)
-
     def test_tag_queries_and_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
@@ -354,6 +336,7 @@ class TestStoreIo(unittest.TestCase):
                 }[key]))
             store.attach_phraser_store('cgn-main', phraser_store,
                 root='/phraser/cgn-main')
+            store.backfill_phraser_source_id('cgn-main')
             records = store.find_by_label('hello')
             filtered = store.find_by_label('hello',
                 model_name='wav2vec2', layer=6)
@@ -368,7 +351,8 @@ class TestStoreIo(unittest.TestCase):
             _put(store, phraser_key='phrase-10', collar=90,
                 model_name='wav2vec2', output_type='hidden_state',
                 layer=5, data=[[1.0]])
-            with self.assertRaisesRegex(ValueError, 'no registered'):
+            with self.assertRaisesRegex(ValueError,
+                'phraser_source_id is required'):
                 store.find_by_label('hello')
 
     def test_missing_and_validation_cases(self) -> None:

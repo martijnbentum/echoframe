@@ -29,5 +29,15 @@ def phraser_segments_to_phraser_source_id(store, segments):
     raise ValueError('batch segments must come from one phraser source')
 
 
+def phraser_source_id_to_phraser_source(store, phraser_source_id):
+    '''Return the registered phraser source for source id.'''
+    if phraser_source_id is None:
+        raise ValueError('phraser_source_id is required')
+    source = store.load_phraser_source(phraser_source_id)
+    if source is None:
+        raise ValueError(f'unknown phraser_source_id: {phraser_source_id!r}')
+    return source
+
+
 def _normalise_root(root):
     return str(Path(root).expanduser().resolve())

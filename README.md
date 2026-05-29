@@ -129,25 +129,6 @@ stored = store.save(
 print(stored.dataset_path)
 ```
 
-Find stored output or compute it:
-
-```python
-def compute_hidden_state():
-    return [[0.1, 0.2], [0.3, 0.4]]
-
-
-metadata, created = store.find_or_compute(
-    phraser_key=b'phrase-123'.ljust(22, b'\0'),
-    collar=150,
-    model_name='wav2vec2',
-    output_type='hidden_state',
-    layer=7,
-    compute=compute_hidden_state,
-)
-
-print(created)
-```
-
 Load a stored output:
 
 ```python
@@ -309,6 +290,7 @@ stats = store.shard_stats()
 Each store keeps a `config.json` file next to `index.lmdb`. It stores:
 
 - registered model metadata keyed by `model_name`
+- registered phraser sources keyed by `phraser_source_id`
 
 Registered model metadata records contain:
 
@@ -318,6 +300,23 @@ Registered model metadata records contain:
 - `language`
 - `size`
 - `model_name`
+
+### Phraser Source Migration
+
+Older metadata may have `phraser_source_id=None`. Register the phraser source
+and backfill those records explicitly:
+
+```python
+from echoframe import Store
+
+store = Store('cache')
+store.register_phraser_source('cgn-main', '/data/cgn_lmdb')
+updated_count = store.backfill_phraser_source_id('cgn-main')
+
+print(updated_count)
+```
+
+Only metadata records without a `phraser_source_id` are updated.
 
 ## Metadata Contract
 

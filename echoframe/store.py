@@ -12,6 +12,7 @@ from .key_helper import pack_echoframe_key
 from .metadata import EchoframeMetadata, filter_metadata
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
+from .phraser_registry import phraser_source_id_to_phraser_source
 
 
 class Store:
@@ -114,47 +115,20 @@ class Store:
         '''Return registered phraser source identifiers.'''
         return [source.source_id for source in self.list_phraser_sources()]
 
-    def select_phraser_source_id(self, phraser_source_id=None):
-        '''Return the explicit source id, or the only registered source.
-
-        Raises when no source id is provided and the store has zero or multiple
-        registered phraser sources.
-        '''
-        if phraser_source_id is not None:
-            if self.load_phraser_source(phraser_source_id) is None:
-                raise ValueError(
-                    f'unknown phraser_source_id: {phraser_source_id!r}')
-            return phraser_source_id
-        source_ids = self.list_phraser_source_ids()
-        if len(source_ids) == 1:
-            return source_ids[0]
-        if not source_ids:
-            message = 'metadata has no phraser_source_id and this echoframe '
-            message += 'store has no registered phraser sources'
-            raise ValueError(message)
-        message = 'metadata has no phraser_source_id and this echoframe '
-        message += 'store has multiple registered phraser sources: '
-        message += f'{source_ids}'
-        raise ValueError(message)
-
-    def load_phraser_object(self, phraser_key, phraser_source_id=None):
+    def load_phraser_object(self, phraser_key, phraser_source_id):
         '''Load one phraser object through a registered phraser source.'''
-        source_id = self.select_phraser_source_id(phraser_source_id)
-        source = self.load_phraser_source(source_id)
+        source = phraser_source_id_to_phraser_source(self, phraser_source_id)
         return source.open().load(phraser_key)
 
-    def backfill_phraser_source_id(self, phraser_source_id=None):
+    def backfill_phraser_source_id(self, phraser_source_id):
         '''Set phraser_source_id on metadata records that do not have one.
-
-        If phraser_source_id is None, use the only registered phraser source.
-        Raises when the store has zero or multiple registered sources.
         '''
-        source_id = self.select_phraser_source_id(phraser_source_id)
+        source = phraser_source_id_to_phraser_source(self, phraser_source_id)
         metadatas = self.index.all_metadatas(store=self)
         updates = []
         for metadata in metadatas:
             if metadata.phraser_source_id is None:
-                updates.append(metadata.copy(phraser_source_id=source_id))
+                updates.append(metadata.copy(phraser_source_id=source.source_id))
         self.index.save_many(updates)
         return len(updates)
 
@@ -556,34 +530,6 @@ class Store:
         '''Return recent shard health events from storage.'''
         if not hasattr(self.storage, 'get_shard_health_events'): return []
         return self.storage.get_shard_health_events(limit=limit)
-
-    def find_or_compute_segment(self, phraser_key, collar, model_name,
-        output_type, layer, compute, tags=None):
-        '''Load metadata if present, otherwise compute and store a payload.
-        phraser_key:          unique phraser object key
-        collar:               requested collar in milliseconds
-        model_name:           model identifier
-        output_type:          output type to match
-        layer:                layer to match
-        compute:              callback that returns the payload
-        tags:                 optional grouping labels
-        '''
-        metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas, model_name=model_name,
-            output_type=output_type, layer=layer, collar=collar,
-            collar_match='exact')
-        if len(matches) > 1:
-            raise ValueError('multiple metadata records matched {phraser_key}')
-        if matches:
-            metadata = matches[0]
-            return metadata, False
-        data = compute()
-        echoframe_key = self.make_echoframe_key(output_type,
-            model_name=model_name, phraser_key=phraser_key, layer=layer,
-            collar=collar)
-        metadata = self._make_metadata(echoframe_key, tags=tags)
-        metadata = self.save(metadata.echoframe_key, metadata, data)
-        return metadata, True
 
     def verify_integrity(self):
         '''Verify that metadata records point to existing datasets.'''

@@ -4,6 +4,7 @@ from pathlib import Path
 import echoframe
 import to_vector
 
+from .phraser_registry import phraser_segments_to_phraser_source_id
 from .utils_segment_features import (
     StoreWriter,
     make_embedding_items,
@@ -13,7 +14,7 @@ from .utils_segment_features import (
 
 def compute_embeddings_batch(segments, layers, model_name, collar=500,
     store=None, store_root='echoframe', gpu=False, tags=None,
-    batch_size=None, store_queue_size=4, phraser_source_id=None):
+    batch_size=None, store_queue_size=4):
     '''Compute and store embeddings for multiple segment objects.
     segments:             iterable of phraser segment objects
     layers:               layer index or iterable of layer indices
@@ -25,7 +26,6 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
     store_queue_size:     queued save chunks before compute waits
-    phraser_source_id:    optional phraser source id for new metadata
     '''
     layers_list = normalise_layers(layers)
     if store is None: store = echoframe.Store(store_root)
@@ -33,6 +33,10 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     print(missing)
     if not missing.missing:
         return
+    missing_segments = []
+    for item in missing.missing:
+        missing_segments.append(item.segment)
+    source_id = phraser_segments_to_phraser_source_id(store, missing_segments)
     model = store.load_model(model_name, gpu=gpu)
     outputs = to_vector.iter_filename_batch_to_vector(missing.audio_filenames,
         starts=missing.starts, ends=missing.ends, model=model, gpu=gpu,
@@ -42,7 +46,7 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
         for output, item in zip(outputs, missing.missing, strict=True):
             save_items = make_embedding_items(output, item.segment, collar,
                 item.missing_layers, model_name, store, tags,
-                phraser_source_id=phraser_source_id)
+                phraser_source_id=source_id)
             writer.submit(save_items)
             output_count += 1
     print(f'embeddings computed for {output_count} segments')

@@ -25,6 +25,7 @@ if not hasattr(sys.modules['to_vector'], 'wav2vec2_codebook'):
 import echoframe.segment_features as segment_features
 import echoframe.batch_codebook_indices as batch_codebook_indices
 import echoframe.batch_segment_features as batch_segment_features
+import echoframe.phraser_registry as phraser_registry
 import echoframe.utils_segment_features as utils_segment_features
 from echoframe.batch_codebook_indices import (
     MissingIndices,
@@ -55,6 +56,7 @@ def _make_store():
         h5_module=FakeH5Module())
     store = Store(tmpdir.name, index=index, storage=storage)
     _ensure_model(store, 'wav2vec2')
+    store.register_phraser_source('cgn-main', '/data/cgn')
     return tmpdir, store
 
 
@@ -84,14 +86,16 @@ def _put_codebook_matrix(store, phraser_key, collar, model_name, data):
 
 
 def _make_segment(start_seconds=1.0, end_seconds=1.3, key=None,
-    filename=None, duration=2000):
+    filename=None, duration=2000, store=None):
     if key is None:
         key = _pk('aabb')
     if filename is None:
         filename = str(Path(__file__).resolve())
+    if store is None:
+        store = types.SimpleNamespace(path='/data/cgn')
     audio = types.SimpleNamespace(filename=filename, duration=duration)
     return types.SimpleNamespace(key=key, start_seconds=start_seconds,
-        end_seconds=end_seconds, audio=audio)
+        end_seconds=end_seconds, audio=audio, store=store)
 
 
 def _make_selected_frames(indices):
@@ -137,6 +141,38 @@ class RecordingSaveManyStore:
         if self.return_count is not None:
             return self.return_count
         return len(items)
+
+
+class TestPhraserRegistry(unittest.TestCase):
+    def test_segment_to_source_id_uses_bound_store_path(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment()
+            source_id = phraser_registry.phraser_segment_to_phraser_source_id(
+                store, segment)
+        self.assertEqual(source_id, 'cgn-main')
+
+    def test_segment_to_source_id_requires_registered_store(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment_store = types.SimpleNamespace(path='/data/other')
+            segment = _make_segment(store=segment_store)
+            with self.assertRaisesRegex(ValueError,
+                'phraser segment store is not registered'):
+                phraser_registry.phraser_segment_to_phraser_source_id(store,
+                    segment)
+
+    def test_segments_to_source_id_rejects_mixed_sources(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            store.register_phraser_source('cgn-alt', '/data/cgn-alt')
+            first = _make_segment()
+            second_store = types.SimpleNamespace(path='/data/cgn-alt')
+            second = _make_segment(key=_pk('ccdd'), store=second_store)
+            with self.assertRaisesRegex(ValueError,
+                'batch segments must come from one phraser source'):
+                phraser_registry.phraser_segments_to_phraser_source_id(store,
+                    [first, second])
 
 
 class RaisingSaveManyStore:
@@ -482,9 +518,9 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(writer.submitted, save_items)
             self.assertEqual(make_items.call_args_list, [
                 mock.call(outputs[0], segment_a, 500, [3], 'wav2vec2',
-                    store, None, phraser_source_id=None),
+                    store, None, phraser_source_id='cgn-main'),
                 mock.call(outputs[1], segment_b, 500, [3], 'wav2vec2',
-                    store, None, phraser_source_id=None),
+                    store, None, phraser_source_id='cgn-main'),
             ])
 
     def test_batch_mixed_cache_only_stores_missing_layers(self):
@@ -1027,9 +1063,9 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
             ])
             self.assertEqual(make_item.call_args_list, [
                 mock.call(outputs[0], segment_a, 500, 'wav2vec2', store,
-                    None),
+                    None, phraser_source_id='cgn-main'),
                 mock.call(outputs[1], segment_b, 500, 'wav2vec2', store,
-                    None),
+                    None, phraser_source_id='cgn-main'),
             ])
 
     def test_batch_does_not_overwrite_existing_matrix(self):

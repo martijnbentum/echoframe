@@ -121,6 +121,35 @@ class Store:
         source = phraser_source_id_to_phraser_source(self, phraser_source_id)
         return source.open().load(phraser_key)
 
+    def group_metadatas_by_source(self, metadata_list):
+        '''Return {source_id: [metadata, ...]} grouped by phraser_source_id.
+        Skips metadata records without a phraser_key.
+        '''
+        groups = {}
+        for md in metadata_list:
+            if md.phraser_key is None: continue
+            if md.phraser_source_id not in groups:
+                groups[md.phraser_source_id] = []
+            groups[md.phraser_source_id].append(md)
+        return groups
+
+    def collect_labels(self, metadata_list):
+        '''Return {phraser_key: label} for a list of metadata records.
+        Opens each phraser source once.
+        '''
+        labels = {}
+        seen = set()
+        source_id_to_metadata = self.group_metadatas_by_source(metadata_list)
+        for source_id, metadatas in source_id_to_metadata.items():
+            source_store = phraser_source_id_to_phraser_source(self, source_id).open()
+            for md in metadatas:
+                if md.phraser_key in seen: continue
+                seen.add(md.phraser_key)
+                obj = source_store.load(md.phraser_key)
+                label = getattr(obj, 'label', None) if obj else None
+                if label is not None: labels[md.phraser_key] = label
+        return labels
+
     def backfill_phraser_source_id(self, phraser_source_id):
         '''Set phraser_source_id on metadata records that do not have one.
         '''
@@ -449,16 +478,8 @@ class Store:
             output_type=output_type, layer=layer, collar=collar, 
             collar_match=collar_match)
         if len(metadatas) == 0: return None
-            
-        labels_by_key = {}
-        matches = []
-        for metadata in metadatas:
-            phraser_key = metadata.phraser_key
-            if phraser_key not in labels_by_key:
-                labels_by_key[phraser_key] = metadata.label
-            if labels_by_key[phraser_key] == label:
-                matches.append(metadata)
-        return matches
+        labels_by_key = self.collect_labels(metadatas)
+        return [md for md in metadatas if labels_by_key.get(md.phraser_key) == label]
 
     def list_tags(self):
         '''List all known tags.

@@ -229,15 +229,15 @@ class Store:
 
     def load_metadata(self, echoframe_key) :
         '''Load one metadata record by echoframe key.
-        echoframe_key:  canonical metadata identifier can be hex or bytes
+        echoframe_key:  canonical metadata identifier; bytes or hex string
         '''
         metadata = self.index.load(echoframe_key, store=self)
         return metadata
 
     def load_many_metadata(self, echoframe_keys, keep_missing=False):
         '''Load multiple metadata records by echoframe key.
-        echoframe_keys:  iterable of canonical metadata identifiers
-                         can be hex or bytes
+        echoframe_keys:  iterable of canonical metadata identifiers;
+                         each can be bytes or hex string
         keep_missing:    whether to keep None for missing keys or skip them
         '''
         metadata_list = self.index.load_many(echoframe_keys, store=self,
@@ -245,7 +245,9 @@ class Store:
         return metadata_list
 
     def load(self, echoframe_key):
-        '''Load one stored payload by echoframe key.'''
+        '''Load one stored payload by echoframe key.
+        echoframe_key:  canonical metadata identifier; bytes or hex string
+        '''
         metadata = self.load_metadata(echoframe_key)
         if metadata is None: return None
         return self.storage.load(metadata)
@@ -289,7 +291,9 @@ class Store:
         return self.storage.load_many_frames(metadata_list, frame=frame)
 
     def delete(self, echoframe_key):
-        '''delete one stored payload by echoframe key.'''
+        '''Delete one stored payload by echoframe key.
+        echoframe_key:  canonical metadata identifier; bytes or hex string
+        '''
         metadata = self.load_metadata(echoframe_key)
         if metadata is None: return None
         self._delete_payload(metadata)

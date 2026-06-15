@@ -45,6 +45,7 @@ from tests.helpers import (
     FakeEnv,
     FakeH5Module,
     pk as _pk,
+    TEST_PHRASER_SOURCE_ID,
 )
 
 
@@ -65,7 +66,8 @@ def _put_hidden_state(store, phraser_key, collar, model_name, layer, data):
     echoframe_key = store.make_echoframe_key('hidden_state',
         model_name=model_name, phraser_key=phraser_key, layer=layer,
         collar=collar)
-    metadata = EchoframeMetadata(echoframe_key, model_name=model_name)
+    metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
+        phraser_source_id=TEST_PHRASER_SOURCE_ID)
     store.save(metadata.echoframe_key, metadata, data)
 
 
@@ -73,7 +75,8 @@ def _put_codebook_indices(store, phraser_key, collar, model_name, data):
     phraser_key = _pk(phraser_key)
     echoframe_key = store.make_echoframe_key('codebook_indices',
         model_name=model_name, phraser_key=phraser_key, collar=collar)
-    metadata = EchoframeMetadata(echoframe_key, model_name=model_name)
+    metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
+        phraser_source_id=TEST_PHRASER_SOURCE_ID)
     store.save(metadata.echoframe_key, metadata, data)
 
 

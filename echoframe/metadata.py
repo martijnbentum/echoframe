@@ -246,6 +246,16 @@ def normalize_tags(tags):
     return sorted(set(values))
 
 
+def validate_metadata_for_save(metadata):
+    '''Validate metadata invariants required before persisting.'''
+    if not isinstance(metadata, EchoframeMetadata):
+        raise ValueError('metadata must be an EchoframeMetadata')
+    if metadata.phraser_key is None: return
+    if metadata.phraser_source_id is not None: return
+    message = 'phraser_source_id is required for segment-linked metadata'
+    raise ValueError(message)
+
+
 def _validate_output_type(output_type):
     if output_type not in OUTPUT_TYPES:
         message = f'output_type must be one of {OUTPUT_TYPES}'

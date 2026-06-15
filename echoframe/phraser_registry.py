@@ -1,15 +1,16 @@
 '''Resolve phraser objects against registered echoframe phraser sources.'''
 
-from pathlib import Path
+from .phraser_sources import normalise_phraser_source_root
 
 
 def phraser_segment_to_phraser_source_id(store, segment):
     '''Return the registered phraser source id for a bound phraser segment.'''
     phraser_store = segment.store
-    root = _normalise_root(phraser_store.path)
+    root = normalise_phraser_source_root(phraser_store.path)
     matches = []
     for source in store.list_phraser_sources():
-        if _normalise_root(source.root) == root: matches.append(source)
+        if normalise_phraser_source_root(source.root) == root:
+            matches.append(source)
     if len(matches) == 1: return matches[0].source_id
     if not matches:
         raise ValueError('phraser segment store is not registered')
@@ -37,7 +38,3 @@ def phraser_source_id_to_phraser_source(store, phraser_source_id):
     if source is None:
         raise ValueError(f'unknown phraser_source_id: {phraser_source_id!r}')
     return source
-
-
-def _normalise_root(root):
-    return str(Path(root).expanduser().resolve())

@@ -43,7 +43,7 @@ def _put(store, phraser_key, collar, model_name, output_type, layer, data,
         collar=collar)
     from echoframe.metadata import EchoframeMetadata
     metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
-        tags=tags)
+        phraser_source_id='cgn-main', tags=tags)
     return store.save(echoframe_key, metadata, data)
 
 
@@ -268,6 +268,25 @@ class TestPhraserSources(unittest.TestCase):
             store.register_phraser_source('cgn-main', '/data/cgn')
             with self.assertRaisesRegex(ValueError, 'already registered'):
                 store.register_phraser_source('cgn-main', '/other')
+
+    def test_duplicate_phraser_source_root_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            store.register_phraser_source('cgn-main', '/data/cgn')
+            with self.assertRaisesRegex(ValueError,
+                'phraser source root already registered'):
+                store.register_phraser_source('cgn-copy', '/data/cgn')
+
+    def test_duplicate_phraser_source_normalized_root_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            root = Path(tmp) / 'phraser'
+            root.mkdir()
+            store.register_phraser_source('cgn-main', root)
+            with self.assertRaisesRegex(ValueError,
+                'phraser source root already registered'):
+                store.register_phraser_source('cgn-copy',
+                    root / '..' / 'phraser')
 
     def test_phraser_source_config_requires_root_key(self):
         with self.assertRaisesRegex(ValueError, "missing required 'root' key"):

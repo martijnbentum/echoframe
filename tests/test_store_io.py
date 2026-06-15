@@ -352,7 +352,7 @@ class TestStoreIo(unittest.TestCase):
                 model_name='wav2vec2', output_type='hidden_state',
                 layer=5, data=[[1.0]])
             with self.assertRaisesRegex(ValueError,
-                'phraser_source_id is required'):
+                'unknown phraser_source_id'):
                 store.find_by_label('hello')
 
     def test_missing_and_validation_cases(self) -> None:
@@ -449,10 +449,20 @@ class TestStoreIo(unittest.TestCase):
             created = _put(store, phraser_key='phrase-1', collar=120,
                 model_name='wav2vec2', output_type='hidden_state',
                 layer=7, data=[[1.0]])
+            legacy = store.load_metadata(created.echoframe_key).copy(
+                phraser_source_id=None)
+            store.index.save(legacy)
+            matrix_key = store.make_echoframe_key('codebook_matrix',
+                model_name='wav2vec2')
+            matrix_metadata = EchoframeMetadata(matrix_key, store=store,
+                model_name='wav2vec2')
+            matrix = store.save(matrix_key, matrix_metadata, [[1.0, 2.0]])
             count = store.backfill_phraser_source_id('cgn-main')
             loaded = store.load_metadata(created.echoframe_key)
+            loaded_matrix = store.load_metadata(matrix.echoframe_key)
         self.assertEqual(count, 1)
         self.assertEqual(loaded.phraser_source_id, 'cgn-main')
+        self.assertIsNone(loaded_matrix.phraser_source_id)
 
     def test_metadata_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -469,7 +479,7 @@ class TestStoreIo(unittest.TestCase):
                 found.echoframe_key, store=store)
             retagged = found.with_tags(['review', 'subset-1'])
             self.assertEqual(data['model_name'], 'wav2vec2')
-            self.assertEqual(data['phraser_source_id'], None)
+            self.assertEqual(data['phraser_source_id'], 'cgn-main')
             self.assertEqual(data['shard_id'], found.shard_id)
             self.assertEqual(data['dataset_path'], found.dataset_path)
             self.assertEqual(tuple(data['shape']), found.shape)

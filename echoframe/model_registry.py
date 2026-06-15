@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from .phraser_sources import PhraserSource
+from .phraser_sources import PhraserSource, normalise_phraser_source_root
 from . import util_formatting
 
 
@@ -107,6 +107,12 @@ class ModelRegistry:
         if source_id in config['phraser_sources']:
             message = f'phraser_source_id already registered: {source_id!r}'
             raise ValueError(message)
+        root = normalise_phraser_source_root(source.root)
+        for existing in config['phraser_sources'].values():
+            if normalise_phraser_source_root(existing.root) == root:
+                message = 'phraser source root already registered: '
+                message += repr(source.root)
+                raise ValueError(message)
         config['phraser_sources'][source_id] = source
         self.write_config(config)
         return source

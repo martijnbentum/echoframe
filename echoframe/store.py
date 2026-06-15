@@ -10,6 +10,7 @@ from . import util_formatting
 from .index import LmdbIndex
 from .key_helper import pack_echoframe_key
 from .metadata import EchoframeMetadata, filter_metadata
+from .metadata import validate_metadata_for_save
 from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .phraser_registry import phraser_source_id_to_phraser_source
@@ -127,8 +128,9 @@ class Store:
         metadatas = self.index.all_metadatas(store=self)
         updates = []
         for metadata in metadatas:
-            if metadata.phraser_source_id is None:
-                updates.append(metadata.copy(phraser_source_id=source.source_id))
+            if metadata.phraser_key is None: continue
+            if metadata.phraser_source_id is not None: continue
+            updates.append(metadata.copy(phraser_source_id=source.source_id))
         self.index.save_many(updates)
         return len(updates)
 
@@ -195,8 +197,7 @@ class Store:
         metadata:       metadata record for this payload
         data:           output payload to store
         '''
-        if not isinstance(metadata, EchoframeMetadata):
-            raise ValueError('metadata must be an EchoframeMetadata')
+        validate_metadata_for_save(metadata)
         if data is None:
             raise ValueError('data must not be None for this output type')
         if bytes(echoframe_key) != metadata.echoframe_key:
@@ -214,8 +215,7 @@ class Store:
         for item in items:
             metadata = item['metadata']
             echoframe_key = item['echoframe_key']
-            if not isinstance(metadata, EchoframeMetadata):
-                raise ValueError('metadata must be an EchoframeMetadata')
+            validate_metadata_for_save(metadata)
             if bytes(echoframe_key) != metadata.echoframe_key:
                 message = 'metadata.echoframe_key must match the item key'
                 raise ValueError(message)
@@ -228,13 +228,16 @@ class Store:
         return len(stored_metadatas)
 
     def load_metadata(self, echoframe_key) :
-        '''Load one metadata record by echoframe key.'''
+        '''Load one metadata record by echoframe key.
+        echoframe_key:  canonical metadata identifier can be hex or bytes
+        '''
         metadata = self.index.load(echoframe_key, store=self)
         return metadata
 
     def load_many_metadata(self, echoframe_keys, keep_missing=False):
         '''Load multiple metadata records by echoframe key.
         echoframe_keys:  iterable of canonical metadata identifiers
+                         can be hex or bytes
         keep_missing:    whether to keep None for missing keys or skip them
         '''
         metadata_list = self.index.load_many(echoframe_keys, store=self,

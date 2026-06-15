@@ -13,6 +13,9 @@ from echoframe.output_storage import Hdf5ShardStore
 from echoframe.store import Store
 
 
+TEST_PHRASER_SOURCE_ID = 'cgn-main'
+
+
 class FakeCursor:
     def __init__(self, store: dict[bytes, bytes]) -> None:
         self.store = store
@@ -216,6 +219,11 @@ def make_key(store: Store, *, phraser_key, collar, model_name, output_type,
     return store.make_echoframe_key(**kwargs)
 
 
+def test_phraser_source_id(output_type):
+    if output_type == 'codebook_matrix': return None
+    return TEST_PHRASER_SOURCE_ID
+
+
 def put(store: Store, *, phraser_key, collar, model_name, output_type,
     layer, data, tags=None):
     phraser_key = pk(phraser_key)
@@ -223,7 +231,7 @@ def put(store: Store, *, phraser_key, collar, model_name, output_type,
         collar=collar, model_name=model_name, output_type=output_type,
         layer=layer)
     metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
-        tags=tags)
+        phraser_source_id=test_phraser_source_id(output_type), tags=tags)
     return store.save(echoframe_key, metadata, data)
 
 
@@ -234,7 +242,7 @@ def put_item(store: Store, *, phraser_key, collar, model_name, output_type,
         collar=collar, model_name=model_name, output_type=output_type,
         layer=layer)
     metadata = EchoframeMetadata(echoframe_key, model_name=model_name,
-        tags=tags)
+        phraser_source_id=test_phraser_source_id(output_type), tags=tags)
     return {'echoframe_key': echoframe_key, 'metadata': metadata, 'data': data}
 
 

@@ -24,7 +24,13 @@ class PhraserSource:
         '''Return an open phraser Store for this source.'''
         if self._phraser_store is None:
             import phraser
-            self._phraser_store = phraser.open_store(path=self.root)
+            try: self._phraser_store = phraser.open_store(path=self.root)
+            except Exception as exc:
+                msg = f"phraser store already open, use .attach_phraser_store("
+                msg += f"{self.source_id!r}, your_phraser_store)"
+                if 'already open' in str(exc).lower():
+                    raise RuntimeError(msg) from exc
+                raise
         return self._phraser_store
 
     def to_dict(self):

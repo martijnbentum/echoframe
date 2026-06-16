@@ -1,6 +1,7 @@
 '''Public store facade for echoframe.'''
 
 from pathlib import Path
+from progressbar import progressbar
 
 from . import compaction
 from .codebooks import Codevector, Codevectors
@@ -156,7 +157,7 @@ class Store:
         source = phraser_source_id_to_phraser_source(self, phraser_source_id)
         metadatas = self.index.all_metadatas(store=self)
         updates = []
-        for metadata in metadatas:
+        for metadata in progressbar(metadatas):
             if metadata.phraser_key is None: continue
             if metadata.phraser_source_id is not None: continue
             updates.append(metadata.copy(phraser_source_id=source.source_id))

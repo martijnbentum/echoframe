@@ -2,7 +2,6 @@
 
 import echoframe
 
-from .phraser_registry import phraser_segment_to_phraser_source_id
 from .utils_segment_features import (
     codebook_indices_missing, codebook_matrix_missing,
     compute_codebook_indices as compute_codebook_indices_for_segment,
@@ -32,7 +31,7 @@ def compute_embeddings(segment, layers, model_name, collar=500, store=None,
     if found_layers and verbose:
         print(f'embeddings found in store for layers {found_layers}')
     if missing_layers:
-        source_id = phraser_segment_to_phraser_source_id(store, segment)
+        source_id = store.phraser_registry.segment_to_source_id(segment)
         model = store.load_model(model_name, gpu=gpu)
         outputs = compute_embeddings_for_segment(segment, collar, model, gpu)
         store_embeddings_from_outputs(outputs, segment, collar, missing_layers,
@@ -55,7 +54,7 @@ def compute_codebook_indices(segment, model_name, collar=500, store=None,
     if not codebook_indices_missing(store, phraser_key, collar, model_name):
         if verbose: print('codebook indices found in store')
         return
-    source_id = phraser_segment_to_phraser_source_id(store, segment)
+    source_id = store.phraser_registry.segment_to_source_id(segment)
     model = store.load_model(model_name, gpu=gpu)
     artifacts = compute_codebook_indices_for_segment(segment, collar, model,
         gpu)

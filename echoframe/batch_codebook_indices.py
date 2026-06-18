@@ -8,7 +8,6 @@ from pathlib import Path
 import echoframe
 from to_vector import wav2vec2_codebook
 
-from .phraser_registry import phraser_segments_to_phraser_source_id
 from .utils_segment_features import (
     StoreWriter,
     codebook_matrix_missing,
@@ -43,7 +42,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     missing_segments = []
     for item in missing.missing:
         missing_segments.append(item.segment)
-    source_id = phraser_segments_to_phraser_source_id(store, missing_segments)
+    source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     model = store.load_codebook_model(model_name, gpu=gpu)
     if missing.matrix_missing:
         codebook_matrix = wav2vec2_codebook.load_codebook(model)

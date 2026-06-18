@@ -282,7 +282,7 @@ and backfill those records explicitly:
 from echoframe import Store
 
 store = Store('cache')
-store.register_phraser_source('cgn-main', '/data/cgn_lmdb')
+store.register_phraser_store('cgn-main', '/data/cgn_lmdb')
 updated_count = store.backfill_phraser_source_id('cgn-main')
 
 print(updated_count)

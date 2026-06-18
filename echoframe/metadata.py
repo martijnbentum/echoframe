@@ -60,9 +60,10 @@ class EchoframeMetadata:
             return self._model_name
         if self.store is None:
             raise ValueError('store is not attached to metadata')
-        if self.store.registry is None:
+        if self.store.model_registry is None:
             raise ValueError('store does not have a registry')
-        return _model_name_from_registry(self.store.registry, self.model_id)
+        return _model_name_from_registry(self.store.model_registry,
+            self.model_id)
 
     @property
     def phraser_object(self):

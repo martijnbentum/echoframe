@@ -11,10 +11,10 @@ from echoframe.model_registry import (
     ModelMetadata,
     check_model_name_conflict,
     check_model_names_conflict,
-    config_from_dict,
-    config_to_dict,
     load_model_seed_file,
 )
+from echoframe.phraser_registry import normalise_phraser_store_path
+from echoframe.store_config import config_from_dict, config_to_dict
 from echoframe.store import Store
 from tests.helpers import pk as _pk
 
@@ -241,69 +241,73 @@ class TestPersistence(unittest.TestCase):
         self.assertEqual(payload['phraser_sources'], {})
 
 
-class TestPhraserSources(unittest.TestCase):
+class TestPhraserStores(unittest.TestCase):
 
-    def test_register_phraser_source_persists_config(self):
+    def test_register_phraser_store_persists_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            source = store.register_phraser_source('cgn-main',
+            path = store.register_phraser_store('cgn-main',
                 '/data/cgn/phraser.lmdb')
             payload = json.loads((Path(tmp) / 'config.json').read_text())
-        self.assertEqual(source.source_id, 'cgn-main')
-        self.assertEqual(
-            payload['phraser_sources']['cgn-main']['root'],
-            '/data/cgn/phraser.lmdb')
+        expected = normalise_phraser_store_path('/data/cgn/phraser.lmdb')
+        self.assertEqual(path, expected)
+        self.assertEqual(payload['phraser_sources']['cgn-main'], expected)
 
-    def test_load_phraser_source_from_second_store(self):
+    def test_load_phraser_path_from_second_store(self):
         with tempfile.TemporaryDirectory() as tmp:
             first = _make_store(tmp)
-            first.register_phraser_source('cgn-main', '/data/cgn')
+            first.register_phraser_store('cgn-main', '/data/cgn')
             second = _make_store(tmp)
-            source = second.load_phraser_source('cgn-main')
-        self.assertEqual(source.root, '/data/cgn')
+            path = second.phraser_registry.load_path('cgn-main')
+        self.assertEqual(path, normalise_phraser_store_path('/data/cgn'))
 
-    def test_duplicate_phraser_source_id_raises(self):
+    def test_same_id_different_path_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            store.register_phraser_source('cgn-main', '/data/cgn')
+            store.register_phraser_store('cgn-main', '/data/cgn')
             with self.assertRaisesRegex(ValueError, 'already registered'):
-                store.register_phraser_source('cgn-main', '/other')
+                store.register_phraser_store('cgn-main', '/other')
 
-    def test_duplicate_phraser_source_root_raises(self):
+    def test_same_id_same_path_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            store.register_phraser_source('cgn-main', '/data/cgn')
-            with self.assertRaisesRegex(ValueError,
-                'phraser source root already registered'):
-                store.register_phraser_source('cgn-copy', '/data/cgn')
+            store.register_phraser_store('cgn-main', '/data/cgn')
+            path = store.register_phraser_store('cgn-main', '/data/cgn')
+        self.assertEqual(path, normalise_phraser_store_path('/data/cgn'))
 
-    def test_duplicate_phraser_source_normalized_root_raises(self):
+    def test_normalized_same_path_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
             root = Path(tmp) / 'phraser'
             root.mkdir()
-            store.register_phraser_source('cgn-main', root)
-            with self.assertRaisesRegex(ValueError,
-                'phraser source root already registered'):
-                store.register_phraser_source('cgn-copy',
-                    root / '..' / 'phraser')
+            store.register_phraser_store('cgn-main', root)
+            path = store.register_phraser_store('cgn-main',
+                root / '..' / 'phraser')
+        self.assertEqual(path, normalise_phraser_store_path(root))
 
-    def test_phraser_source_config_requires_root_key(self):
-        with self.assertRaisesRegex(ValueError, "missing required 'root' key"):
-            config_from_dict({'phraser_sources': {'cgn-main': {}}})
-
-    def test_load_phraser_object_requires_source_id(self):
+    def test_second_id_may_share_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            store.register_phraser_source('cgn-main', '/data/cgn')
-            with self.assertRaisesRegex(ValueError,
-                'phraser_source_id is required'):
+            store.register_phraser_store('cgn-main', '/data/cgn')
+            store.register_phraser_store('cgn-copy', '/data/cgn')
+            shared = store.phraser_registry.load_path('cgn-copy')
+        self.assertEqual(shared, normalise_phraser_store_path('/data/cgn'))
+
+    def test_phraser_store_config_rejects_non_string_path(self):
+        with self.assertRaisesRegex(ValueError, 'non-empty path strings'):
+            config_from_dict({'phraser_sources': {'cgn-main': {}}})
+
+    def test_load_phraser_object_rejects_none_source_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            store.register_phraser_store('cgn-main', '/data/cgn')
+            with self.assertRaisesRegex(ValueError, 'unknown phraser_source_id'):
                 store.load_phraser_object(b'phrase-key', None)
 
     def test_load_phraser_object_rejects_unknown_source_id(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            store.register_phraser_source('cgn-main', '/data/cgn')
+            store.register_phraser_store('cgn-main', '/data/cgn')
             with self.assertRaisesRegex(ValueError, 'unknown phraser_source_id'):
                 store.load_phraser_object(b'phrase-key', 'missing')
 
@@ -318,10 +322,32 @@ class TestPhraserSources(unittest.TestCase):
             loaded = store.load_phraser_object(b'phrase-key', 'cgn-main')
         self.assertEqual(loaded, ('loaded', b'phrase-key'))
 
+    def test_get_store_opens_registered_phraser_store(self):
+        try:
+            import phraser
+        except ImportError:
+            self.skipTest('phraser is not installed')
+        with tempfile.TemporaryDirectory() as tmp:
+            phraser_path = str(Path(tmp) / 'cgn.lmdb')
+            writer = phraser.Store(path=phraser_path)
+            if not getattr(writer, 'CLASS_MAP', None):
+                self.skipTest('installed phraser Store does not self-register')
+            speaker = writer.create(phraser.Speaker, name='spk-1',
+                dataset='test')
+            key = speaker.key
+            writer.close()
+
+            store = _make_store(str(Path(tmp) / 'ef'))
+            store.register_phraser_store('cgn-main', phraser_path)
+            # no attached store: this exercises the lazy phraser.Store open path
+            loaded = store.load_phraser_object(key, 'cgn-main')
+        self.assertEqual(loaded.name, 'spk-1')
+        self.assertEqual(loaded.key, key)
+
     def test_read_config_dict_returns_default_when_file_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = _make_store(tmp)
-            config = store.registry.read_config_dict()
+            config = store.model_registry.read_config_dict()
         self.assertEqual(config, {'models': {}, 'phraser_sources': {}})
 
 
@@ -332,7 +358,7 @@ class TestModelMetadataListing(unittest.TestCase):
             store = _make_store(tmp)
             store.register_model('bert-base-uncased')
             store.register_model('wav2vec2-base')
-            model_metadatas = store.registry.model_metadatas
+            model_metadatas = store.model_registry.model_metadatas
         names = sorted(metadata.model_name for metadata in model_metadatas)
         self.assertEqual(names, ['bert-base-uncased', 'wav2vec2-base'])
 

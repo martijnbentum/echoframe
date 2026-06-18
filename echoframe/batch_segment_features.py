@@ -4,7 +4,6 @@ from pathlib import Path
 import echoframe
 import to_vector
 
-from .phraser_registry import phraser_segments_to_phraser_source_id
 from .utils_segment_features import (
     StoreWriter,
     make_embedding_items,
@@ -36,7 +35,7 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     missing_segments = []
     for item in missing.missing:
         missing_segments.append(item.segment)
-    source_id = phraser_segments_to_phraser_source_id(store, missing_segments)
+    source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     model = store.load_model(model_name, gpu=gpu)
     outputs = to_vector.iter_filename_batch_to_vector(missing.audio_filenames,
         starts=missing.starts, ends=missing.ends, model=model, gpu=gpu,

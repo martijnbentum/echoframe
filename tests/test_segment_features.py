@@ -25,7 +25,6 @@ if not hasattr(sys.modules['to_vector'], 'wav2vec2_codebook'):
 import echoframe.segment_features as segment_features
 import echoframe.batch_codebook_indices as batch_codebook_indices
 import echoframe.batch_segment_features as batch_segment_features
-import echoframe.phraser_registry as phraser_registry
 import echoframe.utils_segment_features as utils_segment_features
 from echoframe.batch_codebook_indices import (
     MissingIndices,
@@ -57,7 +56,7 @@ def _make_store():
         h5_module=FakeH5Module())
     store = Store(tmpdir.name, index=index, storage=storage)
     _ensure_model(store, 'wav2vec2')
-    store.register_phraser_source('cgn-main', '/data/cgn')
+    store.register_phraser_store('cgn-main', '/data/cgn')
     return tmpdir, store
 
 
@@ -151,8 +150,7 @@ class TestPhraserRegistry(unittest.TestCase):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment()
-            source_id = phraser_registry.phraser_segment_to_phraser_source_id(
-                store, segment)
+            source_id = store.phraser_registry.segment_to_source_id(segment)
         self.assertEqual(source_id, 'cgn-main')
 
     def test_segment_to_source_id_requires_registered_store(self):
@@ -162,19 +160,18 @@ class TestPhraserRegistry(unittest.TestCase):
             segment = _make_segment(store=segment_store)
             with self.assertRaisesRegex(ValueError,
                 'phraser segment store is not registered'):
-                phraser_registry.phraser_segment_to_phraser_source_id(store,
-                    segment)
+                store.phraser_registry.segment_to_source_id(segment)
 
     def test_segments_to_source_id_rejects_mixed_sources(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            store.register_phraser_source('cgn-alt', '/data/cgn-alt')
+            store.register_phraser_store('cgn-alt', '/data/cgn-alt')
             first = _make_segment()
             second_store = types.SimpleNamespace(path='/data/cgn-alt')
             second = _make_segment(key=_pk('ccdd'), store=second_store)
             with self.assertRaisesRegex(ValueError,
                 'batch segments must come from one phraser source'):
-                phraser_registry.phraser_segments_to_phraser_source_id(store,
+                store.phraser_registry.segments_to_source_id(
                     [first, second])
 
 

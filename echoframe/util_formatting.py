@@ -109,7 +109,7 @@ def build_store_summary(store):
         'record_count': record_count,
         'live_record_count': live_count,
         'deleted_record_count': deleted_count,
-        'model_count': len(store.registry.model_metadatas),
+        'model_count': len(store.model_registry.model_metadatas),
         'shard_count': len(shard_rows),
         'shard_byte_size': shard_byte_size,
         'tag_count': len(tags),

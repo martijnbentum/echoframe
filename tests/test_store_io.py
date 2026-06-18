@@ -37,7 +37,6 @@ class TestStoreIo(unittest.TestCase):
         self.assertIn('Codevector', echoframe.__all__)
         self.assertIn('Codevectors', echoframe.__all__)
         self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
-        self.assertIn('PhraserSource', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)
         self.assertFalse(hasattr(echoframe, '__version__'))
@@ -47,7 +46,7 @@ class TestStoreIo(unittest.TestCase):
             store = make_fake_store(tmpdir)
             store.register_model('wav2vec2', language='en', size='base',
                 architecture='wav2vec2')
-            text = str(store.registry)
+            text = str(store.model_registry)
         self.assertIn('ModelRegistry', text)
         self.assertIn('architectures', text)
         self.assertIn('wav2vec2', text)
@@ -329,13 +328,13 @@ class TestStoreIo(unittest.TestCase):
             _put(store, phraser_key='phrase-11', collar=90,
                 model_name='hubert', output_type='hidden_state',
                 layer=5, data=[[3.0]])
-            phraser_store = types.SimpleNamespace(load=mock.Mock(
-                side_effect=lambda key: {
+            phraser_store = types.SimpleNamespace(
+                path='/phraser/cgn-main',
+                load=mock.Mock(side_effect=lambda key: {
                     _pk('phrase-10'): types.SimpleNamespace(label='hello'),
                     _pk('phrase-11'): types.SimpleNamespace(label='world'),
                 }[key]))
-            store.attach_phraser_store('cgn-main', phraser_store,
-                root='/phraser/cgn-main')
+            store.attach_phraser_store('cgn-main', phraser_store)
             store.backfill_phraser_source_id('cgn-main')
             records = store.find_by_label('hello')
             filtered = store.find_by_label('hello',
@@ -445,7 +444,7 @@ class TestStoreIo(unittest.TestCase):
     def test_backfill_phraser_source_id_updates_legacy_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
-            store.register_phraser_source('cgn-main', '/data/cgn')
+            store.register_phraser_store('cgn-main', '/data/cgn')
             created = _put(store, phraser_key='phrase-1', collar=120,
                 model_name='wav2vec2', output_type='hidden_state',
                 layer=7, data=[[1.0]])

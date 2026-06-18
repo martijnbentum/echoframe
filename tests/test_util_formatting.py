@@ -16,7 +16,7 @@ class TestBuildStoreSummary(unittest.TestCase):
             'byte_size': 128,
         }]
         store.list_tags.return_value = ['alpha', 'beta']
-        store.registry.model_metadatas = [object(), object()]
+        store.model_registry.model_metadatas = [object(), object()]
         with mock.patch('echoframe.util_formatting._db_entry_count',
             return_value=1):
             summary = build_store_summary(store)

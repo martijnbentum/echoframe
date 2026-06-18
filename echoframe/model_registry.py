@@ -3,18 +3,17 @@
 import json
 from pathlib import Path
 
-from .phraser_sources import PhraserSource, normalise_phraser_source_root
 from . import util_formatting
 
 
 class ModelRegistry:
-    '''Persist and query model metadata in a store config file.'''
+    '''Persist and query model metadata in a shared store config.'''
 
-    def __init__(self, config_path):
-        '''Create one model registry bound to a config path.
-        config_path:  path to the store config.json file
+    def __init__(self, config):
+        '''Create one model registry bound to a shared StoreConfig.
+        config:  StoreConfig owning the store config.json file
         '''
-        self.config_path = Path(config_path)
+        self._config = config
         self._model_name_to_id: dict[str, int] = {}
 
     def __repr__(self):
@@ -27,6 +26,11 @@ class ModelRegistry:
             return util_formatting.format_model_registry_str(summary)
         except Exception:
             return self.__repr__()
+
+    @property
+    def config_path(self):
+        '''Return the shared config.json path.'''
+        return self._config.config_path
 
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None, architecture=None):
@@ -41,13 +45,13 @@ class ModelRegistry:
         metadata = ModelMetadata(model_name, model_id=None,
             local_path=local_path, huggingface_id=huggingface_id,
             language=language, size=size, architecture=architecture)
-        config = self.read_config()
+        config = self._config.read()
         if check_model_name_conflict(config, metadata):
             message = f'model_name already registered: {model_name!r}'
             raise ValueError(message)
         metadata.model_id = _next_model_id(config['models'].values())
         config['models'][model_name] = metadata
-        self.write_config(config)
+        self._config.write(config)
         self._model_name_to_id.clear()
         return metadata
 
@@ -58,12 +62,12 @@ class ModelRegistry:
     @property
     def model_metadatas(self):
         '''Return all registered model metadata objects.'''
-        config = self.read_config()
+        config = self._config.read()
         return list(config['models'].values())
 
     def load_model_metadata(self, model_name):
         '''Return the model metadata object for model_name, or None.'''
-        config = self.read_config()
+        config = self._config.read()
         return config['models'].get(model_name)
 
     def load_model_id(self, model_name):
@@ -78,7 +82,7 @@ class ModelRegistry:
     def register_models_from_file(self, path):
         '''Import model definitions from a JSON file into config.json.'''
         metadata_list = load_model_seed_file(path)
-        config = self.read_config()
+        config = self._config.read()
         conflicts = check_model_names_conflict(config, metadata_list)
         if conflicts:
             names = ', '.join(repr(metadata.model_name)
@@ -93,68 +97,13 @@ class ModelRegistry:
             config['models'][metadata.model_name] = metadata
             stored.append(metadata)
             next_id += 1
-        self.write_config(config)
+        self._config.write(config)
         self._model_name_to_id.clear()
         return stored
 
-    def register_phraser_source(self, source_id, root):
-        '''Register one phraser source in config.json.
-        source_id:   stable source identifier stored on metadata
-        root:        phraser store root/path
-        '''
-        source = PhraserSource(source_id=source_id, root=root)
-        config = self.read_config()
-        if source_id in config['phraser_sources']:
-            message = f'phraser_source_id already registered: {source_id!r}'
-            raise ValueError(message)
-        root = normalise_phraser_source_root(source.root)
-        for existing in config['phraser_sources'].values():
-            if normalise_phraser_source_root(existing.root) == root:
-                message = 'phraser source root already registered: '
-                message += repr(source.root)
-                raise ValueError(message)
-        config['phraser_sources'][source_id] = source
-        self.write_config(config)
-        return source
-
-    def load_phraser_source(self, source_id):
-        '''Return one registered phraser source, or None.'''
-        config = self.read_config()
-        return config['phraser_sources'].get(source_id)
-
-    def list_phraser_sources(self):
-        '''Return all registered phraser source records.'''
-        config = self.read_config()
-        return list(config['phraser_sources'].values())
-
-    def list_phraser_source_ids(self):
-        '''Return registered phraser source identifiers.'''
-        config = self.read_config()
-        return sorted(config['phraser_sources'])
-
     def read_config_dict(self):
         '''Return the raw serialized config dictionary.'''
-        if not self.config_path.exists():
-            return config_to_dict(_default_config())
-        data = json.loads(self.config_path.read_text())
-        config = config_from_dict(data)
-        return config_to_dict(config)
-
-    def read_config(self):
-        '''Return the validated in-memory config object graph.'''
-        if not self.config_path.exists():
-            return _default_config()
-        data = json.loads(self.config_path.read_text())
-        return config_from_dict(data)
-
-    def write_config(self, config):
-        '''Write one validated in-memory config object graph.'''
-        self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(config_to_dict(config), indent=2, sort_keys=True)
-        payload += '\n'
-        tmp_path = self.config_path.with_suffix('.tmp')
-        tmp_path.write_text(payload)
-        tmp_path.replace(self.config_path)
+        return self._config.read_dict()
 
 
 class ModelMetadata:
@@ -221,42 +170,6 @@ class ModelMetadata:
         _validate_optional_string(self.language, 'language')
         _validate_optional_string(self.architecture, 'architecture')
         _validate_optional_size(self.size)
-
-def config_from_dict(data):
-    '''Build one validated config mapping from serialized JSON data.'''
-    if not isinstance(data, dict):
-        raise ValueError('config.json must contain a JSON object')
-    config = _default_config()
-    raw_models = data.get('models', {})
-    if not isinstance(raw_models, dict):
-        raise ValueError('config.json models must be a JSON object')
-    models = {}
-    for model_name, record in raw_models.items():
-        if not isinstance(record, dict):
-            raise ValueError('config.json model records must be JSON objects')
-        record = dict(record)
-        record['model_name'] = model_name
-        models[model_name] = ModelMetadata.from_dict(record)
-    config['models'] = models
-    raw_sources = data.get('phraser_sources', {})
-    if not isinstance(raw_sources, dict):
-        raise ValueError('config.json phraser_sources must be a JSON object')
-    sources = {}
-    for source_id, record in raw_sources.items():
-        sources[source_id] = PhraserSource.from_dict(source_id, record)
-    config['phraser_sources'] = sources
-    return config
-
-
-def config_to_dict(config):
-    '''Serialize one validated config mapping for JSON output.'''
-    models = {}
-    for model_name, metadata in config['models'].items():
-        models[model_name] = metadata.to_dict()
-    phraser_sources = {}
-    for source_id, source in config.get('phraser_sources', {}).items():
-        phraser_sources[source_id] = source.to_dict()
-    return {'models': models, 'phraser_sources': phraser_sources}
 
 
 def check_model_name_conflict(config, metadata):
@@ -325,10 +238,6 @@ def _next_model_id(model_metadatas):
         if candidate > max_id:
             max_id = candidate
     return max_id + 1
-
-
-def _default_config():
-    return {'models': {}, 'phraser_sources': {}}
 
 
 def _validate_model_name(model_name):

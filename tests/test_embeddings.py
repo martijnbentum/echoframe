@@ -259,5 +259,128 @@ class TestEmbeddings(unittest.TestCase):
             Embeddings.from_echoframe_keys(store, [b'invalid'])
 
 
+def _slice_embedding(start_seconds=0.0, n_frames=5, dim=2, layer=3):
+    phraser_object = SimpleNamespace(start_seconds=start_seconds)
+    metadata = SimpleNamespace(
+        echoframe_key=b'abc',
+        phraser_key=_pk('phrase-1'),
+        model_name='wav2vec2',
+        output_type='hidden_state',
+        layer=layer,
+        phraser_object=phraser_object,
+    )
+    data = np.arange(n_frames * dim).reshape(n_frames, dim).astype(float)
+    return Embedding(b'abc', SimpleNamespace(), metadata=metadata, data=data)
+
+
+class TestEmbeddingToFrames(unittest.TestCase):
+    def test_frame_count_matches_rows(self):
+        embedding = _slice_embedding(n_frames=5)
+        self.assertEqual(len(embedding.to_frames()), 5)
+
+    def test_grid_anchored_at_segment_start(self):
+        embedding = _slice_embedding(start_seconds=0.5, n_frames=5)
+        frames = embedding.to_frames(stride=0.02)
+        self.assertAlmostEqual(frames[0].start_time, 0.5)
+        self.assertAlmostEqual(frames[3].start_time, 0.5 + 3 * 0.02)
+
+    def test_frame_index_equals_row_index(self):
+        frames = _slice_embedding(n_frames=5).to_frames()
+        self.assertEqual([frame.index for frame in frames], [0, 1, 2, 3, 4])
+
+    def test_custom_stride_and_field_propagate(self):
+        frames = _slice_embedding(n_frames=5).to_frames(stride=0.01,
+            field=0.02)
+        self.assertAlmostEqual(frames.stride, 0.01)
+        self.assertAlmostEqual(frames.field, 0.02)
+
+    def test_raises_for_non_2d_payload(self):
+        metadata = SimpleNamespace(
+            echoframe_key=b'abc', phraser_key=_pk('phrase-1'),
+            model_name='wav2vec2', output_type='hidden_state', layer=3,
+            phraser_object=SimpleNamespace(start_seconds=0.0))
+        embedding = Embedding(b'abc', SimpleNamespace(), metadata=metadata,
+            data=np.arange(4).astype(float))
+
+        with self.assertRaisesRegex(ValueError,
+            'slicing requires a 2D \\(frames, dim\\) payload'):
+            embedding.to_frames()
+
+
+class TestEmbeddingSliceTime(unittest.TestCase):
+    # grid (start=0, stride=0.02, field=0.025):
+    # 0:[0.000,0.025] 1:[0.020,0.045] 2:[0.040,0.065]
+    # 3:[0.060,0.085] 4:[0.080,0.105]
+    def test_returns_rows_for_subinterval(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.slice_time(0.02, 0.05)
+        np.testing.assert_array_equal(result, embedding.data[[0, 1, 2]])
+
+    def test_full_span_returns_all_rows(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.slice_time(0.0, 0.105)
+        np.testing.assert_array_equal(result, embedding.data)
+
+    def test_single_frame_interval_returns_one_row(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.slice_time(0.001, 0.015)
+        self.assertEqual(result.shape, (1, 2))
+        np.testing.assert_array_equal(result, embedding.data[[0]])
+
+    def test_percentage_overlap_is_forwarded(self):
+        embedding = _slice_embedding(n_frames=5)
+        any_overlap = embedding.slice_time(0.02, 0.05)
+        fully_contained = embedding.slice_time(0.02, 0.05,
+            percentage_overlap=100)
+        self.assertEqual(len(any_overlap), 3)
+        np.testing.assert_array_equal(fully_contained, embedding.data[[1]])
+
+    def test_raises_when_interval_outside_span(self):
+        embedding = _slice_embedding(n_frames=5)
+        with self.assertRaisesRegex(ValueError,
+            'no frames overlap 1.000-1.100s'):
+            embedding.slice_time(1.0, 1.1)
+
+
+class TestEmbeddingSliceSegment(unittest.TestCase):
+    def _segment(self, start_seconds, end_seconds):
+        return SimpleNamespace(
+            start=int(start_seconds * 1000),
+            end=int(end_seconds * 1000),
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+        )
+
+    def test_returns_row_subset_for_descendant(self):
+        embedding = _slice_embedding(n_frames=5)
+        segment = self._segment(0.02, 0.05)
+        result = embedding.slice_segment(segment)
+        np.testing.assert_array_equal(result, embedding.data[[0, 1, 2]])
+
+    def test_selects_by_seconds_not_milliseconds(self):
+        embedding = _slice_embedding(n_frames=5)
+        segment = self._segment(0.02, 0.05)
+        result = embedding.slice_segment(segment)
+        self.assertEqual(len(result), 3)
+
+    def test_forwards_percentage_overlap(self):
+        embedding = _slice_embedding(n_frames=5)
+        segment = self._segment(0.02, 0.05)
+        result = embedding.slice_segment(segment, percentage_overlap=100)
+        np.testing.assert_array_equal(result, embedding.data[[1]])
+
+    def test_descendant_shorter_than_field_returns_a_row(self):
+        embedding = _slice_embedding(n_frames=5)
+        segment = self._segment(0.001, 0.010)
+        result = embedding.slice_segment(segment)
+        self.assertGreaterEqual(len(result), 1)
+
+    def test_raises_when_descendant_outside_span(self):
+        embedding = _slice_embedding(n_frames=5)
+        segment = self._segment(1.0, 1.1)
+        with self.assertRaisesRegex(ValueError, 'no frames overlap'):
+            embedding.slice_segment(segment)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -53,6 +53,17 @@ class EchoframeMetadata:
             raise ValueError('store is not attached to metadata')
         return self.store.metadata_to_payload(self)
 
+    def load_embedding(self):
+        '''Load the stored hidden-state payload as an Embedding.'''
+        if self.store is None:
+            raise ValueError('store is not attached to metadata')
+        if self.output_type != 'hidden_state':
+            message = 'output_type must be hidden_state to load an Embedding, '
+            message += f'got {self.output_type}'
+            raise ValueError(message)
+        from .embeddings import Embedding
+        return Embedding(self.echoframe_key, self.store, metadata=self)
+
     @property
     def model_name(self):
         '''Resolve model_name through the bound store registry if not present.'''

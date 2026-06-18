@@ -40,6 +40,39 @@ class Embedding:
         text = f'Embedding(shape={self.shape}, layer={self.layer})'
         return text
 
+    def to_frames(self, stride=0.02, field=0.025):
+        '''Wrap the payload as a frame.Frames grid anchored at the segment start.
+        Frame index equals matrix row index. The grid is anchored at the
+        segment start; this is exact when the collar is a multiple of stride
+        (true for the default 500ms collar), otherwise row 0 may be offset
+        from the segment start by up to one stride.
+        '''
+        from frame.frames import make_frames_from_numpy_matrix
+        if self.data.ndim != 2:
+            raise ValueError('slicing requires a 2D (frames, dim) payload')
+        start_time = self.metadata.phraser_object.start_seconds
+        return make_frames_from_numpy_matrix(self.data, stride, field,
+            start_time=start_time)
+
+    def slice_time(self, start, end, percentage_overlap=None, stride=0.02,
+        field=0.025):
+        '''Return payload rows overlapping the absolute [start, end] seconds.'''
+        frames = self.to_frames(stride, field)
+        selected = frames.select_frames(start, end,
+            percentage_overlap=percentage_overlap)
+        rows = [frame.index for frame in selected]
+        if not rows:
+            raise ValueError(f'no frames overlap {start:.3f}-{end:.3f}s')
+        return self.data[rows]
+
+    def slice_segment(self, segment, percentage_overlap=None, stride=0.02,
+        field=0.025):
+        '''Return payload rows for a descendant phraser segment.
+        segment:  phraser segment (word, syllable, or phone) with seconds API
+        '''
+        return self.slice_time(segment.start_seconds, segment.end_seconds,
+            percentage_overlap=percentage_overlap, stride=stride, field=field)
+
     def _validate(self):
         if not isinstance(self.data, np.ndarray):
             raise ValueError('data must be a numpy array')

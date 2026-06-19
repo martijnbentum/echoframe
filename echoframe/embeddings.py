@@ -123,6 +123,31 @@ class Embedding:
             stride=stride, field=field)
         return vector
 
+    def sub_embedding(self, phraser_object, aggregate=None,
+        percentage_overlap=None, stride=0.02, field=0.025):
+        '''Return a SlicedEmbedding for a descendant phraser object.
+        phraser_object:  descendant phraser segment (word, syllable, or phone)
+        aggregate:       None -> 2D rows; 'mean' or 'middle' -> 1D vector
+        '''
+        frames = self.to_frames(stride, field)
+        selected = frames.select_frames(phraser_object.start_seconds,
+            phraser_object.end_seconds, percentage_overlap=percentage_overlap)
+        if not selected:
+            raise ValueError(f'no frames overlap {phraser_object.object_type} '
+                f'{phraser_object.label!r}')
+        if aggregate == 'middle':
+            from frame.frames import select_middle_frame
+            frame = select_middle_frame(selected)
+            rows = [frame.index]
+            data = self.data[frame.index]
+        else:
+            rows = [frame.index for frame in selected]
+            if aggregate is None: data = self.data[rows]
+            elif aggregate == 'mean': data = self.data[rows].mean(axis=0)
+            else: raise ValueError(
+                "aggregate must be None, 'mean', or 'middle'")
+        return SlicedEmbedding(self, phraser_object, data, rows)
+
     def _validate(self):
         if not isinstance(self.data, np.ndarray):
             raise ValueError('data must be a numpy array')
@@ -137,6 +162,35 @@ class Embedding:
         if self.metadata.echoframe_key != self.echoframe_key:
             message = 'metadata.echoframe_key did not match echoframe_key'
             raise ValueError(message)
+
+
+class SlicedEmbedding:
+    '''A view of a stored Embedding sliced to a descendant phraser object.
+
+    Produced by Embedding.sub_embedding(...). Holds the rows of the parent
+    (stored) embedding that overlap a descendant phraser object, and keeps a
+    reference to the parent embedding it was derived from.
+    '''
+
+    def __init__(self, parent_embedding, phraser_object, data, rows):
+        self.parent_embedding = parent_embedding
+        self.parent_phraser_key = parent_embedding.phraser_key
+        self.parent_collar = parent_embedding.metadata.collar
+        self.parent_class = parent_embedding.metadata.phraser_object.object_type
+        self.phraser_object = phraser_object
+        self.data = data
+        self.rows = rows
+        self.model_name = parent_embedding.model_name
+        self.output_type = parent_embedding.output_type
+        self.layer = parent_embedding.layer
+
+    @property
+    def shape(self):
+        return self.data.shape
+
+    def __repr__(self):
+        return (f'SlicedEmbedding(shape={self.shape}, layer={self.layer}, '
+            f'parent_class={self.parent_class})')
 
 
 class Embeddings:

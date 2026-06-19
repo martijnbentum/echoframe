@@ -9,7 +9,7 @@ from unittest import mock
 
 import numpy as np
 
-from echoframe.embeddings import Embedding, Embeddings
+from echoframe.embeddings import Embedding, Embeddings, SlicedEmbedding
 from tests.helpers import (
     ensure_model,
     make_fake_store,
@@ -380,6 +380,89 @@ class TestEmbeddingSliceSegment(unittest.TestCase):
         segment = self._segment(1.0, 1.1)
         with self.assertRaisesRegex(ValueError, 'no frames overlap'):
             embedding.slice_segment(segment)
+
+
+def _phrase_embedding(start_seconds=0.0, n_frames=5, dim=2, layer=3,
+    collar=500, object_type='Phrase'):
+    phraser_object = SimpleNamespace(start_seconds=start_seconds,
+        object_type=object_type)
+    metadata = SimpleNamespace(
+        echoframe_key=b'abc',
+        phraser_key=_pk('phrase-1'),
+        model_name='wav2vec2',
+        output_type='hidden_state',
+        layer=layer,
+        collar=collar,
+        phraser_object=phraser_object,
+    )
+    data = np.arange(n_frames * dim).reshape(n_frames, dim).astype(float)
+    return Embedding(b'abc', SimpleNamespace(), metadata=metadata, data=data)
+
+
+class TestEmbeddingSubEmbedding(unittest.TestCase):
+    # grid (start=0, stride=0.02, field=0.025):
+    # 0:[0.000,0.025] 1:[0.020,0.045] 2:[0.040,0.065]
+    # 3:[0.060,0.085] 4:[0.080,0.105]
+    def _phone(self, start_seconds, end_seconds):
+        return SimpleNamespace(
+            start=int(start_seconds * 1000),
+            end=int(end_seconds * 1000),
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            object_type='Phone',
+            label='p',
+        )
+
+    def test_returns_sliced_embedding_with_parent_metadata(self):
+        parent = _phrase_embedding(n_frames=5, collar=500)
+        phone = self._phone(0.02, 0.05)
+        sliced = parent.sub_embedding(phone)
+        self.assertIsInstance(sliced, SlicedEmbedding)
+        self.assertIs(sliced.parent_embedding, parent)
+        self.assertIs(sliced.phraser_object, phone)
+        self.assertEqual(sliced.parent_class, 'Phrase')
+        self.assertEqual(sliced.parent_collar, 500)
+        self.assertEqual(sliced.parent_phraser_key, parent.phraser_key)
+        self.assertEqual(sliced.model_name, 'wav2vec2')
+        self.assertEqual(sliced.output_type, 'hidden_state')
+        self.assertEqual(sliced.layer, parent.layer)
+
+    def test_default_data_matches_descendant_rows(self):
+        parent = _phrase_embedding(n_frames=5)
+        phone = self._phone(0.02, 0.05)
+        sliced = parent.sub_embedding(phone)
+        self.assertEqual(sliced.rows, [0, 1, 2])
+        np.testing.assert_array_equal(sliced.data, parent.data[[0, 1, 2]])
+        np.testing.assert_array_equal(sliced.data, parent.slice_segment(phone))
+        self.assertEqual(sliced.shape, sliced.data.shape)
+
+    def test_aggregate_mean_returns_1d_vector(self):
+        parent = _phrase_embedding(n_frames=5)
+        phone = self._phone(0.02, 0.05)
+        sliced = parent.sub_embedding(phone, aggregate='mean')
+        expected = parent.data[[0, 1, 2]].mean(axis=0)
+        np.testing.assert_array_equal(sliced.data, expected)
+        self.assertEqual(sliced.data.ndim, 1)
+
+    def test_aggregate_middle_returns_single_row(self):
+        parent = _phrase_embedding(n_frames=5)
+        phone = self._phone(0.02, 0.05)
+        sliced = parent.sub_embedding(phone, aggregate='middle')
+        self.assertEqual(len(sliced.rows), 1)
+        np.testing.assert_array_equal(sliced.data, parent.data[sliced.rows[0]])
+
+    def test_invalid_aggregate_raises(self):
+        parent = _phrase_embedding(n_frames=5)
+        phone = self._phone(0.02, 0.05)
+        with self.assertRaisesRegex(ValueError,
+            "aggregate must be None, 'mean', or 'middle'"):
+            parent.sub_embedding(phone, aggregate='max')
+
+    def test_raises_when_descendant_outside_span(self):
+        parent = _phrase_embedding(n_frames=5)
+        phone = self._phone(1.0, 1.1)
+        with self.assertRaisesRegex(ValueError, 'no frames overlap'):
+            parent.sub_embedding(phone)
 
 
 def _embedding_with_data(data, start_seconds=0.0, layer=3):

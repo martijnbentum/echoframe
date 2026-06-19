@@ -13,7 +13,7 @@ class TestLoadModel(unittest.TestCase):
         metadata = ModelMetadata('wav2vec2', local_path='/tmp/model.pt',
             huggingface_id='facebook/wav2vec2-base')
 
-        with mock.patch.object(model_loader.to_vector_load, 'load_model',
+        with mock.patch('to_vector.load.load_model',
             return_value='model') as load_model:
             result = model_loader.load_model(metadata, gpu=True)
 
@@ -24,7 +24,7 @@ class TestLoadModel(unittest.TestCase):
         metadata = ModelMetadata('wav2vec2',
             huggingface_id='facebook/wav2vec2-base')
 
-        with mock.patch.object(model_loader.to_vector_load, 'load_model',
+        with mock.patch('to_vector.load.load_model',
             return_value='model') as load_model:
             result = model_loader.load_model(metadata)
 
@@ -44,7 +44,7 @@ class TestGpuHelpers(unittest.TestCase):
     def test_model_is_on_gpu_delegates(self):
         model = object()
 
-        with mock.patch.object(model_loader.to_vector_load, 'model_is_on_gpu',
+        with mock.patch('to_vector.load.model_is_on_gpu',
             return_value=False) as model_is_on_gpu:
             result = model_loader.model_is_on_gpu(model)
 
@@ -54,8 +54,8 @@ class TestGpuHelpers(unittest.TestCase):
     def test_remove_model_from_gpu_moves_to_cpu(self):
         model = object()
 
-        with mock.patch.object(model_loader.to_vector_load,
-            'move_model_to_cpu', return_value='cpu-model') as move_to_cpu:
+        with mock.patch('to_vector.load.move_model_to_cpu',
+            return_value='cpu-model') as move_to_cpu:
             result = model_loader.remove_model_from_gpu(model)
 
         self.assertEqual(result, 'cpu-model')

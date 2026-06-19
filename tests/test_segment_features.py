@@ -18,9 +18,6 @@ from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
 
 sys.modules.setdefault('frame', types.SimpleNamespace())
-sys.modules.setdefault('to_vector', types.SimpleNamespace())
-if not hasattr(sys.modules['to_vector'], 'wav2vec2_codebook'):
-    sys.modules['to_vector'].wav2vec2_codebook = types.SimpleNamespace()
 
 import echoframe.segment_features as segment_features
 import echoframe.batch_codebook_indices as batch_codebook_indices

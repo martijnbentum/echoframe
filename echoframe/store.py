@@ -90,7 +90,11 @@ class Store:
         Registers source_id -> phraser_store.path (idempotent; raises on a
         path conflict) and keeps the live store so phraser objects on
         metadata can be loaded. Does not open or load any store itself.
+
+        Also sets a back-reference (phraser_store.echoframe_store = self) so
+        bound phraser segments can reach this store, e.g. segment.embedding().
         '''
+        phraser_store.echoframe_store = self
         return self.phraser_registry.attach(source_id, phraser_store)
 
     def load_phraser_store(self, source_id):

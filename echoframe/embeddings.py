@@ -36,8 +36,17 @@ class Embedding:
     def shape(self):
         return self.data.shape
 
+    @property
+    def phraser_object(self):
+        return self.metadata.phraser_object
+
+    @property
+    def object_class(self):
+        return self.phraser_object.object_type
+
     def __repr__(self):
-        text = f'Embedding(shape={self.shape}, layer={self.layer})'
+        text = (f'Embedding(shape={self.shape}, layer={self.layer}, '
+            f'class={self.object_class})')
         return text
 
     def to_frames(self, stride=0.02, field=0.025):
@@ -148,6 +157,29 @@ class Embedding:
                 "aggregate must be None, 'mean', or 'middle'")
         return SlicedEmbedding(self, phraser_object, data, rows)
 
+    def sub_embeddings(self, object_class, aggregate=None,
+        percentage_overlap=None, stride=0.02, field=0.025):
+        '''Return a list of SlicedEmbeddings for all descendant objects of
+        object_class.
+        object_class:  'word', 'syllable', or 'phone' (singular or plural,
+                       case-insensitive); must be a descendant segment type of
+                       this embedding's phraser_object.
+        aggregate:     None -> 2D rows; 'mean' or 'middle' -> 1D vector each
+        '''
+        accessor = object_class.lower()
+        if not accessor.endswith('s'): accessor += 's'
+        segments = getattr(self.phraser_object, accessor, None)
+        if segments is None:
+            m = f'{self.object_class} has no descendant {object_class!r}'
+            raise ValueError(m)
+        sub_embeddings = []
+        for segment in segments:
+            sub = self.sub_embedding(segment, aggregate=aggregate,
+                percentage_overlap=percentage_overlap, stride=stride,
+                field=field)
+            sub_embeddings.append(sub)
+        return sub_embeddings
+
     def _validate(self):
         if not isinstance(self.data, np.ndarray):
             raise ValueError('data must be a numpy array')
@@ -178,6 +210,7 @@ class SlicedEmbedding:
         self.parent_collar = parent_embedding.metadata.collar
         self.parent_class = parent_embedding.metadata.phraser_object.object_type
         self.phraser_object = phraser_object
+        self.object_class = phraser_object.object_type
         self.data = data
         self.rows = rows
         self.model_name = parent_embedding.model_name
@@ -190,7 +223,7 @@ class SlicedEmbedding:
 
     def __repr__(self):
         return (f'SlicedEmbedding(shape={self.shape}, layer={self.layer}, '
-            f'parent_class={self.parent_class})')
+            f'class={self.object_class}, parent_class={self.parent_class})')
 
 
 class Embeddings:

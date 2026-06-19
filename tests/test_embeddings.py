@@ -28,6 +28,8 @@ def _make_metadata(echoframe_key=b'key', phraser_key=None, model_name='model',
         model_name=model_name,
         output_type=output_type,
         layer=layer,
+        phraser_object=SimpleNamespace(start_seconds=0.0,
+            object_type='Phrase'),
     )
 
 
@@ -69,7 +71,8 @@ class TestEmbedding(unittest.TestCase):
         result = Embedding(b'abc', SimpleNamespace(), metadata=metadata,
             data=data)
 
-        self.assertEqual(repr(result), 'Embedding(shape=(4,), layer=7)')
+        self.assertEqual(repr(result),
+            'Embedding(shape=(4,), layer=7, class=Phrase)')
 
     def test_raises_if_metadata_missing(self):
         store = SimpleNamespace(
@@ -260,7 +263,8 @@ class TestEmbeddings(unittest.TestCase):
 
 
 def _slice_embedding(start_seconds=0.0, n_frames=5, dim=2, layer=3):
-    phraser_object = SimpleNamespace(start_seconds=start_seconds)
+    phraser_object = SimpleNamespace(start_seconds=start_seconds,
+        object_type='Phrase')
     metadata = SimpleNamespace(
         echoframe_key=b'abc',
         phraser_key=_pk('phrase-1'),
@@ -298,7 +302,8 @@ class TestEmbeddingToFrames(unittest.TestCase):
         metadata = SimpleNamespace(
             echoframe_key=b'abc', phraser_key=_pk('phrase-1'),
             model_name='wav2vec2', output_type='hidden_state', layer=3,
-            phraser_object=SimpleNamespace(start_seconds=0.0))
+            phraser_object=SimpleNamespace(start_seconds=0.0,
+                object_type='Phrase'))
         embedding = Embedding(b'abc', SimpleNamespace(), metadata=metadata,
             data=np.arange(4).astype(float))
 
@@ -464,9 +469,110 @@ class TestEmbeddingSubEmbedding(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'no frames overlap'):
             parent.sub_embedding(phone)
 
+    def test_repr_includes_class_and_parent_class(self):
+        parent = _phrase_embedding(n_frames=5, layer=4)
+        sliced = parent.sub_embedding(self._phone(0.02, 0.05))
+        self.assertEqual(sliced.object_class, 'Phone')
+        self.assertEqual(repr(sliced),
+            f'SlicedEmbedding(shape={sliced.shape}, layer=4, '
+            f'class=Phone, parent_class=Phrase)')
+
+
+class TestEmbeddingSubEmbeddings(unittest.TestCase):
+    # grid (start=0, stride=0.02, field=0.025):
+    # 0:[0.000,0.025] 1:[0.020,0.045] 2:[0.040,0.065]
+    # 3:[0.060,0.085] 4:[0.080,0.105]
+    def _phone(self, start_seconds, end_seconds, label='p'):
+        return SimpleNamespace(
+            start=int(start_seconds * 1000),
+            end=int(end_seconds * 1000),
+            start_seconds=start_seconds,
+            end_seconds=end_seconds,
+            object_type='Phone',
+            label=label,
+        )
+
+    def _embedding(self, n_frames=5, dim=2, **descendants):
+        phraser_object = SimpleNamespace(start_seconds=0.0,
+            object_type='Phrase', **descendants)
+        metadata = SimpleNamespace(
+            echoframe_key=b'abc',
+            phraser_key=_pk('phrase-1'),
+            model_name='wav2vec2',
+            output_type='hidden_state',
+            layer=3,
+            collar=500,
+            phraser_object=phraser_object,
+        )
+        data = np.arange(n_frames * dim).reshape(n_frames, dim).astype(float)
+        return Embedding(b'abc', SimpleNamespace(), metadata=metadata,
+            data=data)
+
+    def test_returns_one_sliced_embedding_per_descendant(self):
+        phones = [self._phone(0.02, 0.05), self._phone(0.06, 0.09)]
+        embedding = self._embedding(phones=phones)
+
+        result = embedding.sub_embeddings('phone')
+
+        self.assertEqual(len(result), 2)
+        for sub, phone in zip(result, phones):
+            self.assertIsInstance(sub, SlicedEmbedding)
+            self.assertIs(sub.phraser_object, phone)
+            expected = embedding.sub_embedding(phone)
+            self.assertEqual(sub.rows, expected.rows)
+            np.testing.assert_array_equal(sub.data, expected.data)
+
+    def test_accepts_singular_plural_and_mixed_case(self):
+        phone = self._phone(0.02, 0.05)
+        embedding = self._embedding(phones=[phone])
+
+        for name in ('phone', 'phones', 'Phone', 'PHONES'):
+            result = embedding.sub_embeddings(name)
+            self.assertEqual(len(result), 1)
+            self.assertIs(result[0].phraser_object, phone)
+
+    def test_aggregate_is_forwarded(self):
+        phones = [self._phone(0.02, 0.05), self._phone(0.06, 0.09)]
+        embedding = self._embedding(phones=phones)
+
+        result = embedding.sub_embeddings('phone', aggregate='mean')
+
+        for sub, phone in zip(result, phones):
+            self.assertEqual(sub.data.ndim, 1)
+            np.testing.assert_array_equal(sub.data,
+                embedding.sub_embedding(phone, aggregate='mean').data)
+
+    def test_percentage_overlap_is_forwarded(self):
+        phone = self._phone(0.02, 0.05)
+        embedding = self._embedding(phones=[phone])
+
+        result = embedding.sub_embeddings('phone', percentage_overlap=100)
+
+        np.testing.assert_array_equal(result[0].data,
+            embedding.sub_embedding(phone, percentage_overlap=100).data)
+
+    def test_empty_descendant_list_returns_empty_list(self):
+        embedding = self._embedding(phones=[])
+        self.assertEqual(embedding.sub_embeddings('phone'), [])
+
+    def test_raises_for_missing_descendant_class(self):
+        embedding = self._embedding(phones=[self._phone(0.02, 0.05)])
+
+        with self.assertRaisesRegex(ValueError,
+            "Phrase has no descendant 'word'"):
+            embedding.sub_embeddings('word')
+
+    def test_raises_when_a_descendant_is_outside_span(self):
+        phones = [self._phone(0.02, 0.05), self._phone(1.0, 1.1)]
+        embedding = self._embedding(phones=phones)
+
+        with self.assertRaisesRegex(ValueError, 'no frames overlap'):
+            embedding.sub_embeddings('phone')
+
 
 def _embedding_with_data(data, start_seconds=0.0, layer=3):
-    phraser_object = SimpleNamespace(start_seconds=start_seconds)
+    phraser_object = SimpleNamespace(start_seconds=start_seconds,
+        object_type='Phrase')
     metadata = SimpleNamespace(
         echoframe_key=b'abc',
         phraser_key=_pk('phrase-1'),

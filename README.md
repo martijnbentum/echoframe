@@ -194,6 +194,59 @@ embeddings = store.phraser_keys_to_embeddings(
 )
 ```
 
+Bind a live phraser store so phraser segments can reach their stored embeddings
+directly. `attach_phraser_store` registers the source and sets a back-reference
+(`phraser_store.echoframe_store = store`):
+
+```python
+store.attach_phraser_store('cgn-main', phraser_store)
+
+word = phraser_store.words.get(label='hello')
+embedding = word.embedding('wav2vec2', layer=7)   # one Embedding
+embedding.data
+```
+
+Slice a stored embedding to a descendant phraser object (word, syllable, or
+phone) with `Embedding.sub_embedding(...)`. This is useful when a hidden state
+is stored at a coarser level, such as a phrase:
+
+```python
+phrase_embedding = word.phrase.embedding('wav2vec2', layer=7)
+phone_embedding = phrase_embedding.sub_embedding(phone)   # SlicedEmbedding
+
+phone_embedding.data           # payload rows sliced to the phone
+phone_embedding.parent_class   # 'Phrase'
+phone_embedding.object_class   # 'Phone'
+```
+
+`sub_embedding(phraser_object, aggregate=None)` returns a `SlicedEmbedding`
+view: `aggregate=None` keeps the 2D rows, while `'mean'` or `'middle'` return a
+1D vector. A `SlicedEmbedding` exposes `parent_embedding`,
+`parent_phraser_key`, `parent_collar`, `parent_class`, `object_class`,
+`phraser_object`, `data`, `rows`, `model_name`, `output_type`, and `layer`. On
+the phraser side, `segment.embedding(model_name, layer, fallback=True)` walks
+ancestors when nothing is stored for the segment itself and returns the nearest
+ancestor embedding already sliced to the segment.
+
+Slice to every descendant of a class at once with
+`Embedding.sub_embeddings(object_class, aggregate=None)`. It returns a list of
+`SlicedEmbedding`s, one per descendant phraser object of that class:
+
+```python
+phone_embeddings = phrase_embedding.sub_embeddings('phone')        # list
+word_means = phrase_embedding.sub_embeddings('word', aggregate='mean')
+```
+
+`object_class` is the descendant segment type (`'word'`, `'syllable'`, or
+`'phone'`; singular or plural, case-insensitive) and must be a descendant of
+the embedding's own phraser class, otherwise a `ValueError` is raised. A
+descendant whose span falls outside the stored payload raises the same
+`no frames overlap` error as `sub_embedding`. Both `Embedding` and
+`SlicedEmbedding` expose their own phraser class as `object_class` and show it
+in their `repr` (e.g. `Embedding(shape=..., layer=7, class=Phrase)`);
+`phraser_object` and `object_class` resolve lazily, so constructing an
+`Embedding` does not require the phraser store to be reachable.
+
 Current `Embeddings` behavior:
 
 - all items must share one `model_name`, `output_type`, and `layer`

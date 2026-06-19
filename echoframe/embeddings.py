@@ -221,9 +221,21 @@ class SlicedEmbedding:
     def shape(self):
         return self.data.shape
 
+    def _rows_repr(self):
+        if not self.rows:
+            return '[]'
+        if len(self.rows) == 1:
+            return f'[{self.rows[0]}]'
+        lo, hi = self.rows[0], self.rows[-1]
+        contiguous = self.rows == list(range(lo, hi + 1))
+        if contiguous:
+            return f'[{lo}..{hi}]'
+        return f'[{lo}..{hi}] ({len(self.rows)} rows)'
+
     def __repr__(self):
         return (f'SlicedEmbedding(shape={self.shape}, layer={self.layer}, '
-            f'class={self.object_class}, parent_class={self.parent_class})')
+            f'class={self.object_class}, parent_class={self.parent_class}, '
+            f'rows={self._rows_repr()})')
 
 
 class Embeddings:

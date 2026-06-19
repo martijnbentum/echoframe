@@ -475,7 +475,14 @@ class TestEmbeddingSubEmbedding(unittest.TestCase):
         self.assertEqual(sliced.object_class, 'Phone')
         self.assertEqual(repr(sliced),
             f'SlicedEmbedding(shape={sliced.shape}, layer=4, '
-            f'class=Phone, parent_class=Phrase)')
+            f'class=Phone, parent_class=Phrase, rows=[0..2])')
+
+    def test_repr_rows_single_frame(self):
+        parent = _phrase_embedding(n_frames=5, layer=4)
+        sliced = parent.sub_embedding(self._phone(0.02, 0.05),
+            aggregate='middle')
+        self.assertEqual(sliced.rows, [1])
+        self.assertIn('rows=[1]', repr(sliced))
 
 
 class TestEmbeddingSubEmbeddings(unittest.TestCase):

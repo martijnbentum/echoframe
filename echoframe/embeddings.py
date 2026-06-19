@@ -70,8 +70,58 @@ class Embedding:
         '''Return payload rows for a descendant phraser segment.
         segment:  phraser segment (word, syllable, or phone) with seconds API
         '''
-        return self.slice_time(segment.start_seconds, segment.end_seconds,
+        rows = self.slice_time(segment.start_seconds, segment.end_seconds,
             percentage_overlap=percentage_overlap, stride=stride, field=field)
+        return rows
+
+    def middle_frame_time(self, start, end, percentage_overlap=None,
+        stride=0.02, field=0.025):
+        '''Return the single payload row for the middle frame overlapping
+        [start, end] seconds.'''
+        from frame.frames import select_middle_frame
+        frames = self.to_frames(stride, field)
+        selected = frames.select_frames(start, end,
+            percentage_overlap=percentage_overlap)
+        if not selected:
+            raise ValueError(f'no frames overlap {start:.3f}-{end:.3f}s')
+        frame = select_middle_frame(selected)
+        return self.data[frame.index]
+
+    def middle_frame_segment(self, segment, percentage_overlap=None,
+        stride=0.02, field=0.025):
+        '''Middle-frame row for a descendant phraser segment.'''
+        row = self.middle_frame_time(segment.start_seconds,
+            segment.end_seconds, percentage_overlap=percentage_overlap,
+            stride=stride, field=field)
+        return row
+
+    def aggregate_time(self, start, end, method='mean', percentage_overlap=None,
+        stride=0.02, field=0.025):
+        '''Aggregate payload rows overlapping [start, end] to one vector.
+        method:  'mean'   -> average of all overlapping rows
+                 'middle' -> the middle frame's row
+        Returns a 1D (dim,) array.
+        '''
+        if method == 'middle':
+            vector = self.middle_frame_time(start, end,
+                percentage_overlap=percentage_overlap, stride=stride,
+                field=field)
+            return vector
+        if method == 'mean':
+            rows = self.slice_time(start, end,
+                percentage_overlap=percentage_overlap, stride=stride,
+                field=field)
+            return rows.mean(axis=0)
+        raise ValueError(f"method must be 'mean' or 'middle', got {method!r}")
+
+    def aggregate_segment(self, segment, method='mean', percentage_overlap=None,
+        stride=0.02, field=0.025):
+        '''Aggregate rows for a descendant phraser segment (see
+        aggregate_time).'''
+        vector = self.aggregate_time(segment.start_seconds, segment.end_seconds,
+            method=method, percentage_overlap=percentage_overlap,
+            stride=stride, field=field)
+        return vector
 
     def _validate(self):
         if not isinstance(self.data, np.ndarray):

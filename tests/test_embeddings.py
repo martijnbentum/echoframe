@@ -382,5 +382,138 @@ class TestEmbeddingSliceSegment(unittest.TestCase):
             embedding.slice_segment(segment)
 
 
+def _embedding_with_data(data, start_seconds=0.0, layer=3):
+    phraser_object = SimpleNamespace(start_seconds=start_seconds)
+    metadata = SimpleNamespace(
+        echoframe_key=b'abc',
+        phraser_key=_pk('phrase-1'),
+        model_name='wav2vec2',
+        output_type='hidden_state',
+        layer=layer,
+        phraser_object=phraser_object,
+    )
+    return Embedding(b'abc', SimpleNamespace(), metadata=metadata, data=data)
+
+
+def _segment(start_seconds, end_seconds):
+    return SimpleNamespace(
+        start=int(start_seconds * 1000),
+        end=int(end_seconds * 1000),
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+    )
+
+
+class TestEmbeddingMiddleFrame(unittest.TestCase):
+    # grid (start=0, stride=0.02, field=0.025):
+    # 0:[0.000,0.025] 1:[0.020,0.045] 2:[0.040,0.065]
+    # 3:[0.060,0.085] 4:[0.080,0.105]
+    def test_middle_of_odd_selection(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_time(0.02, 0.05)
+        np.testing.assert_array_equal(result, embedding.data[1])
+
+    def test_middle_of_even_selection(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_time(0.0, 0.04)
+        np.testing.assert_array_equal(result, embedding.data[0])
+
+    def test_single_frame_selection(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_time(0.001, 0.015)
+        np.testing.assert_array_equal(result, embedding.data[0])
+
+    def test_returns_1d_row(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_time(0.02, 0.05)
+        self.assertEqual(result.shape, (2,))
+
+    def test_percentage_overlap_is_forwarded(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_time(0.02, 0.05,
+            percentage_overlap=100)
+        np.testing.assert_array_equal(result, embedding.data[1])
+
+    def test_raises_when_interval_outside_span(self):
+        embedding = _slice_embedding(n_frames=5)
+        with self.assertRaisesRegex(ValueError,
+            'no frames overlap 1.000-1.100s'):
+            embedding.middle_frame_time(1.0, 1.1)
+
+    def test_segment_delegates(self):
+        embedding = _slice_embedding(n_frames=5)
+        result = embedding.middle_frame_segment(_segment(0.02, 0.05))
+        np.testing.assert_array_equal(result,
+            embedding.middle_frame_time(0.02, 0.05))
+
+
+class TestEmbeddingAggregate(unittest.TestCase):
+    # grid (start=0, stride=0.02, field=0.025):
+    # 0:[0.000,0.025] 1:[0.020,0.045] 2:[0.040,0.065]
+    # 3:[0.060,0.085] 4:[0.080,0.105]
+    # data chosen so mean != middle row over selections
+    def _embedding(self):
+        data = np.array(
+            [[0.0, 0.0], [10.0, 10.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]])
+        return _embedding_with_data(data)
+
+    def test_mean_matches_manual_average(self):
+        embedding = self._embedding()
+        result = embedding.aggregate_time(0.0, 0.105, 'mean')
+        np.testing.assert_array_equal(result, embedding.data.mean(axis=0))
+
+    def test_mean_subinterval(self):
+        embedding = self._embedding()
+        result = embedding.aggregate_time(0.02, 0.05, 'mean')
+        np.testing.assert_array_equal(result,
+            embedding.data[[0, 1, 2]].mean(axis=0))
+
+    def test_middle_delegates(self):
+        embedding = self._embedding()
+        result = embedding.aggregate_time(0.02, 0.05, 'middle')
+        np.testing.assert_array_equal(result,
+            embedding.middle_frame_time(0.02, 0.05))
+
+    def test_default_method_is_mean(self):
+        embedding = self._embedding()
+        np.testing.assert_array_equal(
+            embedding.aggregate_time(0.02, 0.05),
+            embedding.aggregate_time(0.02, 0.05, 'mean'))
+
+    def test_returns_1d_for_both_methods(self):
+        embedding = self._embedding()
+        self.assertEqual(embedding.aggregate_time(0.02, 0.05, 'mean').shape,
+            (2,))
+        self.assertEqual(embedding.aggregate_time(0.02, 0.05, 'middle').shape,
+            (2,))
+
+    def test_invalid_method_raises(self):
+        embedding = self._embedding()
+        with self.assertRaisesRegex(ValueError,
+            "method must be 'mean' or 'middle'"):
+            embedding.aggregate_time(0.02, 0.05, 'bad')
+
+    def test_percentage_overlap_forwarded(self):
+        embedding = self._embedding()
+        result = embedding.aggregate_time(0.02, 0.05, 'mean',
+            percentage_overlap=100)
+        np.testing.assert_array_equal(result,
+            embedding.data[[1]].mean(axis=0))
+
+    def test_raises_when_interval_outside_span(self):
+        embedding = self._embedding()
+        for method in ('mean', 'middle'):
+            with self.assertRaisesRegex(ValueError, 'no frames overlap'):
+                embedding.aggregate_time(1.0, 1.1, method)
+
+    def test_segment_delegates(self):
+        embedding = self._embedding()
+        segment = _segment(0.02, 0.05)
+        for method in ('mean', 'middle'):
+            np.testing.assert_array_equal(
+                embedding.aggregate_segment(segment, method=method),
+                embedding.aggregate_time(0.02, 0.05, method=method))
+
+
 if __name__ == '__main__':
     unittest.main()

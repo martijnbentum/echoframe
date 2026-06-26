@@ -255,15 +255,24 @@ class Embeddings:
 
     @classmethod
     def from_echoframe_keys(cls, store, keys):
+        '''Build Embeddings with a single batched payload read.
+
+        Groups payloads by shard (one HDF5 open per shard) instead of opening
+        a shard per embedding.
+        '''
+        keys = list(keys)
+        metadatas = store.load_many_metadata(keys, keep_missing=True)
+        payloads = store.metadatas_to_payloads(metadatas)
+
         embeddings = []
         skipped_count = 0
-        for key in keys:
-            try: embedding = Embedding(key, store)
-            except ValueError as e:
+        for key, metadata, data in zip(keys, metadatas, payloads):
+            if metadata is None or data is None:
                 skipped_count += 1
-                print(f'skipping echoframe_key {key!r}: {e}')
+                print(f'skipping echoframe_key {key!r}: no metadata or payload')
                 continue
-            embeddings.append(embedding)
+            embeddings.append(Embedding(key, store, metadata=metadata,
+                data=data))
         if not embeddings:
             message = f'no embeddings were loaded skipped keys {skipped_count}'
             raise ValueError(message)

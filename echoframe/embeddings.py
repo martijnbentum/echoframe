@@ -271,8 +271,13 @@ class Embeddings:
                 skipped_count += 1
                 print(f'skipping echoframe_key {key!r}: no metadata or payload')
                 continue
-            embeddings.append(Embedding(key, store, metadata=metadata,
-                data=data))
+            try: embedding = Embedding(key, store, metadata=metadata,
+                data=data)
+            except ValueError as e:
+                skipped_count += 1
+                print(f'skipping echoframe_key {key!r}: {e}')
+                continue
+            embeddings.append(embedding)
         if not embeddings:
             message = f'no embeddings were loaded skipped keys {skipped_count}'
             raise ValueError(message)

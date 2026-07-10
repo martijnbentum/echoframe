@@ -234,12 +234,14 @@ class TestEmbeddings(unittest.TestCase):
         invalid_metadata = _make_metadata(echoframe_key=b'invalid',
             phraser_key=_pk('phrase-2'), model_name='wav2vec2', layer=4)
         store = SimpleNamespace(
-            load_metadata=lambda key: (
-                valid_metadata if key == b'valid' else invalid_metadata),
-            metadata_to_payload=lambda metadata: (
+            load_many_metadata=lambda keys, keep_missing=False: [
+                valid_metadata if key == b'valid' else invalid_metadata
+                for key in keys],
+            metadatas_to_payloads=lambda metadatas: [
                 np.arange(6).reshape(2, 3).astype(float)
                 if metadata.echoframe_key == b'valid'
-                else np.zeros((2, 3, 4))),
+                else np.zeros((2, 3, 4))
+                for metadata in metadatas],
         )
 
         with mock.patch('builtins.print') as print_mock:
@@ -253,8 +255,10 @@ class TestEmbeddings(unittest.TestCase):
         invalid_metadata = _make_metadata(echoframe_key=b'invalid',
             phraser_key=_pk('phrase-2'), model_name='wav2vec2', layer=4)
         store = SimpleNamespace(
-            load_metadata=lambda key: invalid_metadata,
-            metadata_to_payload=lambda metadata: np.zeros((2, 3, 4)),
+            load_many_metadata=lambda keys, keep_missing=False: [
+                invalid_metadata for key in keys],
+            metadatas_to_payloads=lambda metadatas: [
+                np.zeros((2, 3, 4)) for metadata in metadatas],
         )
 
         with self.assertRaisesRegex(ValueError,

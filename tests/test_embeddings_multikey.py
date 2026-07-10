@@ -65,8 +65,10 @@ class TestEmbeddingsMultiKey(unittest.TestCase):
         metadata.output_type = 'hidden_state'
         metadata.layer = 4
         store = mock.Mock()
-        store.load_metadata.return_value = metadata
-        store.metadata_to_payload.return_value = np.zeros((2, 3, 4))
+        store.load_many_metadata.side_effect = lambda keys, \
+            keep_missing=False: [metadata for key in keys]
+        store.metadatas_to_payloads.side_effect = lambda metadatas: [
+            np.zeros((2, 3, 4)) for md in metadatas]
 
         with self.assertRaisesRegex(ValueError,
             'no embeddings were loaded skipped keys 2'):
@@ -82,13 +84,16 @@ class TestEmbeddingsMultiKey(unittest.TestCase):
         invalid_metadata.output_type = 'hidden_state'
         invalid_metadata.layer = 4
         store = mock.Mock()
-        store.load_metadata.side_effect = lambda key: (
-            invalid_metadata if key == b'invalid'
-            else valid_store.load_metadata(key))
-        store.metadata_to_payload.side_effect = lambda metadata: (
+        store.load_many_metadata.side_effect = lambda keys, \
+            keep_missing=False: [
+                invalid_metadata if key == b'invalid'
+                else valid_store.load_metadata(key)
+                for key in keys]
+        store.metadatas_to_payloads.side_effect = lambda metadatas: [
             np.zeros((2, 3, 4))
             if metadata.echoframe_key == b'invalid'
-            else valid_store.metadata_to_payload(metadata))
+            else valid_store.metadata_to_payload(metadata)
+            for metadata in metadatas]
 
         with mock.patch('builtins.print') as print_mock:
             result = Embeddings.from_echoframe_keys(store, [

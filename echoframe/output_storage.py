@@ -222,6 +222,17 @@ class Hdf5ShardStore:
         with self.h5.File(file_path, 'r') as handle:
             return dataset_path in handle
 
+    def missing_datasets(self, shard_id, dataset_paths):
+        '''Return the subset of dataset_paths absent from one shard.
+        Opens the shard file once instead of once per dataset.
+        '''
+        dataset_paths = list(dataset_paths)
+        if not dataset_paths: return set()
+        file_path = self.root / f'{shard_id}.h5'
+        if not self._path_exists(file_path): return set(dataset_paths)
+        with self.h5.File(file_path, 'r') as handle:
+            return {path for path in dataset_paths if path not in handle}
+
     def shard_size(self, shard_id):
         '''Return shard file size in bytes.'''
         file_path = self.root / f'{shard_id}.h5'

@@ -316,6 +316,27 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(shard_rows[0]['shard_id'], first.shard_id)
         self.assertEqual(first.shard_id, second.shard_id)
 
+    def test_find_by_shard_lists_only_shard_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            first = _put(store, phraser_key='phrase-10', collar=90,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=5, data=[[1.0]])
+            second = _put(store, phraser_key='phrase-11', collar=90,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=5, data=[[2.0]])
+            other = _put(store, phraser_key='phrase-12', collar=90,
+                model_name='hubert', output_type='hidden_state',
+                layer=5, data=[[3.0]])
+            entries = store.index.find_by_shard(first.shard_id, store=store)
+            other_entries = store.index.find_by_shard(other.shard_id,
+                store=store)
+
+        self.assertEqual(sorted(_hex(item) for item in entries),
+            sorted([_hex(first), _hex(second)]))
+        self.assertEqual([_hex(item) for item in other_entries],
+            [_hex(other)])
+
     def test_find_by_label(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

@@ -173,20 +173,20 @@ def verify_integrity(store):
     broken = []
     checked = 0
     for shard_id in store.index.list_shards():
+        pointed = []
         for metadata in _entries_for_shard(store, shard_id):
             checked += 1
-            if metadata.shard_id is None:
+            if metadata.shard_id is None or metadata.dataset_path is None:
                 broken.append(broken_reference(metadata,
                     reason='missing shard pointer'))
                 continue
-            if metadata.dataset_path is None:
-                broken.append(broken_reference(metadata,
-                    reason='missing shard pointer'))
-                continue
-            if not store.storage.dataset_exists(metadata.shard_id,
-                metadata.dataset_path):
-                broken.append(broken_reference(metadata,
-                    reason='missing dataset'))
+            pointed.append(metadata)
+        dataset_paths = [metadata.dataset_path for metadata in pointed]
+        missing = store.storage.missing_datasets(shard_id, dataset_paths)
+        for metadata in pointed:
+            if metadata.dataset_path not in missing: continue
+            broken.append(broken_reference(metadata,
+                reason='missing dataset'))
     data = {}
     data['ok'] = not broken
     data['checked_metadata_count'] = checked
@@ -230,7 +230,7 @@ def compaction_journal(store, status=None):
 
 
 def _entries_for_shard(store, shard_id):
-    entries = store.load_many_metadata(store.index.all_echoframe_keys)
+    entries = store.index.find_by_shard(shard_id, store=store)
     return [metadata for metadata in entries if metadata.shard_id == shard_id]
 
 

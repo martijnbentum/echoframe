@@ -259,6 +259,32 @@ class TestStorageRuntime(unittest.TestCase):
         self.assertEqual(sanitize_name('wav2vec2 hidden/state'),
             'wav2vec2_hidden_state')
 
+    def test_missing_datasets_reports_absent_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index = LmdbIndex(Path(tmpdir) / 'index', env=FakeEnv(),
+                shards_root=Path(tmpdir) / 'shards')
+            storage = Hdf5ShardStore(Path(tmpdir) / 'shards',
+                h5_module=FakeH5Module())
+            store = Store(tmpdir, index=index, storage=storage)
+            store.register_model('wav2vec2')
+            phraser_key = b'phrase'.ljust(22, b'\0')
+            echoframe_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=phraser_key, layer=3,
+                collar=100)
+            metadata = EchoframeMetadata(echoframe_key, model_name='wav2vec2')
+            stored = storage.store_with_shard(metadata, [[1.0, 2.0]],
+                shard_id='manual_0001')
+
+            missing = storage.missing_datasets('manual_0001',
+                [stored.dataset_path, '/layer_0003/deadbeef'])
+            all_missing = storage.missing_datasets('absent_0001',
+                [stored.dataset_path])
+            none_checked = storage.missing_datasets('manual_0001', [])
+
+        self.assertEqual(missing, {'/layer_0003/deadbeef'})
+        self.assertEqual(all_missing, {stored.dataset_path})
+        self.assertEqual(none_checked, set())
+
     def test_store_does_not_create_diagnostic_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

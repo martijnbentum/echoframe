@@ -66,6 +66,12 @@ class LmdbIndex:
                 prefix)
         return self.load_many(echoframe_keys, store=store)
 
+    def find_by_shard(self, shard_id, store=None):
+        '''Find metadata records stored in one shard.'''
+        prefix = self._shard_key(shard_id, b'')
+        echoframe_keys = self._scan_prefix(self.by_shard_db, prefix)
+        return self.load_many(echoframe_keys, store=store)
+
     def find_by_tag(self, tag, store=None):
         '''List metadata records for one tag.'''
         records = self.find_by_tags([tag], match='all', store=store)

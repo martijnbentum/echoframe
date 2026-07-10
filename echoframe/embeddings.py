@@ -44,9 +44,14 @@ class Embedding:
     def object_class(self):
         return self.phraser_object.object_type
 
+    def _object_class_repr(self):
+        '''Return object_class for display; '?' when phraser is unreachable.'''
+        try: return self.object_class
+        except Exception: return '?'
+
     def __repr__(self):
         text = (f'Embedding(shape={self.shape}, layer={self.layer}, '
-            f'class={self.object_class})')
+            f'class={self._object_class_repr()})')
         return text
 
     def to_frames(self, stride=0.02, field=0.025):

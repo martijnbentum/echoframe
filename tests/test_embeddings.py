@@ -74,6 +74,25 @@ class TestEmbedding(unittest.TestCase):
         self.assertEqual(repr(result),
             'Embedding(shape=(4,), layer=7, class=Phrase)')
 
+    def test_repr_shows_unknown_class_when_phraser_unreachable(self):
+        class BrokenMetadata(SimpleNamespace):
+            @property
+            def phraser_object(self):
+                raise ValueError('unknown phraser_source_id: None')
+        metadata = BrokenMetadata(
+            echoframe_key=b'abc',
+            phraser_key=_pk('phrase-1'),
+            model_name='wav2vec2',
+            output_type='hidden_state',
+            layer=7,
+        )
+        data = np.arange(4).astype(float)
+        result = Embedding(b'abc', SimpleNamespace(), metadata=metadata,
+            data=data)
+
+        self.assertEqual(repr(result),
+            'Embedding(shape=(4,), layer=7, class=?)')
+
     def test_raises_if_metadata_missing(self):
         store = SimpleNamespace(
             load_metadata=lambda key: None,

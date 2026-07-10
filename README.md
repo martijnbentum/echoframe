@@ -264,19 +264,25 @@ for metadata in entries:
     print(metadata.output_type, metadata.layer, metadata.collar)
 ```
 
-Delete one stored output:
+Delete stored outputs, either by echoframe key or by phraser key plus
+filters:
 
 ```python
-deleted = store.delete(
+store.delete(echoframe_key)
+store.delete_many([echoframe_key_a, echoframe_key_b])
+
+store.delete_phraser_key(
     phraser_key,
-    collar=150,
     model_name='wav2vec2',
     output_type='hidden_state',
     layer=7,
+    collar=150,
 )
-
-print(deleted.storage_status if deleted else None)
 ```
+
+`delete_phraser_key(...)` deletes every stored output that matches the given
+filters (`collar_match` can be `'exact'`, `'min'`, `'max'`, or `'nearest'`)
+and prints how many records were deleted.
 
 List outputs by tag:
 

@@ -328,6 +328,16 @@ journal = store.compaction_journal()
 stats = store.shard_stats()
 ```
 
+### Overwrites and garbage
+
+Re-saving an existing echoframe key writes the new payload to the current
+active shard and deliberately leaves the old bytes behind in their original
+shard file: saves stay fast and overwriting a key is an edge case. The
+leftover bytes are counted as reclaimable garbage —
+`store.overview(include_garbage=True)` reports them per shard and
+`store.compact_shards()` rewrites only shards that hold enough garbage to be
+worth reclaiming.
+
 ## Store Config
 
 Each store keeps a `config.json` file next to `index.lmdb`. It stores:

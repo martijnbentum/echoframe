@@ -9,6 +9,7 @@ import numpy as np
 
 from echoframe.embeddings import Embedding, Embeddings
 from tests.helpers import (
+    ensure_model,
     make_fake_store,
     pk as _pk,
     put as _put,
@@ -103,6 +104,21 @@ class TestLoadEmbeddings(unittest.TestCase):
                 data_2,
                 data_1,
             ], axis=0))
+
+
+class TestPhraserKeyToCodebookIndicesKey(unittest.TestCase):
+    def test_matches_make_echoframe_key(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            ensure_model(store, 'wav2vec2')
+            phraser_key = _pk('phrase-1')
+
+            result = store.phraser_key_to_codebook_indices_key(phraser_key,
+                'wav2vec2', collar=500)
+
+            expected = store.make_echoframe_key('codebook_indices',
+                model_name='wav2vec2', phraser_key=phraser_key, collar=500)
+            self.assertEqual(result, expected)
 
 
 if __name__ == '__main__':

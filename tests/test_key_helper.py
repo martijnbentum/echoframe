@@ -210,6 +210,32 @@ class TestPackDispatch(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack_echoframe_key('unknown_type', MODEL_ID)
 
+    def test_pack_dispatch_rejects_unused_fields(self):
+        cases = [
+            ('codebook_indices', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+                'layer': LAYER,
+            }),
+            ('codebook_matrix', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }),
+            ('codebook_matrix', {
+                'model_id': MODEL_ID,
+                'layer': LAYER,
+            }),
+            ('codebook_matrix', {
+                'model_id': MODEL_ID,
+                'collar': COLLAR,
+            }),
+        ]
+        for output_type, kwargs in cases:
+            with self.subTest(output_type=output_type, kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    pack_echoframe_key(output_type, **kwargs)
+
 
 class TestUnpackDispatch(unittest.TestCase):
 

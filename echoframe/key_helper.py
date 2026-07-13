@@ -124,10 +124,22 @@ def pack_echoframe_key(output_type, model_id, phraser_key=None, layer=None,
     if output_type == 'attention':
         return pack_attention_key(model_id, layer, phraser_key, collar)
     if output_type == 'codebook_indices':
+        _reject_unused_key_fields(output_type, layer=layer)
         return pack_codebook_indices_key(model_id, phraser_key, collar)
     if output_type == 'codebook_matrix':
+        _reject_unused_key_fields(output_type, phraser_key=phraser_key,
+            layer=layer, collar=collar)
         return pack_codebook_matrix_key(model_id)
     raise ValueError(f'unknown output type: {output_type!r}')
+
+
+def _reject_unused_key_fields(output_type, **fields):
+    '''Raise when fields that this output type does not encode are set.'''
+    for name, value in fields.items():
+        if value is not None:
+            message = f'{output_type} keys do not encode {name}, '
+            message += f'got {name}={value!r}'
+            raise ValueError(message)
 
 
 # -------- unpack --------

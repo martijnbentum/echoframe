@@ -53,6 +53,22 @@ class TestStoreCompactionResume(unittest.TestCase):
         self.assertEqual(plans, [])
         self.assertEqual(compacted, [])
 
+    def test_verify_integrity_reports_unreferenced_shard_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            clean_report = store.verify_integrity()
+            store.index.delete(created)
+            report = store.verify_integrity()
+
+        self.assertEqual(clean_report['unreferenced_shard_files'], [])
+        self.assertTrue(report['ok'])
+        shard_ids = [row['shard_id']
+            for row in report['unreferenced_shard_files']]
+        self.assertEqual(shard_ids, [created.shard_id])
+
     def test_needs_compaction_requires_reclaimable_garbage(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

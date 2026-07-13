@@ -213,7 +213,25 @@ def verify_integrity(store):
     data['ok'] = not broken
     data['checked_metadata_count'] = checked
     data['broken_metadata_references'] = broken
+    data['unreferenced_shard_files'] = find_unreferenced_shard_files(store)
     return data
+
+
+def find_unreferenced_shard_files(store):
+    '''Return shard files on disk that no index entry references.
+    These files are invisible to list_shards() and compact_shards(). They
+    can only appear when every record in a shard was overwritten or when a
+    batch wrote payloads but crashed before the index commit. They count as
+    waste, not damage, and do not affect the integrity verdict.
+    '''
+    if not hasattr(store.storage, 'root'): return []
+    known_shard_ids = set(store.index.list_shards())
+    rows = []
+    for file_path in sorted(store.storage.root.glob('*.h5')):
+        if file_path.stem in known_shard_ids: continue
+        byte_size = file_path.stat().st_size
+        rows.append({'shard_id': file_path.stem, 'byte_size': byte_size})
+    return rows
 
 
 def compact_shards(store, shard_ids=None, dry_run=False,

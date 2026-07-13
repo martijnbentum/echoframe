@@ -72,6 +72,7 @@ class TestStoreEndToEnd(unittest.TestCase):
             loaded = store.load(second.echoframe_key)
             store.add_tags_many([second.echoframe_key], ['review'])
             store.delete(first.echoframe_key)
+            garbage_overview = store.overview(include_garbage=True)
             plans = store.compact_shards(dry_run=True)
             compacted = store.compact_shards()
             refreshed = store.load_metadata(second.echoframe_key)
@@ -79,6 +80,8 @@ class TestStoreEndToEnd(unittest.TestCase):
 
         self.assertEqual(payload_to_list(loaded), second_data)
         self.assertEqual(store.load_metadata(first.echoframe_key), None)
+        self.assertGreater(garbage_overview['garbage_bytes'], 0)
+        self.assertEqual(len(garbage_overview['shard_garbage']), 1)
         self.assertTrue(plans)
         self.assertTrue(compacted)
         self.assertIsNotNone(refreshed)

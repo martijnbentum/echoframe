@@ -307,7 +307,8 @@ class TestStoreIo(unittest.TestCase):
 
         self.assertEqual(overview['metadata_count'], 2)
         self.assertEqual(overview['shard_count'], 1)
-        self.assertEqual(overview['integrity'], None)
+        self.assertIn('include_integrity=True', overview['integrity'])
+        self.assertIn('include_garbage=True', overview['garbage_bytes'])
         self.assertEqual(overview['storage_bytes'],
             store.storage.storage_bytes())
         self.assertEqual(sorted(overview['tags']),

@@ -550,10 +550,12 @@ class Store:
             self._metadatas_txnid = txnid
         return self._metadatas
 
-    def overview(self, health_event_limit=20,include_integrity=False):
+    def overview(self, health_event_limit=20, include_integrity=False,
+        include_garbage=False):
         '''Return a compact overview of store contents.
         health_event_limit:   recent shard health events to include
         include_integrity:    run a full integrity scan
+        include_garbage:      measure reclaimable bytes in shard files
         '''
         metadatas = self.metadatas
         data = {}
@@ -566,7 +568,13 @@ class Store:
         if include_integrity:
             data['integrity'] = self.verify_integrity()
         else:
-            data['integrity'] = None
+            data['integrity'] = 'set include_integrity=True for a full scan'
+        if include_garbage:
+            data.update(self._garbage_overview())
+        else:
+            hint = 'set include_garbage=True to measure reclaimable bytes'
+            data['garbage_bytes'] = hint
+            data['shard_garbage'] = hint
         data['recent_shard_health_events'] = self.get_shard_health_events(
             limit=health_event_limit)
         return data
@@ -608,6 +616,15 @@ class Store:
         '''Return total bytes used by shard files.'''
         if not hasattr(self.storage, 'storage_bytes'): return 0
         return self.storage.storage_bytes()
+
+    def _garbage_overview(self):
+        '''Measure reclaimable bytes for every shard via dry-run plans.'''
+        plans = self.compact_shards(dry_run=True, min_garbage_bytes=0,
+            min_garbage_ratio=0)
+        keys = ('shard_id', 'byte_size', 'live_bytes', 'garbage_bytes')
+        rows = [{key: plan[key] for key in keys} for plan in plans]
+        total = sum(row['garbage_bytes'] for row in rows)
+        return {'garbage_bytes': total, 'shard_garbage': rows}
 
     def _make_metadata(self, echoframe_key, tags=None,
         phraser_source_id=None):

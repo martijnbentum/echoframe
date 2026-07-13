@@ -22,8 +22,13 @@ class LmdbIndex:
         self.shard_meta_db = self.db_handles['shard_meta_db']
         self.compaction_db = self.db_handles['compaction_db']
 
-    def load(self, echoframe_key, store = None):
-        value = lmdb_helper.load(self.env, self.entries_db, echoframe_key)
+    def load(self, echoframe_key, store = None, txn = None):
+        '''Load one metadata record; reads through txn when given.'''
+        if txn is None:
+            value = lmdb_helper.load(self.env, self.entries_db, echoframe_key)
+        else:
+            value = lmdb_helper.load_in_txn(txn, self.entries_db,
+                echoframe_key)
         if value is None:
             return None
         data = json.loads(value.decode('utf-8'))
@@ -198,7 +203,7 @@ class LmdbIndex:
 
     def _save_many_helper(self, txn, metadata):
         touched_shard_ids = set()
-        previous = self.load(metadata.echoframe_key)
+        previous = self.load(metadata.echoframe_key, txn=txn)
         if previous is not None:
             lmdb_helper.delete_phraser_keys(txn, self.db_handles, previous)
             self._delete_shard_keys(txn, previous, metadata)

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 
 from echoframe.index import LmdbIndex
+from echoframe.metadata import EchoframeMetadata
 from echoframe.store import Store
 from tests.helpers import (
     delete as _delete,
@@ -104,6 +105,25 @@ class TestStoreEndToEnd(unittest.TestCase):
             sorted([_hex(first), _hex(second)]))
         self.assertEqual(sorted(_hex(item) for item in any_tags),
             sorted([_hex(first), _hex(second), _hex(third)]))
+
+    def test_save_many_duplicate_key_cleans_first_version_entries(self) -> None:
+        tmpdir, store = make_real_store()
+        with tmpdir:
+            store.register_model('wav2vec2')
+            echoframe_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=_pk('phrase-1'),
+                layer=1, collar=100)
+            first = EchoframeMetadata(echoframe_key, model_name='wav2vec2',
+                tags=['exp-a'])
+            second = EchoframeMetadata(echoframe_key, model_name='wav2vec2',
+                tags=['exp-b'])
+
+            store.index.save_many([first, second])
+
+            self.assertEqual(store.find_by_tag('exp-a'), [])
+            self.assertEqual([_hex(item) for item in
+                store.find_by_tag('exp-b')], [_hex(second)])
+            self.assertEqual(store.index.load(echoframe_key).tags, ['exp-b'])
 
     def test_real_integrity_checks_and_shard_stats(self) -> None:
         tmpdir, store = make_real_store()

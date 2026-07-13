@@ -254,6 +254,21 @@ class Hdf5ShardStore:
             return 0
         return self._file_size(file_path)
 
+    def live_dataset_bytes(self, shard_id, dataset_paths):
+        '''Sum on-disk storage bytes of the given datasets in one shard.
+        Reads dataset headers only, never payload data.
+        '''
+        dataset_paths = list(dataset_paths)
+        if not dataset_paths: return 0
+        file_path = self.root / f'{shard_id}.h5'
+        if not self._path_exists(file_path): return 0
+        total = 0
+        with self.h5.File(file_path, 'r') as handle:
+            for dataset_path in dataset_paths:
+                if dataset_path not in handle: continue
+                total += handle[dataset_path].id.get_storage_size()
+        return total
+
     def _active_shard_id(self, model_name, output_type):
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'
         return self._active_shard_id_from(stem, start_index=1)

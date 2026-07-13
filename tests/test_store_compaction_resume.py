@@ -53,6 +53,31 @@ class TestStoreCompactionResume(unittest.TestCase):
         self.assertEqual(plans, [])
         self.assertEqual(compacted, [])
 
+    def test_needs_compaction_requires_reclaimable_garbage(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            live = store.storage.live_dataset_bytes(created.shard_id,
+                [created.dataset_path])
+            pristine_size = live + compaction.BASE_FILE_OVERHEAD_BYTES
+            with mock.patch.object(store.index, 'load_shard_metadata',
+                return_value=None):
+                with mock.patch.object(store.storage, 'shard_size',
+                    return_value=pristine_size):
+                    pristine = compaction.build_compaction_plan(store,
+                        created.shard_id)
+                with mock.patch.object(store.storage, 'shard_size',
+                    return_value=1024 * 1024):
+                    wasteful = compaction.build_compaction_plan(store,
+                        created.shard_id)
+
+        self.assertEqual(pristine['garbage_bytes'], 0)
+        self.assertFalse(pristine['needs_compaction'])
+        self.assertGreater(wasteful['garbage_bytes'], 0)
+        self.assertTrue(wasteful['needs_compaction'])
+
     def test_resume_compaction_rewrites_surviving_entries_after_delete(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)
@@ -67,7 +92,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             with mock.patch.object(store.index, 'load_shard_metadata',
                 return_value=None):
                 with mock.patch.object(store.storage, 'shard_size',
-                    return_value=1):
+                    return_value=1024 * 1024):
                     plan = store.compact_shards(dry_run=True)[0]
             store.index.create_compaction_journal(plan['shard_id'],
                 plan['echoframe_keys'], plan['target_shard_id'])
@@ -96,7 +121,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             with mock.patch.object(store.index, 'load_shard_metadata',
                 return_value=None):
                 with mock.patch.object(store.storage, 'shard_size',
-                    return_value=1):
+                    return_value=1024 * 1024):
                     plan = store.compact_shards(dry_run=True)[0]
                     with self.assertRaisesRegex(RuntimeError,
                         'compaction exploded'):
@@ -119,7 +144,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             with mock.patch.object(store.index, 'load_shard_metadata',
                 return_value=None):
                 with mock.patch.object(store.storage, 'shard_size',
-                    return_value=1):
+                    return_value=1024 * 1024):
                     dry_run = store.compact_shards(dry_run=True)
             first_plan = dry_run[0]
             journal = store.index.create_compaction_journal(
@@ -149,7 +174,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             with mock.patch.object(store.index, 'load_shard_metadata',
                 return_value=None):
                 with mock.patch.object(store.storage, 'shard_size',
-                    return_value=1):
+                    return_value=1024 * 1024):
                     plan = store.compact_shards(dry_run=True)[0]
             store.index.create_compaction_journal(plan['shard_id'],
                 plan['echoframe_keys'], plan['target_shard_id'])
@@ -180,7 +205,7 @@ class TestStoreCompactionResume(unittest.TestCase):
             with mock.patch.object(store.index, 'load_shard_metadata',
                 return_value=None):
                 with mock.patch.object(store.storage, 'shard_size',
-                    return_value=1):
+                    return_value=1024 * 1024):
                     plan = store.compact_shards(dry_run=True)[0]
             store.index.create_compaction_journal(plan['shard_id'],
                 plan['echoframe_keys'], plan['target_shard_id'])

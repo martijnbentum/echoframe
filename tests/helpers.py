@@ -80,11 +80,20 @@ class FakeEnv:
         return {'last_txnid': self.last_txnid}
 
 
+class FakeDatasetId:
+    def __init__(self, dataset: 'FakeDataset') -> None:
+        self.dataset = dataset
+
+    def get_storage_size(self) -> int:
+        return int(np.asarray(self.dataset.data).nbytes)
+
+
 class FakeDataset:
     def __init__(self, data: object) -> None:
         self.data = data
         self.shape = self._shape(data)
         self.dtype = type(self._leaf(data)).__name__
+        self.id = FakeDatasetId(self)
 
     def __getitem__(self, item: object) -> object:
         if item == ():

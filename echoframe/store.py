@@ -581,14 +581,20 @@ class Store:
         return compaction.verify_integrity(self)
 
     def compact_shards(self, shard_ids=None, dry_run=False,
-        resume_pending=False):
-        '''Compact shard files by rewriting existing shard contents.
-        shard_ids:          optional shard identifiers to compact
+        resume_pending=False,
+        min_garbage_bytes=compaction.MIN_GARBAGE_BYTES,
+        min_garbage_ratio=compaction.MIN_GARBAGE_RATIO):
+        '''Compact shard files that hold enough reclaimable garbage.
+        shard_ids:          optional shard identifiers to consider
         dry_run:            report what would be compacted
         resume_pending:     resume running journal entries first
+        min_garbage_bytes:  reclaimable bytes that force compaction
+        min_garbage_ratio:  reclaimable file fraction that forces compaction
         '''
         return compaction.compact_shards(self, shard_ids=shard_ids,
-            dry_run=dry_run, resume_pending=resume_pending)
+            dry_run=dry_run, resume_pending=resume_pending,
+            min_garbage_bytes=min_garbage_bytes,
+            min_garbage_ratio=min_garbage_ratio)
 
     def resume_compactions(self):
         '''Resume interrupted shard compactions.'''

@@ -56,26 +56,33 @@ class TestStoreEndToEnd(unittest.TestCase):
                 LmdbIndex(Path(tmpdir) / 'index.lmdb', map_size=2 << 30)
 
     def test_real_put_delete_compact_and_tag_flow(self) -> None:
+        # payloads must dwarf HDF5 file overhead, and the deleted record must
+        # not sit at the file tail (h5py truncates tail space on delete), so
+        # the delete leaves enough garbage to trigger the compaction heuristic
+        first_data = [[1.0] * 64] * 64
+        second_data = [[2.0] * 64] * 64
         tmpdir, store = make_real_store()
         with tmpdir:
             first = _put(store, phraser_key='phrase-1', collar=100,
                 model_name='wav2vec2', output_type='hidden_state',
-                layer=1, data=[[1.0]])
+                layer=1, data=first_data)
             second = _put(store, phraser_key='phrase-2', collar=100,
                 model_name='wav2vec2', output_type='hidden_state',
-                layer=1, data=[[2.0]])
-            loaded = store.load(first.echoframe_key)
-            store.add_tags_many([first.echoframe_key], ['review'])
-            store.delete(second.echoframe_key)
+                layer=1, data=second_data)
+            loaded = store.load(second.echoframe_key)
+            store.add_tags_many([second.echoframe_key], ['review'])
+            store.delete(first.echoframe_key)
             plans = store.compact_shards(dry_run=True)
             compacted = store.compact_shards()
-            refreshed = store.load_metadata(first.echoframe_key)
+            refreshed = store.load_metadata(second.echoframe_key)
+            plans_after_compaction = store.compact_shards(dry_run=True)
 
-        self.assertEqual(payload_to_list(loaded), [[1.0]])
-        self.assertEqual(store.load_metadata(second.echoframe_key), None)
+        self.assertEqual(payload_to_list(loaded), second_data)
+        self.assertEqual(store.load_metadata(first.echoframe_key), None)
         self.assertTrue(plans)
         self.assertTrue(compacted)
         self.assertIsNotNone(refreshed)
+        self.assertEqual(plans_after_compaction, [])
 
     def test_real_find_many_and_tag_queries(self) -> None:
         tmpdir, store = make_real_store()

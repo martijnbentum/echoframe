@@ -7,6 +7,14 @@ from . import lmdb_helper
 
 from .metadata import utc_now
 
+MIN_GARBAGE_BYTES = 10_000_000
+MIN_GARBAGE_RATIO = 0.1
+
+# Measured HDF5 structural overhead is ~4KB per file plus ~350 bytes per
+# dataset; both are padded so pristine shards report zero garbage.
+BASE_FILE_OVERHEAD_BYTES = 8192
+PER_DATASET_OVERHEAD_BYTES = 512
+
 
 def broken_reference(metadata, reason):
     return {
@@ -58,7 +66,8 @@ def build_shard_health_report(store, shard_id, error):
     return report
 
 
-def build_compaction_plan(store, shard_id):
+def build_compaction_plan(store, shard_id, min_garbage_bytes=MIN_GARBAGE_BYTES,
+    min_garbage_ratio=MIN_GARBAGE_RATIO):
     index = store.index
     storage = store.storage
     all_entries = _entries_for_shard(store, shard_id)
@@ -66,14 +75,27 @@ def build_compaction_plan(store, shard_id):
         'entry_count': len(all_entries),
         'byte_size': storage.shard_size(shard_id),
     }
+    byte_size = stats.get('byte_size', 0)
+    dataset_paths = []
+    for entry in all_entries:
+        if entry.dataset_path is None: continue
+        dataset_paths.append(entry.dataset_path)
+    live_bytes = storage.live_dataset_bytes(shard_id, dataset_paths)
+    dataset_count = len(dataset_paths)
+    garbage_bytes = _estimated_garbage_bytes(byte_size, live_bytes,
+        dataset_count)
+    needs_compaction = _needs_compaction(byte_size, garbage_bytes,
+        min_garbage_bytes, min_garbage_ratio)
     target_shard_id = storage._replacement_shard_id(shard_id)
     return {
         'shard_id': shard_id,
         'target_shard_id': target_shard_id,
         'echoframe_keys': [entry.echoframe_key.hex() for entry in all_entries],
         'entry_count': len(all_entries),
-        'byte_size': stats.get('byte_size', 0),
-        'needs_compaction': stats.get('byte_size', 0) > 0,
+        'byte_size': byte_size,
+        'live_bytes': live_bytes,
+        'garbage_bytes': garbage_bytes,
+        'needs_compaction': needs_compaction,
     }
 
 
@@ -195,8 +217,9 @@ def verify_integrity(store):
 
 
 def compact_shards(store, shard_ids=None, dry_run=False,
-    resume_pending=False):
-    '''Compact shard files by rewriting existing shard contents.'''
+    resume_pending=False, min_garbage_bytes=MIN_GARBAGE_BYTES,
+    min_garbage_ratio=MIN_GARBAGE_RATIO):
+    '''Compact shard files that hold enough reclaimable garbage.'''
     if shard_ids is None:
         shard_ids = store.index.list_shards()
     if resume_pending:
@@ -205,7 +228,9 @@ def compact_shards(store, shard_ids=None, dry_run=False,
     compacted = []
     plans = []
     for shard_id in shard_ids:
-        plan = build_compaction_plan(store, shard_id)
+        plan = build_compaction_plan(store, shard_id,
+            min_garbage_bytes=min_garbage_bytes,
+            min_garbage_ratio=min_garbage_ratio)
         if not plan['needs_compaction']:
             continue
         if dry_run:
@@ -227,6 +252,19 @@ def resume_compactions(store):
 def compaction_journal(store, status=None):
     '''Return compaction journal records.'''
     return store.index.list_compaction_journal(status=status)
+
+
+def _estimated_garbage_bytes(byte_size, live_bytes, dataset_count):
+    overhead = BASE_FILE_OVERHEAD_BYTES
+    overhead += PER_DATASET_OVERHEAD_BYTES * dataset_count
+    return max(byte_size - live_bytes - overhead, 0)
+
+
+def _needs_compaction(byte_size, garbage_bytes, min_garbage_bytes,
+    min_garbage_ratio):
+    if byte_size <= 0: return False
+    if garbage_bytes >= min_garbage_bytes: return True
+    return garbage_bytes / byte_size >= min_garbage_ratio
 
 
 def _entries_for_shard(store, shard_id):

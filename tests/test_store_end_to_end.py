@@ -120,6 +120,8 @@ class TestStoreEndToEnd(unittest.TestCase):
 
             self.assertGreater(store._storage_bytes(), 0)
             self.assertEqual(store._storage_bytes(), storage.storage_bytes())
+            self.assertEqual(store.overview()['storage_bytes'],
+                storage.storage_bytes())
 
     def test_save_many_duplicate_key_cleans_first_version_entries(self) -> None:
         tmpdir, store = make_real_store()

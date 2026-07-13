@@ -561,6 +561,7 @@ class Store:
         data['metadatas'] = [metadata.to_dict() for metadata in metadatas]
         data['shard_count'] = len(self.index.list_shards())
         data['shards'] = self.shard_stats()
+        data['storage_bytes'] = self._storage_bytes()
         data['tags'] = self.list_tags()
         if include_integrity:
             data['integrity'] = self.verify_integrity()

@@ -308,6 +308,8 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(overview['metadata_count'], 2)
         self.assertEqual(overview['shard_count'], 1)
         self.assertEqual(overview['integrity'], None)
+        self.assertEqual(overview['storage_bytes'],
+            store.storage.storage_bytes())
         self.assertEqual(sorted(overview['tags']),
             ['exp-a', 'subset-1', 'subset-2'])
         self.assertEqual(len(overview['metadatas']), 2)

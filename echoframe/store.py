@@ -1,5 +1,6 @@
 '''Public store facade for echoframe.'''
 
+import logging
 from pathlib import Path
 from progressbar import progressbar
 
@@ -16,6 +17,8 @@ from .model_registry import ModelMetadata, ModelRegistry
 from .output_storage import Hdf5ShardStore
 from .phraser_registry import PhraserStoreRegistry
 from .store_config import StoreConfig
+
+logger = logging.getLogger(__name__)
 
 
 class Store:
@@ -290,7 +293,7 @@ class Store:
         echoframe_keys = list(echoframe_keys)
         metadata_list = self.load_many_metadata(echoframe_keys, keep_missing)
         if not keep_missing and len(metadata_list) != len(echoframe_keys):
-            print('WARNING: some echoframe keys were not found in the index')
+            logger.warning('some echoframe keys were not found in the index')
         payloads = self.metadatas_to_payloads(metadata_list)
         return payloads
 
@@ -313,7 +316,7 @@ class Store:
         echoframe_keys = list(echoframe_keys)
         metadata_list = self.load_many_metadata(echoframe_keys, keep_missing)
         if not keep_missing and len(metadata_list) != len(echoframe_keys):
-            print('WARNING: some echoframe keys were not found in the index')
+            logger.warning('some echoframe keys were not found in the index')
         return self.storage.load_many_frames(metadata_list, frame=frame)
 
     def delete(self, echoframe_key):
@@ -329,7 +332,7 @@ class Store:
         try:self.storage.delete(metadata)
         except Exception as e: 
             key = metadata.echoframe_key
-            print(f'failed to delete payload for {key}: {e}')
+            logger.warning(f'failed to delete payload for {key}: {e}')
 
     def delete_many(self, echoframe_keys):
         '''delete multiple stored payloads by echoframe key.'''
@@ -411,7 +414,7 @@ class Store:
         return Codevectors.from_echoframe_keys(self, echoframe_keys)
 
     def delete_phraser_key(self, phraser_key, model_name, output_type,
-        layer = None, collar = None, collar_match='exact'):
+        layer = None, collar = None, collar_match='exact', verbose=True):
         '''Delete stored outputs linked to phraser_key that match the criteria.
         phraser_key:    unique phraser object key
         collar:         requested collar in milliseconds
@@ -419,6 +422,7 @@ class Store:
         output_type:    output type to match
         layer:          layer to match
         collar_match:   how to match collar time: exact, min, max, or nearest
+        verbose:        whether to print the deleted record count
         '''
         metadatas = self.find_phraser(phraser_key)
         matches = filter_metadata(metadatas,model_name=model_name,
@@ -427,7 +431,9 @@ class Store:
         if not matches: return 
         echoframe_keys = [metadata.echoframe_key for metadata in matches]
         self.delete_many(echoframe_keys)
-        print(f'deleted {len(matches)} metadata and payloads key:{phraser_key}')
+        if verbose:
+            print(f'deleted {len(matches)} metadata and payloads '
+                f'key:{phraser_key}')
 
     def store_summary(self):
         '''Return compact summary stats for this store.'''

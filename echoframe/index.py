@@ -1,10 +1,13 @@
 '''LMDB-backed index for raw echoframe metadata values.'''
 
 import json
+import logging
 from pathlib import Path
 
 from . import compaction, lmdb_helper
 from .metadata import EchoframeMetadata, normalize_tags, utc_now
+
+logger = logging.getLogger(__name__)
 
 
 class LmdbIndex:
@@ -45,7 +48,7 @@ class LmdbIndex:
         metadata_list = []
         for key, value in zip(echoframe_keys,values):
             if value is None and not keep_missing: 
-                print(f'Warning: missing metadata for echoframe key: {key}')
+                logger.debug(f'missing metadata for echoframe key: {key}')
                 continue
             elif value is None and keep_missing:
                 metadata_list.append(None)

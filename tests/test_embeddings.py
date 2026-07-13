@@ -263,12 +263,12 @@ class TestEmbeddings(unittest.TestCase):
                 for metadata in metadatas],
         )
 
-        with mock.patch('builtins.print') as print_mock:
+        with self.assertLogs('echoframe.embeddings', level='WARNING') as logs:
             result = Embeddings.from_echoframe_keys(store, [b'valid', b'invalid'])
 
         self.assertEqual(result.count, 1)
-        print_mock.assert_called_once()
-        self.assertIn('skipping echoframe_key', print_mock.call_args.args[0])
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn('skipping echoframe_key', logs.output[0])
 
     def test_from_echoframe_keys_raises_if_only_value_error_embeddings_seen(self):
         invalid_metadata = _make_metadata(echoframe_key=b'invalid',

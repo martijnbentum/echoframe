@@ -95,7 +95,7 @@ class TestEmbeddingsMultiKey(unittest.TestCase):
             else valid_store.metadata_to_payload(metadata)
             for metadata in metadatas]
 
-        with mock.patch('builtins.print') as print_mock:
+        with self.assertLogs('echoframe.embeddings', level='WARNING') as logs:
             result = Embeddings.from_echoframe_keys(store, [
                 b'invalid',
                 items[1].echoframe_key,
@@ -104,7 +104,7 @@ class TestEmbeddingsMultiKey(unittest.TestCase):
 
         self.assertEqual(result.count, 2)
         self.assertEqual(result.phraser_keys, (_pk('phrase-2'), _pk('phrase-1')))
-        self.assertEqual(print_mock.call_count, 1)
+        self.assertEqual(len(logs.output), 1)
         np.testing.assert_array_equal(result.to_numpy(), np.stack([
             data[1],
             data[0],

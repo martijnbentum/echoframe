@@ -263,7 +263,7 @@ Current `Embeddings` behavior:
 
 - all items must share one `model_name`, `output_type`, and `layer`
 - duplicate `phraser_key` values are rejected
-- invalid keys are skipped with a printed message
+- invalid keys are skipped with a logged warning
 - `to_numpy()` only works when all payload shapes match exactly
 - variable-length frame payloads are not automatically aggregated
 
@@ -294,7 +294,7 @@ store.delete_phraser_key(
 
 `delete_phraser_key(...)` deletes every stored output that matches the given
 filters (`collar_match` can be `'exact'`, `'min'`, `'max'`, or `'nearest'`)
-and prints how many records were deleted.
+and prints how many records were deleted (silence with `verbose=False`).
 
 List outputs by tag:
 
@@ -352,6 +352,20 @@ the same `.h5` shard and corrupt it with concurrent appends. Concurrent
 readers are fine (LMDB handles that), and multiple writers can safely target
 different stores. If you need parallel feature extraction, write to separate
 stores or serialize the writes yourself.
+
+### Logging
+
+Warnings (skipped keys, failed deletes, missing phraser paths) go through
+Python's `logging` under the `echoframe` logger and are visible on stderr by
+default. Batch progress prints to stdout and is controlled per call with
+`verbose=True/False`. To tune warning output:
+
+```python
+import logging
+
+logging.getLogger('echoframe').setLevel(logging.ERROR)  # silence warnings
+logging.basicConfig(level=logging.DEBUG)  # include per-key diagnostics
+```
 
 ### Phraser Source Migration
 

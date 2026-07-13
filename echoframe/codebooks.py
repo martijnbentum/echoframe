@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class Codevector:
@@ -119,7 +123,7 @@ class Codevectors:
             try: codevector = Codevector(key, store)
             except ValueError as e:
                 skipped_count += 1
-                print(f'skipping echoframe_key {key!r}: {e}')
+                logger.warning(f'skipping echoframe_key {key!r}: {e}')
                 continue
             codevectors.append(codevector)
         if not codevectors:

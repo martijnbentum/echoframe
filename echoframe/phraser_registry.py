@@ -1,7 +1,10 @@
 '''Phraser store registry: source_id <-> path records and loaded stores.'''
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def normalise_phraser_store_path(path):
@@ -72,7 +75,7 @@ class PhraserStoreRegistry:
         if path is None:
             raise ValueError(f'unknown phraser_source_id: {source_id!r}')
         if not Path(path).exists():
-            print(f'WARNING: phraser store path does not exist, opening may '
+            logger.warning(f'phraser store path does not exist, opening may '
                 f'create a new empty store: {path}')
         import phraser
         phraser_store = phraser.Store(path=path)

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class Embedding:
@@ -279,13 +283,14 @@ class Embeddings:
         for key, metadata, data in zip(keys, metadatas, payloads):
             if metadata is None or data is None:
                 skipped_count += 1
-                print(f'skipping echoframe_key {key!r}: no metadata or payload')
+                logger.warning(
+                    f'skipping echoframe_key {key!r}: no metadata or payload')
                 continue
             try: embedding = Embedding(key, store, metadata=metadata,
                 data=data)
             except ValueError as e:
                 skipped_count += 1
-                print(f'skipping echoframe_key {key!r}: {e}')
+                logger.warning(f'skipping echoframe_key {key!r}: {e}')
                 continue
             embeddings.append(embedding)
         if not embeddings:

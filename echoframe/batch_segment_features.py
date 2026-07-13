@@ -13,7 +13,7 @@ from .utils_segment_features import (
 
 def compute_embeddings_batch(segments, layers, model_name, collar=500,
     store=None, store_root='echoframe', gpu=False, tags=None,
-    batch_size=None, store_queue_size=4):
+    batch_size=None, store_queue_size=4, verbose=True):
     '''Compute and store embeddings for multiple segment objects.
     segments:             iterable of phraser segment objects
     layers:               layer index or iterable of layer indices
@@ -25,11 +25,12 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
     store_queue_size:     queued save chunks before compute waits
+    verbose:              whether to print batch progress
     '''
     layers_list = normalise_layers(layers)
     if store is None: store = echoframe.Store(store_root)
     missing = MissingSegments(segments, layers_list, model_name, collar, store)
-    print(missing)
+    if verbose: print(missing)
     if not missing.missing:
         return
     missing_segments = []
@@ -48,7 +49,7 @@ def compute_embeddings_batch(segments, layers, model_name, collar=500,
                 phraser_source_id=source_id)
             writer.submit(save_items)
             output_count += 1
-    print(f'embeddings computed for {output_count} segments')
+    if verbose: print(f'embeddings computed for {output_count} segments')
 
 
 class SegmentRequest:

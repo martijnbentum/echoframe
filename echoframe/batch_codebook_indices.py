@@ -19,7 +19,7 @@ from .utils_segment_features import (
 
 def compute_codebook_indices_batch(segments, model_name, collar=500,
     store=None, store_root='echoframe', gpu=False, tags=None,
-    batch_size=None, store_queue_size=4):
+    batch_size=None, store_queue_size=4, verbose=True):
     '''Compute and store Wav2Vec2 codebook indices for segment objects.
     segments:             iterable of phraser segment objects
     model_name:           registered Wav2Vec2 model name
@@ -36,7 +36,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     '''
     if store is None: store = echoframe.Store(store_root)
     missing = MissingIndices(segments, model_name, collar, store)
-    print(missing)
+    if verbose: print(missing)
     if not missing.missing:
         return
     missing_segments = []
@@ -57,7 +57,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
                 collar, model_name, store, tags, phraser_source_id=source_id)
             writer.submit([save_item])
             stored_count += 1
-    print(f'codebook indices computed for {stored_count} segments')
+    if verbose: print(f'codebook indices computed for {stored_count} segments')
 
 
 class SegmentRequest:

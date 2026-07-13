@@ -10,7 +10,7 @@ from unittest import mock
 
 import echoframe
 import numpy as np
-from echoframe.metadata import EchoframeMetadata
+from echoframe.metadata import EchoframeMetadata, filter_metadata
 from echoframe.store import Store
 from tests.helpers import (
     delete as _delete,
@@ -548,3 +548,48 @@ class TestMetadatasCache(unittest.TestCase):
             after = store.metadatas
             self.assertIsNot(after, before)
             self.assertEqual(after[0].tags, ['exp-a'])
+
+
+class TestFilterMetadataNoneCollar(unittest.TestCase):
+
+    def _records_with_codebook_matrix(self, store):
+        _put(store, phraser_key='phrase-1', collar=100,
+            model_name='wav2vec2', output_type='hidden_state',
+            layer=1, data=[[1.0]])
+        _put(store, phraser_key='phrase-1', collar=300,
+            model_name='wav2vec2', output_type='hidden_state',
+            layer=1, data=[[2.0]])
+        _put(store, phraser_key='phrase-1', collar=None,
+            model_name='wav2vec2', output_type='codebook_matrix',
+            layer=None, data=[[3.0]])
+        return store.metadatas
+
+    def test_collar_match_skips_records_without_collar(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            records = self._records_with_codebook_matrix(store)
+
+            self.assertEqual(len(filter_metadata(records)), 3)
+            min_match = filter_metadata(records, collar=150,
+                collar_match='min')
+            max_match = filter_metadata(records, collar=150,
+                collar_match='max')
+            nearest = filter_metadata(records, collar=240,
+                collar_match='nearest')
+
+        self.assertEqual([record.collar for record in min_match], [300])
+        self.assertEqual([record.collar for record in max_match], [100])
+        self.assertEqual([record.collar for record in nearest], [300])
+
+    def test_nearest_without_collared_records_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _put(store, phraser_key='phrase-1', collar=None,
+                model_name='wav2vec2', output_type='codebook_matrix',
+                layer=None, data=[[1.0]])
+            records = store.metadatas
+
+            nearest = filter_metadata(records, collar=100,
+                collar_match='nearest')
+
+        self.assertEqual(nearest, [])

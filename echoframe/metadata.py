@@ -222,16 +222,15 @@ def filter_metadata(records, model_name=None, output_type=None, layer=None,
         message += "'nearest'"
         raise ValueError(message)
     if collar_match == 'exact':
-        items = [record for record in items if record.collar == collar]
-        return items
+        return [record for record in items if record.collar == collar]
+    matchable = [record for record in items if record.collar is not None]
     if collar_match == 'min':
-        items = [record for record in items if record.collar >= collar]
-        return items
+        return [record for record in matchable if record.collar >= collar]
     if collar_match == 'max':
-        items = [record for record in items if record.collar <= collar]
-        return items
+        return [record for record in matchable if record.collar <= collar]
     # nearest
-    return [min(items, key=lambda record: abs(record.collar - collar))]
+    if not matchable: return []
+    return [min(matchable, key=lambda record: abs(record.collar - collar))]
 
 
 def utc_now():

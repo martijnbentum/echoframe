@@ -9,6 +9,10 @@ import numpy as np
 from .metadata import utc_now
 
 
+_INCONSISTENT_STORE_HINT = ('the store may be inconsistent, run '
+    'store.verify_integrity() to list affected records')
+
+
 def sanitize_name(value):
     '''Convert a user-facing value into a shard-safe name.'''
     return re.sub(r'[^a-zA-Z0-9_.-]+', '_', value).strip('_') or 'unknown'
@@ -261,12 +265,28 @@ class Hdf5ShardStore:
         return total
 
     def _iter_shard_datasets(self, metadata_list):
-        '''Yield (index, metadata, dataset), opening each shard only once.'''
+        '''Yield (index, metadata, dataset), opening each shard only once.
+        Raises ValueError when a shard file or dataset is unavailable while
+        the index still references it.
+        '''
         by_shard = _group_indexed_metadata_by_shard(metadata_list)
         for shard_id, shard_items in by_shard.items():
             file_path = self.root / f'{shard_id}.h5'
-            with self.h5.File(file_path, 'r') as handle:
+            try:
+                handle = self.h5.File(file_path, 'r')
+            except OSError as exc:
+                message = f'cannot open shard {shard_id} but its records '
+                message += f'are still indexed ({exc}); '
+                message += _INCONSISTENT_STORE_HINT
+                raise ValueError(message) from exc
+            with handle:
                 for index, metadata in shard_items:
+                    if metadata.dataset_path not in handle:
+                        message = f'payload dataset {metadata.dataset_path} '
+                        message += f'is missing from shard {shard_id} but '
+                        message += 'still indexed; '
+                        message += _INCONSISTENT_STORE_HINT
+                        raise ValueError(message)
                     yield index, metadata, handle[metadata.dataset_path]
 
     def _active_shard_id(self, model_name, output_type):

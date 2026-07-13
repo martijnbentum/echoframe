@@ -40,6 +40,26 @@ class FlakySizeStorage(Hdf5ShardStore):
 
 
 class TestStorageRuntime(unittest.TestCase):
+    def test_load_many_names_missing_dataset_still_indexed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            stored = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            store.storage.delete(stored)
+            with self.assertRaisesRegex(ValueError, 'verify_integrity'):
+                store.storage.load_many([stored])
+
+    def test_load_many_names_missing_shard_file_still_indexed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            stored = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            store.storage._delete_file(stored.shard_id)
+            with self.assertRaisesRegex(ValueError, 'verify_integrity'):
+                store.storage.load_many([stored])
+
     def test_store_many_batches_writes_by_shard(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

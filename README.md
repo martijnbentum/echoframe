@@ -332,6 +332,15 @@ Registered model metadata records contain:
 - `size`
 - `model_name`
 
+### Concurrency
+
+A store expects a single writer process at a time. The active shard cursor
+lives in process memory, so two processes writing to the same store can pick
+the same `.h5` shard and corrupt it with concurrent appends. Concurrent
+readers are fine (LMDB handles that), and multiple writers can safely target
+different stores. If you need parallel feature extraction, write to separate
+stores or serialize the writes yourself.
+
 ### Phraser Source Migration
 
 Older metadata may have `phraser_source_id=None`. Register the phraser source

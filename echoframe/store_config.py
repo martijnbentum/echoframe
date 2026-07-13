@@ -1,6 +1,7 @@
 '''Shared config.json owner for the echoframe store.'''
 
 import json
+import os
 from pathlib import Path
 
 from .model_registry import ModelMetadata
@@ -33,7 +34,8 @@ class StoreConfig:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(config_to_dict(config), indent=2, sort_keys=True)
         payload += '\n'
-        tmp_path = self.config_path.with_suffix('.tmp')
+        tmp_name = f'{self.config_path.name}.{os.getpid()}.tmp'
+        tmp_path = self.config_path.with_name(tmp_name)
         tmp_path.write_text(payload)
         tmp_path.replace(self.config_path)
 

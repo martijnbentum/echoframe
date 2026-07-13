@@ -194,6 +194,18 @@ class TestStorageRuntime(unittest.TestCase):
         }), 5)
         self.assertEqual(_estimated_item_size({'data': object()}), 0)
 
+    def test_estimated_item_size_handles_list_payloads(self) -> None:
+        expected = np.asarray([[1.0, 2.0], [3.0, 4.0]]).nbytes
+        self.assertEqual(_estimated_item_size({
+            'data': [[1.0, 2.0], [3.0, 4.0]],
+        }), expected)
+        self.assertEqual(_estimated_item_size({
+            'data': ((1.0, 2.0), (3.0, 4.0)),
+        }), expected)
+        self.assertGreater(expected, 0)
+        ragged = [[1.0, 2.0], [3.0]]
+        self.assertEqual(_estimated_item_size({'data': ragged}), 0)
+
     def test_store_many_validates_all_items_before_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

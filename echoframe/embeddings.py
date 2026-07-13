@@ -70,7 +70,12 @@ class Embedding:
 
     def slice_time(self, start, end, percentage_overlap=None, stride=0.02,
         field=0.025):
-        '''Return payload rows overlapping the absolute [start, end] seconds.'''
+        '''Return payload rows overlapping the absolute [start, end] seconds.
+
+        The frame grid is anchored at the collared segment start. For
+        segments within one collar of the audio file start the collar is
+        clamped to 0, so selected rows can be off by up to one frame.
+        '''
         frames = self.to_frames(stride, field)
         selected = frames.select_frames(start, end,
             percentage_overlap=percentage_overlap)

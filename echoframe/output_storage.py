@@ -4,6 +4,8 @@ import re
 import time
 from pathlib import Path
 
+import numpy as np
+
 from .metadata import utc_now
 
 
@@ -54,6 +56,9 @@ def _estimated_item_size(item):
         return int(data.nbytes)
     if isinstance(data, (bytes, bytearray, memoryview)):
         return len(data)
+    if isinstance(data, (list, tuple)):
+        try: return int(np.asarray(data).nbytes)
+        except (ValueError, TypeError): return 0
     return 0
 
 
@@ -72,6 +77,15 @@ class Hdf5ShardStore:
         self.health_events = []
         self.max_health_events = 500
         self.active_shard_ids = {}
+
+    def storage_bytes(self):
+        '''Return total bytes used by files under the storage root.'''
+        if not self.root.exists(): return 0
+        file_sizes = []
+        for filename in self.root.rglob('*'):
+            if filename.is_file():
+                file_sizes.append(filename.stat().st_size)
+        return sum(file_sizes)
 
     def _import_h5(self):
         try:

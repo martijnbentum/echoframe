@@ -229,7 +229,7 @@ def validate_frame_aggregation(frame_aggregation):
 def normalise_layers(layers):
     '''Normalize layer input to a validated list of non-negative ints.'''
     if layers is None:
-        raise ValueError('layers must be int or a list of ints {layers}')
+        raise ValueError('layers must be int or a list of ints, got None')
     layers_list = [layers] if isinstance(layers, int) else list(layers)
     if len(layers_list) == 0:
         raise ValueError('layers must be a non-empty list')

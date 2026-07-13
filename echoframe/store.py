@@ -587,13 +587,8 @@ class Store:
 
     def _storage_bytes(self):
         '''Return total bytes used by shard files.'''
-        shards_root = self.root / 'shards'
-        if not shards_root.exists(): return 0
-        file_sizes = []
-        for filename in shards_root.rglob('*'):
-            if filename.is_file():
-                file_sizes.append(filename.stat().st_size)
-        return sum(file_sizes)
+        if not hasattr(self.storage, 'storage_bytes'): return 0
+        return self.storage.storage_bytes()
 
     def _make_metadata(self, echoframe_key, tags=None,
         phraser_source_id=None):

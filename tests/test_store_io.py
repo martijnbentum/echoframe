@@ -33,6 +33,8 @@ class TestStoreIo(unittest.TestCase):
 
     def test_public_exports(self) -> None:
         self.assertIn('Store', echoframe.__all__)
+        self.assertIn('Embedding', echoframe.__all__)
+        self.assertIn('Embeddings', echoframe.__all__)
         self.assertIn('EchoframeMetadata', echoframe.__all__)
         self.assertIn('Codevector', echoframe.__all__)
         self.assertIn('Codevectors', echoframe.__all__)

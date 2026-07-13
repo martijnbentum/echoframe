@@ -9,6 +9,7 @@ import unittest
 
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
+from echoframe.output_storage import Hdf5ShardStore
 from echoframe.store import Store
 from tests.helpers import (
     delete as _delete,
@@ -105,6 +106,20 @@ class TestStoreEndToEnd(unittest.TestCase):
             sorted([_hex(first), _hex(second)]))
         self.assertEqual(sorted(_hex(item) for item in any_tags),
             sorted([_hex(first), _hex(second), _hex(third)]))
+
+    def test_storage_bytes_follows_injected_storage_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / 'store'
+            shards_elsewhere = Path(tmpdir) / 'elsewhere'
+            storage = Hdf5ShardStore(shards_elsewhere,
+                max_shard_size_bytes=1024 * 1024)
+            store = Store(root, storage=storage)
+            _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+
+            self.assertGreater(store._storage_bytes(), 0)
+            self.assertEqual(store._storage_bytes(), storage.storage_bytes())
 
     def test_save_many_duplicate_key_cleans_first_version_entries(self) -> None:
         tmpdir, store = make_real_store()

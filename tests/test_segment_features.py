@@ -171,6 +171,27 @@ class TestPhraserRegistry(unittest.TestCase):
                 store.phraser_registry.segments_to_source_id(
                     [first, second])
 
+    def test_segment_to_source_id_rejects_ambiguous_registration(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            store.register_phraser_store('cgn-duplicate', '/data/cgn')
+            segment = _make_segment()
+            with self.assertRaisesRegex(ValueError,
+                'multiple phraser sources match segment store'):
+                store.phraser_registry.segment_to_source_id(segment)
+
+    def test_segments_to_source_id_reads_config_once(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segments = [_make_segment(key=_pk(f'{i:04x}'))
+                for i in range(50)]
+            registry = store.phraser_registry
+            with mock.patch.object(registry._config, 'read',
+                wraps=registry._config.read) as read:
+                source_id = registry.segments_to_source_id(segments)
+            self.assertEqual(source_id, 'cgn-main')
+            self.assertEqual(read.call_count, 1)
+
 
 class RaisingSaveManyStore:
     def __init__(self):

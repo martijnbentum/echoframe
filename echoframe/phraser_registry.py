@@ -106,28 +106,48 @@ class PhraserStoreRegistry:
             closed += 1
         return closed
 
+    def _source_ids_by_store_path(self):
+        '''Return {normalised registered path: [source_id, ...]} from config.'''
+        registered = self._config.read()['phraser_sources']
+        mapping = {}
+        for source_id, path in registered.items():
+            normalised = normalise_phraser_store_path(path)
+            mapping.setdefault(normalised, []).append(source_id)
+        return mapping
+
     def segment_to_source_id(self, segment):
         '''Return the registered source_id for a bound phraser segment.'''
+        mapping = self._source_ids_by_store_path()
         path = normalise_phraser_store_path(segment.store.path)
-        paths = self._config.read()['phraser_sources']
-        matches = [source_id for source_id, p in paths.items()
-            if normalise_phraser_store_path(p) == path]
-        if len(matches) == 1: return matches[0]
-        if not matches:
-            raise ValueError('phraser segment store is not registered')
-        raise ValueError('multiple phraser sources match segment store')
+        return _single_source_id(mapping, path)
 
     def segments_to_source_id(self, segments):
-        '''Return the single source_id shared by bound segments.'''
+        '''Return the single source_id shared by bound segments.
+        Reads the config once and normalises each distinct store path once.
+        '''
         segments = list(segments)
         if not segments:
             raise ValueError('segments must not be empty')
+        mapping = self._source_ids_by_store_path()
+        norm_paths = {}    # raw store path -> normalised path
         source_ids = []
         for segment in segments:
-            source_id = self.segment_to_source_id(segment)
+            raw_path = str(segment.store.path)
+            if raw_path not in norm_paths:
+                norm_paths[raw_path] = normalise_phraser_store_path(raw_path)
+            source_id = _single_source_id(mapping, norm_paths[raw_path])
             if source_id not in source_ids: source_ids.append(source_id)
         if len(source_ids) == 1: return source_ids[0]
         raise ValueError('batch segments must come from one phraser source')
+
+
+def _single_source_id(source_ids_by_path, path):
+    '''Return the one source_id registered for path, or raise.'''
+    matches = source_ids_by_path.get(path, [])
+    if len(matches) == 1: return matches[0]
+    if not matches:
+        raise ValueError('phraser segment store is not registered')
+    raise ValueError('multiple phraser sources match segment store')
 
 
 def _is_open(store):

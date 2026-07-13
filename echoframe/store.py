@@ -351,15 +351,17 @@ class Store:
         metadata_list = list(metadata_list)
         return self.storage.load_many(metadata_list)
 
-    def phraser_key_to_codebook_indices_key(self, phraser_key, model_name,
-        collar=500):
-        '''Build one codebook_indices echoframe key from a phraser key.
+    def phraser_key_to_echoframe_key(self, phraser_key, model_name,
+        output_type, layer=None, collar=500):
+        '''Build one echoframe key from a phraser key.
         phraser_key:  segment phraser key
         model_name:   registered model name
+        output_type:  output type to encode in the key
+        layer:        layer index when the output type encodes one
         collar:       collar in milliseconds
         '''
-        return self.make_echoframe_key('codebook_indices',
-            model_name=model_name, phraser_key=phraser_key, collar=collar)
+        return self.make_echoframe_key(output_type, model_name=model_name,
+            phraser_key=phraser_key, layer=layer, collar=collar)
 
     def phraser_key_to_embedding(self, phraser_key, model_name, layer,
         collar=500):

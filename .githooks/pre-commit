@@ -1,0 +1,30 @@
+#!/bin/sh
+# Bump the pyproject.toml patch version once per commit.
+# Skips when the commit already stages a version change, so a manual
+# minor/major bump is never double-bumped.
+
+if git diff --cached -U0 -- pyproject.toml | grep -q '^+version = '; then
+    exit 0
+fi
+
+python3 - <<'EOF'
+import re
+from pathlib import Path
+
+path = Path('pyproject.toml')
+text = path.read_text()
+
+def bump(match):
+    major, minor, patch = match.group('version').split('.')
+    bumped = f'{major}.{minor}.{int(patch) + 1}'
+    return f"{match.group('prefix')}{bumped}'"
+
+pattern = re.compile(
+    r"^(?P<prefix>version = ')(?P<version>\d+\.\d+\.\d+)'$", re.MULTILINE)
+text, count = pattern.subn(bump, text, count=1)
+if count != 1:
+    raise SystemExit('pre-commit: no version line found in pyproject.toml')
+path.write_text(text)
+EOF
+
+git add pyproject.toml

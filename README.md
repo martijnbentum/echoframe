@@ -20,6 +20,18 @@ After installation, import it as:
 import echoframe
 ```
 
+### Development
+
+Activate the versioned git hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The pre-commit hook bumps the patch version in `pyproject.toml` on every
+commit, unless the commit already stages a version change (a manual
+minor/major bump wins).
+
 ## API
 
 The public package exports `echoframe.Store`,

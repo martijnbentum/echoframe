@@ -106,19 +106,34 @@ class TestLoadEmbeddings(unittest.TestCase):
             ], axis=0))
 
 
-class TestPhraserKeyToCodebookIndicesKey(unittest.TestCase):
+class TestPhraserKeyToEchoframeKey(unittest.TestCase):
     def test_matches_make_echoframe_key(self):
         tmpdir, store = _make_store()
         with tmpdir:
             ensure_model(store, 'wav2vec2')
             phraser_key = _pk('phrase-1')
+            cases = [
+                {'output_type': 'hidden_state', 'layer': 3},
+                {'output_type': 'attention', 'layer': 3},
+                {'output_type': 'codebook_indices'},
+            ]
+            for kwargs in cases:
+                with self.subTest(**kwargs):
+                    result = store.phraser_key_to_echoframe_key(phraser_key,
+                        'wav2vec2', collar=500, **kwargs)
 
-            result = store.phraser_key_to_codebook_indices_key(phraser_key,
-                'wav2vec2', collar=500)
+                    expected = store.make_echoframe_key(
+                        model_name='wav2vec2', phraser_key=phraser_key,
+                        collar=500, **kwargs)
+                    self.assertEqual(result, expected)
 
-            expected = store.make_echoframe_key('codebook_indices',
-                model_name='wav2vec2', phraser_key=phraser_key, collar=500)
-            self.assertEqual(result, expected)
+    def test_layer_for_codebook_indices_raises(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            ensure_model(store, 'wav2vec2')
+            with self.assertRaises(ValueError):
+                store.phraser_key_to_echoframe_key(_pk('phrase-1'),
+                    'wav2vec2', 'codebook_indices', layer=3)
 
 
 if __name__ == '__main__':

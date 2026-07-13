@@ -467,10 +467,16 @@ class Store:
     def find_by_label(self, label, model_name=None, output_type=None,
         layer=None, collar=None, collar_match='exact'):
         '''List metadata records for one phraser object label.
+
+        Returns None when no stored records match the metadata filters;
+        otherwise a list (possibly empty) with the records whose phraser
+        object label equals label.
         label:             phraser object label to match
         model_name:        optional model filter
         output_type:       optional output type filter
         layer:             optional layer filter
+        collar:            optional collar filter
+        collar_match:      exact, min, max, or nearest
         '''
         if not isinstance(label, str) or not label.strip():
             raise ValueError('label must be a non-empty string')

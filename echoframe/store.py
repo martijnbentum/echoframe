@@ -531,9 +531,11 @@ class Store:
 
     @property
     def metadatas(self):
-        '''Return stored metadata records.'''
-        if not hasattr(self, '_metadatas'):
+        '''Return stored metadata records, rescanned after any index write.'''
+        txnid = self.index.last_txnid()
+        if getattr(self, '_metadatas_txnid', None) != txnid:
             self._metadatas = self.index.all_metadatas(store=self)
+            self._metadatas_txnid = txnid
         return self._metadatas
 
     def overview(self, health_event_limit=20,include_integrity=False):

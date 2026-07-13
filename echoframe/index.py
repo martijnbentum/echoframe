@@ -58,6 +58,10 @@ class LmdbIndex:
     def all_echoframe_keys(self):
         return lmdb_helper.load_all_keys(self.env, self.entries_db)
 
+    def last_txnid(self):
+        '''Return the id of the last committed write transaction.'''
+        return self.env.info()['last_txnid']
+
     def find_phraser(self, phraser_key, store=None):
         '''Find metadata records for one phraser key.'''
         with lmdb_helper.read_txn(self.env) as txn:

@@ -512,3 +512,39 @@ class TestStoreIo(unittest.TestCase):
             self.assertEqual(retagged.shard_id, found.shard_id)
             self.assertEqual(found.load_payload(), [[1.0, 2.0], [3.0, 4.0]])
             self.assertEqual(created.echoframe_key, found.echoframe_key)
+
+
+class TestMetadatasCache(unittest.TestCase):
+
+    def test_metadatas_reflect_later_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _put(store, phraser_key='phrase-1', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[1.0]])
+            self.assertEqual(len(store.metadatas), 1)
+            _put(store, phraser_key='phrase-2', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[2.0]])
+            self.assertEqual(len(store.metadatas), 2)
+
+    def test_metadatas_are_cached_between_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _put(store, phraser_key='phrase-1', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[1.0]])
+            first = store.metadatas
+            self.assertIs(store.metadatas, first)
+
+    def test_tag_update_invalidates_metadatas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[1.0]])
+            before = store.metadatas
+            store.add_tags(created.echoframe_key, ['exp-a'])
+            after = store.metadatas
+            self.assertIsNot(after, before)
+            self.assertEqual(after[0].tags, ['exp-a'])

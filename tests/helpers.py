@@ -47,6 +47,8 @@ class FakeTxn:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        if self.write and exc_type is None:
+            self.env.last_txnid += 1
         return False
 
     def put(self, key: bytes, value: bytes, db: bytes) -> None:
@@ -65,6 +67,7 @@ class FakeTxn:
 class FakeEnv:
     def __init__(self) -> None:
         self.dbs: dict[bytes, dict[bytes, bytes]] = {}
+        self.last_txnid = 0
 
     def open_db(self, name: bytes) -> bytes:
         self.dbs.setdefault(name, {})
@@ -72,6 +75,9 @@ class FakeEnv:
 
     def begin(self, write: bool=False) -> FakeTxn:
         return FakeTxn(self, write=write)
+
+    def info(self) -> dict:
+        return {'last_txnid': self.last_txnid}
 
 
 class FakeDataset:

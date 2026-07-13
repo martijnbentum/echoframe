@@ -139,13 +139,9 @@ class Hdf5ShardStore:
                 continue
             if metadata.shard_id is None or metadata.dataset_path is None:
                 raise ValueError('metadata does not point to a stored payload')
-        by_shard = _group_indexed_metadata_by_shard(metadata_list)
-
-        for shard_id, shard_items in by_shard.items():
-            file_path = self.root / f'{shard_id}.h5'
-            with self.h5.File(file_path, 'r') as handle:
-                for index, metadata in shard_items:
-                    payloads[index] = handle[metadata.dataset_path][()]
+        for index, metadata, dataset in self._iter_shard_datasets(
+            metadata_list):
+            payloads[index] = dataset[()]
         return payloads
 
     def load_frame(self, metadata, frame='center'):
@@ -165,14 +161,9 @@ class Hdf5ShardStore:
             if metadata is None:
                 continue
             _validate_matrix_metadata(metadata)
-        by_shard = _group_indexed_metadata_by_shard(metadata_list)
-
-        for shard_id, shard_items in by_shard.items():
-            file_path = self.root / f'{shard_id}.h5'
-            with self.h5.File(file_path, 'r') as handle:
-                for index, metadata in shard_items:
-                    dataset = handle[metadata.dataset_path]
-                    rows[index] = _read_frame(dataset, metadata.shape, frame)
+        for index, metadata, dataset in self._iter_shard_datasets(
+            metadata_list):
+            rows[index] = _read_frame(dataset, metadata.shape, frame)
         return rows
 
     def delete(self, metadata):
@@ -268,6 +259,15 @@ class Hdf5ShardStore:
                 if dataset_path not in handle: continue
                 total += handle[dataset_path].id.get_storage_size()
         return total
+
+    def _iter_shard_datasets(self, metadata_list):
+        '''Yield (index, metadata, dataset), opening each shard only once.'''
+        by_shard = _group_indexed_metadata_by_shard(metadata_list)
+        for shard_id, shard_items in by_shard.items():
+            file_path = self.root / f'{shard_id}.h5'
+            with self.h5.File(file_path, 'r') as handle:
+                for index, metadata in shard_items:
+                    yield index, metadata, handle[metadata.dataset_path]
 
     def _active_shard_id(self, model_name, output_type):
         stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'

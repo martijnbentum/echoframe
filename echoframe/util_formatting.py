@@ -46,8 +46,6 @@ def format_store_str(state):
     rows = [
         ('root', state['root']),
         ('records', state['record_count']),
-        ('  live', state['live_record_count']),
-        ('  deleted', state['deleted_record_count']),
         ('model count', state['model_count']),
         ('shard count', state['shard_count']),
         ('shard storage', format_byte_size(state['shard_byte_size'])),
@@ -63,14 +61,11 @@ def format_store_state(state):
         ('config path', state['config_path']),
         ('lmdb path', state['lmdb_path']),
         ('records', state['record_count']),
-        ('  live records', state['live_record_count']),
-        ('  deleted records', state['deleted_record_count']),
         ('model count', state['model_count']),
         ('shard count', state['shard_count']),
         ('shard storage', format_byte_size(state['shard_byte_size'])),
         ('lmdb', format_byte_size(state['lmdb_byte_size'])),
         ('largest shard', format_byte_size(state['largest_shard_byte_size'])),
-        ('estimated', str(state['shard_storage_is_estimated']).lower()),
         ('tag count', state['tag_count']),
         ('tags', _join_values(state['tags'])),
         ('health events', state['health_event_count']),
@@ -97,18 +92,13 @@ def build_store_summary(store):
     shard_rows = store.index.list_shard_metadata()
     tags = store.list_tags()
     record_count = _db_entry_count(store.index, store.index.entries_db)
-    live_count = sum(row.get('live_entry_count', 0) for row in shard_rows)
-    deleted_count = sum(row.get('deleted_entry_count', 0)
-        for row in shard_rows)
     if record_count is None:
-        record_count = live_count + deleted_count
+        record_count = sum(row.get('entry_count', 0) for row in shard_rows)
     shard_byte_size = sum(max(row.get('byte_size') or 0, 0)
         for row in shard_rows)
     return {
         'root': str(store.root),
         'record_count': record_count,
-        'live_record_count': live_count,
-        'deleted_record_count': deleted_count,
         'model_count': len(store.model_registry.model_metadatas),
         'shard_count': len(shard_rows),
         'shard_byte_size': shard_byte_size,
@@ -127,8 +117,6 @@ def build_store_state(store):
         'lmdb_byte_size': _path_byte_size(store.index.path),
         'largest_shard_byte_size': max(
             [max(row.get('byte_size') or 0, 0) for row in shard_rows] or [0]),
-        'shard_storage_is_estimated': any(
-            row.get('byte_size_is_estimated') for row in shard_rows),
         'health_event_count': len(store.get_shard_health_events()),
     })
     return state

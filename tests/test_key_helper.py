@@ -237,6 +237,63 @@ class TestPackDispatch(unittest.TestCase):
                     pack_echoframe_key(output_type, **kwargs)
 
 
+class TestPackRequiredFields(unittest.TestCase):
+
+    def test_pack_functions_raise_on_missing_required_fields(self):
+        cases = [
+            (pack_hidden_state_key,
+                (None, LAYER, SAMPLE_PHRASER_KEY, COLLAR), 'model_id'),
+            (pack_hidden_state_key,
+                (MODEL_ID, None, SAMPLE_PHRASER_KEY, COLLAR), 'layer'),
+            (pack_hidden_state_key,
+                (MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, None), 'collar'),
+            (pack_attention_key,
+                (None, LAYER, SAMPLE_PHRASER_KEY, COLLAR), 'model_id'),
+            (pack_attention_key,
+                (MODEL_ID, None, SAMPLE_PHRASER_KEY, COLLAR), 'layer'),
+            (pack_attention_key,
+                (MODEL_ID, LAYER, SAMPLE_PHRASER_KEY, None), 'collar'),
+            (pack_codebook_indices_key,
+                (None, SAMPLE_PHRASER_KEY, COLLAR), 'model_id'),
+            (pack_codebook_indices_key,
+                (MODEL_ID, SAMPLE_PHRASER_KEY, None), 'collar'),
+            (pack_codebook_matrix_key, (None,), 'model_id'),
+        ]
+        for pack, args, missing_field in cases:
+            with self.subTest(pack=pack.__name__, missing=missing_field):
+                with self.assertRaisesRegex(ValueError, missing_field):
+                    pack(*args)
+
+    def test_pack_dispatch_raises_on_missing_required_fields(self):
+        cases = [
+            ('hidden_state', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, 'layer'),
+            ('hidden_state', {
+                'model_id': MODEL_ID,
+                'layer': LAYER,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }, 'collar'),
+            ('attention', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, 'layer'),
+            ('codebook_indices', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }, 'collar'),
+            ('codebook_matrix', {'model_id': None}, 'model_id'),
+        ]
+        for output_type, kwargs, missing_field in cases:
+            with self.subTest(output_type=output_type,
+                    missing=missing_field):
+                with self.assertRaisesRegex(ValueError, missing_field):
+                    pack_echoframe_key(output_type, **kwargs)
+
+
 class TestUnpackDispatch(unittest.TestCase):
 
     def test_unpack_dispatch_reports_correct_output_type(self):

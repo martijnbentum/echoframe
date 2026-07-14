@@ -71,6 +71,8 @@ def pack_hidden_state_key(model_id, layer, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    _require_key_fields('hidden_state', model_id=model_id, layer=layer,
+        collar=collar)
     phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['hidden_state']
     return struct.pack(_HS_FMT, model_id, output_type_id, layer,
@@ -84,6 +86,8 @@ def pack_attention_key(model_id, layer, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    _require_key_fields('attention', model_id=model_id, layer=layer,
+        collar=collar)
     phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['attention']
     return struct.pack(_AT_FMT, model_id, output_type_id, layer,
@@ -96,6 +100,7 @@ def pack_codebook_indices_key(model_id, phraser_key, collar):
     phraser_key:  bytes (22 bytes)
     collar:       int  (uint16)
     '''
+    _require_key_fields('codebook_indices', model_id=model_id, collar=collar)
     phraser_key = validate_segment_phraser_key(phraser_key)
     output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['codebook_indices']
     return struct.pack(_CI_FMT, model_id, output_type_id, phraser_key,
@@ -106,6 +111,7 @@ def pack_codebook_matrix_key(model_id):
     '''Pack an echoframe_key for a codebook_matrix record.
     model_id:   int  (uint32)
     '''
+    _require_key_fields('codebook_matrix', model_id=model_id)
     output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['codebook_matrix']
     return struct.pack(_CM_FMT, model_id, output_type_id)
 
@@ -139,6 +145,14 @@ def _reject_unused_key_fields(output_type, **fields):
         if value is not None:
             message = f'{output_type} keys do not encode {name}, '
             message += f'got {name}={value!r}'
+            raise ValueError(message)
+
+
+def _require_key_fields(output_type, **fields):
+    '''Raise when fields that this output type encodes are missing.'''
+    for name, value in fields.items():
+        if value is None:
+            message = f'{output_type} keys require {name}, got None'
             raise ValueError(message)
 
 

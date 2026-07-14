@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 import sys
 import tempfile
@@ -99,6 +100,35 @@ def _make_segment(start_seconds=1.0, end_seconds=1.3, key=None,
 
 def _make_selected_frames(indices):
     return [types.SimpleNamespace(index=index) for index in indices]
+
+
+class TestFeatureStoreContract(unittest.TestCase):
+    def test_compute_helpers_require_store(self):
+        helpers = (
+            compute_embeddings,
+            compute_codebook_indices,
+            compute_embeddings_batch,
+            compute_codebook_indices_batch,
+        )
+        for helper in helpers:
+            with self.subTest(helper=helper.__name__):
+                parameters = inspect.signature(helper).parameters
+                self.assertIs(parameters['store'].default,
+                    inspect.Parameter.empty)
+                self.assertNotIn('store_root', parameters)
+
+    def test_compute_helpers_reject_none_store(self):
+        segment = _make_segment()
+        cases = (
+            (compute_embeddings, (segment, 3, 'wav2vec2')),
+            (compute_codebook_indices, (segment, 'wav2vec2')),
+            (compute_embeddings_batch, ([segment], 3, 'wav2vec2')),
+            (compute_codebook_indices_batch, ([segment], 'wav2vec2')),
+        )
+        for helper, args in cases:
+            with self.subTest(helper=helper.__name__):
+                with self.assertRaisesRegex(ValueError, 'echoframe Store'):
+                    helper(*args, store=None)
 
 
 class FakeFrames:

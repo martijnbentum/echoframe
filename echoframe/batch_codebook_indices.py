@@ -5,7 +5,6 @@ SpidR codebook batching is intentionally not implemented here yet.
 
 from pathlib import Path
 
-import echoframe
 from to_vector import wav2vec2_codebook
 
 from .utils_segment_features import (
@@ -17,15 +16,14 @@ from .utils_segment_features import (
 )
 
 
-def compute_codebook_indices_batch(segments, model_name, collar=500,
-    store=None, store_root='echoframe', gpu=False, tags=None,
+def compute_codebook_indices_batch(segments, model_name, store,
+    collar=500, gpu=False, tags=None,
     batch_size=None, store_queue_size=4, verbose=True):
     '''Compute and store Wav2Vec2 codebook indices for segment objects.
     segments:             iterable of phraser segment objects
     model_name:           registered Wav2Vec2 model name
+    store:                echoframe Store used for model outputs
     collar:               context window in milliseconds
-    store:                optional Store instance
-    store_root:           root used when creating a Store lazily
     gpu:                  whether to run codebook extraction on GPU
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
@@ -34,7 +32,7 @@ def compute_codebook_indices_batch(segments, model_name, collar=500,
     SpidR codebook batching is not implemented in this Wav2Vec2-specific
     batch path.
     '''
-    if store is None: store = echoframe.Store(store_root)
+    if store is None: raise ValueError('store must be an echoframe Store')
     missing = MissingIndices(segments, model_name, collar, store)
     if verbose: print(missing)
     if not missing.missing:

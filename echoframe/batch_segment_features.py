@@ -1,7 +1,6 @@
 '''Batch feature retrieval orchestration for echoframe.'''
 from pathlib import Path
 
-import echoframe
 import to_vector
 
 from .utils_segment_features import (
@@ -11,24 +10,23 @@ from .utils_segment_features import (
 )
 
 
-def compute_embeddings_batch(segments, layers, model_name, collar=500,
-    store=None, store_root='echoframe', gpu=False, tags=None,
+def compute_embeddings_batch(segments, layers, model_name, store,
+    collar=500, gpu=False, tags=None,
     batch_size=None, store_queue_size=4, verbose=True):
     '''Compute and store embeddings for multiple segment objects.
     segments:             iterable of phraser segment objects
     layers:               layer index or iterable of layer indices
     model_name:           registered model name for store storage
+    store:                echoframe Store used for model outputs
     collar:               context window in milliseconds
-    store:                optional Store instance
-    store_root:           root used when creating a Store lazily
     gpu:                  whether to run vectorization on GPU
     tags:                 optional tags stored on newly written metadata
     batch_size:           optional item count per batch
     store_queue_size:     queued save chunks before compute waits
     verbose:              whether to print batch progress
     '''
+    if store is None: raise ValueError('store must be an echoframe Store')
     layers_list = normalise_layers(layers)
-    if store is None: store = echoframe.Store(store_root)
     missing = MissingSegments(segments, layers_list, model_name, collar, store)
     if verbose: print(missing)
     if not missing.missing:

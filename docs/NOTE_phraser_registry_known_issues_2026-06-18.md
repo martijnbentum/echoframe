@@ -24,6 +24,24 @@ This is safe for the current single-threaded, single-process usage. If that
 assumption changes, add a file lock (or a single serialized config owner)
 around the read-modify-write in `StoreConfig`.
 
+A second, related hazard (found 2026-07-14): `StoreConfig.write` builds its
+temp file name from the pid only (`config.json.<pid>.tmp`). Two threads in one
+process therefore share the same temp path, so concurrent writes could publish
+a torn `config.json` — defeating the atomic temp-file-then-replace dance. The
+fix is a thread-unique temp name (e.g. add `threading.get_ident()`), but it
+only matters together with the locking fix above: a unique temp name without
+the lock still loses updates to last-writer-wins clobbering.
+
+Status of the single-threaded assumption (verified 2026-07-14): `StoreWriter`
+(`utils_segment_features.py`) now runs `store.save_many` on a background
+thread during batch extraction, so the process is no longer single-threaded.
+However, that thread's path (`save_many` -> HDF5 storage + LMDB index) never
+touches `config.json`, and key building (`load_model_id`) is read-only — it
+raises for unregistered models rather than auto-registering. Config writes
+happen only in explicit main-thread registration calls, so both hazards in
+this section remain unreachable. If registration ever becomes concurrent,
+apply the file lock and the thread-unique temp name together.
+
 ## 2. Naming inconsistency: `phraser_source` vs `phraser_store` (#6)
 
 The live API was renamed to `phraser_store` vocabulary

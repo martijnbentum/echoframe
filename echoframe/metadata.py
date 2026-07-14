@@ -146,6 +146,10 @@ class EchoframeMetadata:
             dataset_path=updates.pop('dataset_path', self.dataset_path),
             shape=updates.pop('shape', self.shape),
             created_at=updates.pop('created_at', self.created_at))
+        if updates:
+            unknown = ', '.join(sorted(updates))
+            message = f'copy() got unknown metadata fields: {unknown}'
+            raise ValueError(message)
         return metadata
 
     @classmethod

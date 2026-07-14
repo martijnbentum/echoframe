@@ -72,5 +72,40 @@ class TestLoadEmbedding(unittest.TestCase):
                         metadata.load_embedding()
 
 
+class TestCopy(unittest.TestCase):
+    def _hidden_state_metadata(self, store):
+        data = np.arange(6).reshape(2, 3).astype(float)
+        item = _put(store, phraser_key='phrase-1', collar=500,
+            model_name='wav2vec2', output_type='hidden_state', layer=4,
+            data=data)
+        return store.load_metadata(item.echoframe_key)
+
+    def test_copy_applies_known_field_updates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            metadata = self._hidden_state_metadata(store)
+
+            result = metadata.copy(tags=['exp-a'])
+
+            self.assertEqual(result.tags, ['exp-a'])
+            self.assertEqual(result.shard_id, metadata.shard_id)
+
+    def test_copy_rejects_unknown_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            metadata = self._hidden_state_metadata(store)
+
+            with self.assertRaisesRegex(ValueError, 'shardid'):
+                metadata.copy(shardid='shard-0042')
+
+    def test_copy_names_every_unknown_field(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            metadata = self._hidden_state_metadata(store)
+
+            with self.assertRaisesRegex(ValueError, 'shardid, tagz'):
+                metadata.copy(tagz=['exp-a'], shardid='shard-0042')
+
+
 if __name__ == '__main__':
     unittest.main()

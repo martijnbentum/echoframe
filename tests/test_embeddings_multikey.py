@@ -57,6 +57,26 @@ class TestEmbeddingsMultiKey(unittest.TestCase):
             data[1],
         ], axis=0))
 
+    def test_mixed_collars_are_allowed(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        store = make_fake_store(tmpdir.name)
+        ensure_model(store, 'wav2vec2')
+        data = np.arange(6).reshape(2, 3).astype(float)
+        item_1 = _put(store, phraser_key='phrase-1', collar=100,
+            model_name='wav2vec2', output_type='hidden_state', layer=4,
+            data=data)
+        item_2 = _put(store, phraser_key='phrase-2', collar=200,
+            model_name='wav2vec2', output_type='hidden_state', layer=4,
+            data=data)
+
+        result = Embeddings.from_echoframe_keys(store, [
+            item_1.echoframe_key,
+            item_2.echoframe_key,
+        ])
+
+        self.assertEqual(result.count, 2)
+
     def test_all_invalid_value_error_keys_raise_with_skip_count(self):
         metadata = mock.Mock()
         metadata.echoframe_key = b'bad'

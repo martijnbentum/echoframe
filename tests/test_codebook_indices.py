@@ -200,6 +200,70 @@ class TestCodevectors(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'duplicate phraser_key'):
                 store.load_codevectors([first, second])
 
+    def test_mixed_collars_are_allowed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _save_codebook_matrix(store, 'wav2vec2', [
+                [1.0],
+                [2.0],
+            ])
+            first = _save_codebook_indices(store, 'phrase-1', 'wav2vec2',
+                [[0, 1]], collar=100)
+            second = _save_codebook_indices(store, 'phrase-2', 'wav2vec2',
+                [[1, 0]], collar=200)
+
+            result = store.load_codevectors([first, second])
+
+        self.assertEqual(result.count, 2)
+
+    def test_missing_key_is_skipped(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _save_codebook_matrix(store, 'wav2vec2', [
+                [1.0],
+                [2.0],
+            ])
+            first = _save_codebook_indices(store, 'phrase-1', 'wav2vec2',
+                [[0, 1]])
+            missing = make_key(store, phraser_key='phrase-9', collar=500,
+                model_name='wav2vec2', output_type='codebook_indices',
+                layer=0)
+
+            result = store.load_codevectors([first, missing])
+
+        self.assertEqual(result.count, 1)
+        self.assertEqual(result.phraser_keys, (_pk('phrase-1'),))
+
+    def test_all_keys_missing_raises_with_skip_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            missing = make_key(store, phraser_key='phrase-9', collar=500,
+                model_name='wav2vec2', output_type='codebook_indices',
+                layer=0)
+
+            with self.assertRaisesRegex(ValueError,
+                'no codevectors were loaded skipped keys 1'):
+                store.load_codevectors([missing])
+
+    def test_metadata_without_payload_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _save_codebook_matrix(store, 'wav2vec2', [
+                [1.0],
+                [2.0],
+            ])
+            first = _save_codebook_indices(store, 'phrase-1', 'wav2vec2',
+                [[0, 1]])
+            second = _save_codebook_indices(store, 'phrase-2', 'wav2vec2',
+                [[1, 0]])
+            stranded = store.load_metadata(second).copy(shard_id=None,
+                dataset_path=None)
+            store.index.save(stranded)
+
+            with self.assertRaisesRegex(ValueError,
+                'does not point to a stored payload'):
+                store.load_codevectors([first, second])
+
     def test_load_codevectors_requires_list_or_tuple(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

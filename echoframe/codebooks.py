@@ -102,7 +102,12 @@ class Codevector:
 
 
 class Codevectors:
-    '''A validated collection of stored Codevector objects.'''
+    '''A validated collection of stored Codevector objects.
+
+    Validation enforces unique phraser keys and matching model_name,
+    output_type and model_architecture. Mixed collars are allowed on
+    purpose.
+    '''
     def __init__(self, codevectors, store):
         self._check_codevectors(codevectors)
         self.store = store
@@ -117,10 +122,32 @@ class Codevectors:
 
     @classmethod
     def from_echoframe_keys(cls, store, keys):
+        '''Build Codevectors with a single batched payload read.
+
+        Groups payloads by shard (one HDF5 open per shard) instead of
+        opening a shard per codevector.
+
+        Each codevector still resolves its codebook matrix metadata on
+        its own. We accept these repeated cheap index reads to keep the
+        Codevector signature lean. The matrix payload fallback in
+        infer_codebook_architecture only runs for matrix metadata
+        without a stored shape, which the save path has always
+        recorded, so it is not expected to occur.
+        '''
+        keys = list(keys)
+        metadatas = store.load_many_metadata(keys, keep_missing=True)
+        payloads = store.metadatas_to_payloads(metadatas)
         codevectors = []
         skipped_count = 0
-        for key in keys:
-            try: codevector = Codevector(key, store)
+        items = zip(keys, metadatas, payloads, strict=True)
+        for key, metadata, data in items:
+            if metadata is None or data is None:
+                skipped_count += 1
+                logger.warning(
+                    f'skipping echoframe_key {key!r}: no metadata or payload')
+                continue
+            try: codevector = Codevector(key, store, metadata=metadata,
+                data=data)
             except ValueError as e:
                 skipped_count += 1
                 logger.warning(f'skipping echoframe_key {key!r}: {e}')

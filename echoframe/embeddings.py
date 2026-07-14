@@ -253,7 +253,11 @@ class SlicedEmbedding:
 
 
 class Embeddings:
-    '''A validated collection of stored Embedding objects.'''
+    '''A validated collection of stored Embedding objects.
+
+    Validation enforces unique phraser keys and matching model_name,
+    output_type and layer. Mixed collars are allowed on purpose.
+    '''
 
     def __init__(self, embeddings, store):
         self._check_embeddings(embeddings) 
@@ -280,7 +284,8 @@ class Embeddings:
 
         embeddings = []
         skipped_count = 0
-        for key, metadata, data in zip(keys, metadatas, payloads):
+        items = zip(keys, metadatas, payloads, strict=True)
+        for key, metadata, data in items:
             if metadata is None or data is None:
                 skipped_count += 1
                 logger.warning(

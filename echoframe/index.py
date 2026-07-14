@@ -16,6 +16,8 @@ class LmdbIndex:
     def __init__(self, path, map_size=30 << 30, env=None, shards_root=None):
         self.path = Path(path)
         self.shards_root = None if shards_root is None else Path(shards_root)
+        self._owns_env = env is None
+        self._closed = False
         self.env = env or lmdb_helper.open_env(self.path, map_size=map_size)
         self.db_handles = lmdb_helper.open_databases(self.env)
         self.entries_db = self.db_handles['entries_db']
@@ -24,6 +26,17 @@ class LmdbIndex:
         self.by_tag_db = self.db_handles['by_tag_db']
         self.shard_meta_db = self.db_handles['shard_meta_db']
         self.compaction_db = self.db_handles['compaction_db']
+
+    def close(self):
+        '''Release this index's reference to the shared LMDB env.
+
+        The env itself only closes when no other index references it.
+        Injected envs are left untouched; repeated calls are no-ops.
+        '''
+        if not self._owns_env: return
+        if self._closed: return
+        self._closed = True
+        lmdb_helper.close_env(self.path)
 
     def load(self, echoframe_key, store = None, txn = None):
         '''Load one metadata record; reads through txn when given.'''

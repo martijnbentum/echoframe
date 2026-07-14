@@ -10,3 +10,15 @@ package here makes the ``setdefault`` a no-op while leaving the test's
 '''
 
 import frame  # noqa: F401
+import pytest
+
+from echoframe import lmdb_helper
+
+
+@pytest.fixture(autouse=True)
+def close_cached_lmdb_envs():
+    '''Close LMDB envs leaked by a test so the suite cannot exhaust fds.'''
+    yield
+    for cached in list(lmdb_helper._ENV_CACHE.values()):
+        cached['env'].close()
+    lmdb_helper._ENV_CACHE.clear()

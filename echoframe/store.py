@@ -55,6 +55,15 @@ class Store:
         summary = self.store_summary()
         return util_formatting.format_store_str(summary)
 
+    def close(self):
+        '''Release this store's reference to the shared LMDB env.
+
+        The env itself only closes when no other store references it,
+        so equal-path stores stay usable until each one is closed.
+        Using this store after its env closed raises an lmdb error.
+        '''
+        self.index.close()
+
     def register_model(self, model_name, local_path=None, huggingface_id=None,
         language=None, size=None, architecture=None):
         '''Register one model in the store registry.

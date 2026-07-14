@@ -20,6 +20,7 @@ from tests.helpers import (
     load_many_queries as _load_many_queries,
     load_object_frames as _load_object_frames,
     load_query as _load_query,
+    make_fake_store,
     make_real_store,
     payload_to_list,
     pk as _pk,
@@ -219,3 +220,44 @@ class TestStoreEndToEnd(unittest.TestCase):
 
         self.assertIs(first.index.env, second.index.env)
         self.assertIsNotNone(found)
+
+    def test_close_evicts_cached_lmdb_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            env = first.index.env
+            first.close()
+            second = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+
+            self.assertIsNot(second.index.env, env)
+            second.close()
+
+    def test_shared_lmdb_env_survives_one_close(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            second = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            _put(first, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            first.close()
+            found = _find_one(second, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state', layer=1)
+
+            self.assertIsNotNone(found)
+            second.close()
+
+    def test_close_is_idempotent_per_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            first = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            second = Store(tmpdir, max_shard_size_bytes=1024 * 1024)
+            first.close()
+            first.close()
+
+            self.assertEqual(second.metadatas, [])
+            second.close()
+
+    def test_close_leaves_injected_env_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            store.close()
+
+            self.assertEqual(store.metadatas, [])

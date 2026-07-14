@@ -30,11 +30,24 @@ def open_env(path, map_size):
             message += f'{resolved_root} with map_size='
             message += f"{cached['map_size']}; requested map_size={map_size}"
             raise ValueError(message)
+        cached['refcount'] += 1
         return cached['env']
     env = lmdb.open(str(resolved_root), create=True, max_dbs=12,
         map_size=map_size, subdir=True)
-    _ENV_CACHE[resolved_root] = {'env': env, 'map_size': map_size}
+    entry = {'env': env, 'map_size': map_size, 'refcount': 1}
+    _ENV_CACHE[resolved_root] = entry
     return env
+
+
+def close_env(path):
+    '''Release one reference to a cached env and close it at zero.'''
+    resolved_root = Path(path).resolve()
+    cached = _ENV_CACHE.get(resolved_root)
+    if cached is None: return
+    cached['refcount'] -= 1
+    if cached['refcount'] > 0: return
+    del _ENV_CACHE[resolved_root]
+    cached['env'].close()
 
 
 def open_databases(env):

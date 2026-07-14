@@ -274,7 +274,8 @@ class Store:
         return metadata_list
 
     def load(self, echoframe_key):
-        '''Load one stored payload by echoframe key.
+        '''Load one stored payload, or None when the key is not in
+        the index.
         echoframe_key:  canonical metadata identifier; bytes or hex string
         '''
         metadata = self.load_metadata(echoframe_key)
@@ -385,7 +386,8 @@ class Store:
         return self.load_embeddings(echoframe_keys)
 
     def load_embedding(self, echoframe_key):
-        '''Load one typed Embedding object.
+        '''Load one typed Embedding object. Unlike load, this raises
+        ValueError when the key has no stored metadata or payload.
         echoframe_key:  canonical echoframe identifier
         '''
         return Embedding(echoframe_key, self)
@@ -543,12 +545,16 @@ class Store:
 
     @property
     def metadatas(self):
-        '''Return stored metadata records, rescanned after any index write.'''
+        '''Return a copied list of stored metadata records.
+
+        The records are rescanned after any index write; mutating the
+        returned list does not affect the cache.
+        '''
         txnid = self.index.last_txnid()
         if getattr(self, '_metadatas_txnid', None) != txnid:
             self._metadatas = self.index.all_metadatas(store=self)
             self._metadatas_txnid = txnid
-        return self._metadatas
+        return list(self._metadatas)
 
     def overview(self, health_event_limit=20, include_integrity=False,
         include_garbage=False):

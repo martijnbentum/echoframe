@@ -540,7 +540,20 @@ class TestMetadatasCache(unittest.TestCase):
                 model_name='wav2vec2', output_type='hidden_state',
                 layer=7, data=[[1.0]])
             first = store.metadatas
-            self.assertIs(store.metadatas, first)
+            second = store.metadatas
+            self.assertEqual(len(second), len(first))
+            for record_1, record_2 in zip(first, second, strict=True):
+                self.assertIs(record_1, record_2)
+
+    def test_metadatas_mutation_does_not_pollute_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            _put(store, phraser_key='phrase-1', collar=120,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=7, data=[[1.0]])
+            listed = store.metadatas
+            listed.clear()
+            self.assertEqual(len(store.metadatas), 1)
 
     def test_tag_update_invalidates_metadatas(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

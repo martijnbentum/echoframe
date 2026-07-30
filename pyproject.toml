@@ -4,8 +4,8 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = 'echoframe'
-version = '0.1.174'
-description = 'Store hidden states, attention tensors, and codebooks on disk.'
+version = '0.1.175'
+description = 'Store model outputs and acoustic features on disk.'
 readme = 'README.md'
 requires-python = '>=3.12'
 license = {file = 'LICENSE'}

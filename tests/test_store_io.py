@@ -38,6 +38,8 @@ class TestStoreIo(unittest.TestCase):
         self.assertIn('EchoframeMetadata', echoframe.__all__)
         self.assertIn('Codevector', echoframe.__all__)
         self.assertIn('Codevectors', echoframe.__all__)
+        self.assertIn('store_mfcc', echoframe.__all__)
+        self.assertIn('store_mfcc_batch', echoframe.__all__)
         self.assertIn('STABLE_METADATA_FIELDS', echoframe.__all__)
         self.assertNotIn('LmdbIndex', echoframe.__all__)
         self.assertNotIn('__version__', echoframe.__all__)

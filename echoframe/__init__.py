@@ -1,5 +1,6 @@
 '''Disk-backed storage for model outputs linked to phraser keys.'''
 
+from .acoustic_features import store_mfcc, store_mfcc_batch
 from .codebooks import Codevector, Codevectors
 from .embeddings import Embedding, Embeddings, SlicedEmbedding
 from .metadata import EchoframeMetadata, OUTPUT_TYPES
@@ -13,6 +14,8 @@ __all__ = [
     'SlicedEmbedding',
     'Codevector',
     'Codevectors',
+    'store_mfcc',
+    'store_mfcc_batch',
     'Store',
     'OUTPUT_TYPES',
     'EchoframeMetadata',

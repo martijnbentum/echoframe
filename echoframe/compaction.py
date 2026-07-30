@@ -21,6 +21,7 @@ def broken_reference(metadata, reason):
         'echoframe_key_hex': metadata.echoframe_key.hex(),
         'phraser_key': metadata.phraser_key,
         'model_name': metadata.model_name,
+        'feature_name': metadata.feature_name,
         'output_type': metadata.output_type,
         'layer': metadata.layer,
         'collar': metadata.collar,

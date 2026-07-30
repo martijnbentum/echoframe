@@ -15,11 +15,13 @@ _HS_FMT = struct_helper.make_key_fmt('hidden_state')
 _AT_FMT = struct_helper.make_key_fmt('attention')
 _CI_FMT = struct_helper.make_key_fmt('codebook_indices')
 _CM_FMT = struct_helper.make_key_fmt('codebook_matrix')
+_AF_FMT = struct_helper.make_key_fmt('acoustic_feature')
 
 HIDDEN_STATE_KEY_LEN = struct.calcsize(_HS_FMT)   # 30
 ATTENTION_KEY_LEN = struct.calcsize(_AT_FMT)   # 30
 CODEBOOK_INDICES_KEY_LEN = struct.calcsize(_CI_FMT)   # 29
 CODEBOOK_MATRIX_KEY_LEN = struct.calcsize(_CM_FMT)   # 5
+ACOUSTIC_FEATURE_KEY_LEN = struct.calcsize(_AF_FMT)   # 31
 
 
 # -------- hashing --------
@@ -32,6 +34,16 @@ def model_name_hash(model_name):
         model_name.encode('utf-8'),
         digest_size=struct_helper.MODEL_NAME_HASH_LEN
     ).digest()
+
+
+def feature_name_hash(feature_name):
+    '''Return the canonical 8-byte blake2b hash for a feature name.
+    feature_name:   str
+    '''
+    encoded_name = feature_name.encode('utf-8')
+    hasher = hashlib.blake2b(encoded_name,
+        digest_size=struct_helper.FEATURE_NAME_HASH_LEN)
+    return hasher.digest()
 
 
 def tag_hash(tag):
@@ -116,26 +128,49 @@ def pack_codebook_matrix_key(model_id):
     return struct.pack(_CM_FMT, model_id, output_type_id)
 
 
-def pack_echoframe_key(output_type, model_id, phraser_key=None, layer=None,
-    collar=None):
+def pack_acoustic_feature_key(feature_name, phraser_key):
+    '''Pack an echoframe_key for an acoustic_feature record.
+    feature_name:  acoustic feature identifier, such as mfcc
+    phraser_key:   bytes (22 bytes)
+    '''
+    _require_key_fields('acoustic_feature', feature_name=feature_name)
+    if not isinstance(feature_name, str) or not feature_name.strip():
+        message = 'feature_name must be a non-empty string'
+        raise ValueError(message)
+    phraser_key = validate_segment_phraser_key(phraser_key)
+    output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['acoustic_feature']
+    name_hash = feature_name_hash(feature_name)
+    return struct.pack(_AF_FMT, name_hash, output_type_id, phraser_key)
+
+
+def pack_echoframe_key(output_type, model_id=None, phraser_key=None,
+    layer=None, collar=None, feature_name=None):
     '''Pack one echoframe_key by output type.
     output_type:  one of the supported echoframe output types
     model_id:     model identifier
     phraser_key:  segment phraser key when required
     layer:        layer when required
     collar:       collar when required
+    feature_name:  acoustic feature identifier when required
     '''
     if output_type == 'hidden_state':
+        _reject_unused_key_fields(output_type, feature_name=feature_name)
         return pack_hidden_state_key(model_id, layer, phraser_key, collar)
     if output_type == 'attention':
+        _reject_unused_key_fields(output_type, feature_name=feature_name)
         return pack_attention_key(model_id, layer, phraser_key, collar)
     if output_type == 'codebook_indices':
-        _reject_unused_key_fields(output_type, layer=layer)
+        _reject_unused_key_fields(output_type, layer=layer,
+            feature_name=feature_name)
         return pack_codebook_indices_key(model_id, phraser_key, collar)
     if output_type == 'codebook_matrix':
         _reject_unused_key_fields(output_type, phraser_key=phraser_key,
-            layer=layer, collar=collar)
+            layer=layer, collar=collar, feature_name=feature_name)
         return pack_codebook_matrix_key(model_id)
+    if output_type == 'acoustic_feature':
+        _reject_unused_key_fields(output_type, model_id=model_id,
+            layer=layer, collar=collar)
+        return pack_acoustic_feature_key(feature_name, phraser_key)
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
@@ -213,6 +248,16 @@ def unpack_codebook_matrix_key(key_bytes):
     }
 
 
+def unpack_acoustic_feature_key(key_bytes):
+    '''Unpack an acoustic feature key into its component fields.'''
+    name_hash, output_type_id, phraser_key = struct.unpack(_AF_FMT, key_bytes)
+    return {
+        'feature_name_hash': name_hash,
+        'output_type': struct_helper.RANK_OUTPUT_TYPE_MAP[output_type_id],
+        'phraser_key': phraser_key,
+    }
+
+
 def unpack_echoframe_key(key_bytes):
     '''Unpack one echoframe_key by inferring its output type.'''
     output_type = output_type_from_echoframe_key(key_bytes)
@@ -224,13 +269,17 @@ def unpack_echoframe_key(key_bytes):
         return unpack_codebook_indices_key(key_bytes)
     if output_type == 'codebook_matrix':
         return unpack_codebook_matrix_key(key_bytes)
+    if output_type == 'acoustic_feature':
+        return unpack_acoustic_feature_key(key_bytes)
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
 def output_type_from_echoframe_key(key_bytes):
     '''Infer the output type from a fixed-width echoframe_key.'''
     n_bytes = len(key_bytes)
-    if n_bytes in {HIDDEN_STATE_KEY_LEN, ATTENTION_KEY_LEN,
+    if n_bytes == ACOUSTIC_FEATURE_KEY_LEN:
+        output_type_id = key_bytes[struct_helper.FEATURE_NAME_HASH_LEN]
+    elif n_bytes in {HIDDEN_STATE_KEY_LEN, ATTENTION_KEY_LEN,
             CODEBOOK_INDICES_KEY_LEN, CODEBOOK_MATRIX_KEY_LEN}:
         output_type_id = key_bytes[4]
     else:
@@ -257,6 +306,11 @@ def output_type_from_echoframe_key(key_bytes):
             'codebook_matrix'):
         raise ValueError(
             f'invalid output_type_id for 5-byte echoframe_key: '
+            f'{output_type_id}')
+    if n_bytes == ACOUSTIC_FEATURE_KEY_LEN and output_type != (
+            'acoustic_feature'):
+        raise ValueError(
+            f'invalid output_type_id for 31-byte echoframe_key: '
             f'{output_type_id}')
     return output_type
 

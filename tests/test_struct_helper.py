@@ -9,6 +9,7 @@ from echoframe.struct_helper import (
     RANK_OUTPUT_TYPE_MAP,
     PHRASER_KEY_LEN,
     MODEL_NAME_HASH_LEN,
+    FEATURE_NAME_HASH_LEN,
     TAG_HASH_LEN,
     make_key_fmt,
     key_len,
@@ -20,7 +21,7 @@ class TestRankMaps(unittest.TestCase):
     def test_output_type_rank_map_contains_all_types(self):
         expected = {
             'hidden_state', 'attention', 'codebook_indices',
-            'codebook_matrix',
+            'codebook_matrix', 'acoustic_feature',
         }
         self.assertEqual(set(OUTPUT_TYPE_RANK_MAP.keys()), expected)
 
@@ -41,6 +42,7 @@ class TestKeyFmt(unittest.TestCase):
             'attention': 30,
             'codebook_indices': 29,
             'codebook_matrix': 5,
+            'acoustic_feature': 31,
         }
         for output_type, expected_size in cases.items():
             with self.subTest(output_type=output_type):
@@ -65,6 +67,7 @@ class TestKeyLen(unittest.TestCase):
             'attention': 30,
             'codebook_indices': 29,
             'codebook_matrix': 5,
+            'acoustic_feature': 31,
         }
         for output_type, expected_length in cases.items():
             with self.subTest(output_type=output_type):
@@ -78,6 +81,9 @@ class TestConstants(unittest.TestCase):
 
     def test_model_name_hash_len(self):
         self.assertEqual(MODEL_NAME_HASH_LEN, 8)
+
+    def test_feature_name_hash_len(self):
+        self.assertEqual(FEATURE_NAME_HASH_LEN, 8)
 
     def test_tag_hash_len(self):
         self.assertEqual(TAG_HASH_LEN, 8)

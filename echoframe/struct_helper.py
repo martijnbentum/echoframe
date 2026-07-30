@@ -10,6 +10,7 @@ Field widths:
     collar:           uint16  (2 bytes)
     phraser_key:      22 bytes (fixed)
     model_name_hash:  8 bytes  (fixed)
+    feature_name_hash: 8 bytes (fixed)
     tag_hash:         8 bytes  (fixed)
 '''
 
@@ -20,12 +21,14 @@ OUTPUT_TYPE_RANK_MAP = {
     'attention':        1,
     'codebook_indices': 2,
     'codebook_matrix':  3,
+    'acoustic_feature': 4,
 }
 
 RANK_OUTPUT_TYPE_MAP = {v: k for k, v in OUTPUT_TYPE_RANK_MAP.items()}
 
 PHRASER_KEY_LEN   = 22
 MODEL_NAME_HASH_LEN = 8
+FEATURE_NAME_HASH_LEN = 8
 TAG_HASH_LEN        = 8
 
 
@@ -37,6 +40,9 @@ def make_key_fmt(output_type):
         return f'>IB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_matrix':
         return '>IB'
+    if output_type == 'acoustic_feature':
+        feature_fmt = f'>{FEATURE_NAME_HASH_LEN}sB{PHRASER_KEY_LEN}s'
+        return feature_fmt
     raise ValueError(f'unknown output type: {output_type!r}')
 
 

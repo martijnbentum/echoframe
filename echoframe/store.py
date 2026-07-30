@@ -216,15 +216,28 @@ class Store:
         self._model = None
         self._model_name = None
 
-    def make_echoframe_key(self, output_type, *, model_name, phraser_key=None,
-        layer=None, collar=None):
+    def make_echoframe_key(self, output_type, *, model_name=None,
+        phraser_key=None, layer=None, collar=None, feature_name=None):
         '''Build one canonical echoframe key.
         output_type:    output type to encode in the key
-        model_name:     registered model name
+        model_name:     registered model name for model outputs
         phraser_key:    optional phraser object key
         layer:          optional layer index
         collar:         optional collar in milliseconds
+        feature_name:   acoustic feature identifier for acoustic features
         '''
+        if output_type == 'acoustic_feature':
+            if model_name is not None:
+                message = 'acoustic_feature does not accept model_name'
+                raise ValueError(message)
+            return pack_echoframe_key(output_type,
+                phraser_key=phraser_key, feature_name=feature_name)
+        if feature_name is not None:
+            message = 'feature_name is only valid for acoustic_feature'
+            raise ValueError(message)
+        if model_name is None:
+            message = f'{output_type} requires model_name'
+            raise ValueError(message)
         model_id = self.model_registry.load_model_id(model_name)
         return pack_echoframe_key(output_type, model_id,
             phraser_key=phraser_key, layer=layer, collar=collar)
@@ -394,6 +407,21 @@ class Store:
         ]
         return self.load_embeddings(echoframe_keys)
 
+    def phraser_key_to_acoustic_feature(self, phraser_key, feature_name):
+        '''Load one acoustic feature payload from a phraser key.'''
+        echoframe_key = self.make_echoframe_key('acoustic_feature',
+            feature_name=feature_name, phraser_key=phraser_key)
+        return self.load(echoframe_key)
+
+    def phraser_keys_to_acoustic_features(self, phraser_keys, feature_name):
+        '''Load acoustic feature payloads from multiple phraser keys.'''
+        echoframe_keys = [
+            self.make_echoframe_key('acoustic_feature',
+                feature_name=feature_name, phraser_key=phraser_key)
+            for phraser_key in phraser_keys
+        ]
+        return self.load_many(echoframe_keys, keep_missing=True)
+
     def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object. Unlike load, this raises
         ValueError when the key has no stored metadata or payload.
@@ -424,21 +452,24 @@ class Store:
             raise ValueError('echoframe_keys must be a list or tuple')
         return Codevectors.from_echoframe_keys(self, echoframe_keys)
 
-    def delete_phraser_key(self, phraser_key, model_name, output_type,
-        layer = None, collar = None, collar_match='exact', verbose=True):
+    def delete_phraser_key(self, phraser_key, model_name=None,
+        output_type=None, layer=None, collar=None, collar_match='exact',
+        verbose=True, feature_name=None):
         '''Delete stored outputs linked to phraser_key that match the criteria.
-        phraser_key:    unique phraser object key
-        collar:         requested collar in milliseconds
-        model_name:     model identifier
-        output_type:    output type to match
-        layer:          layer to match
-        collar_match:   how to match collar time: exact, min, max, or nearest
-        verbose:        whether to print the deleted record count
+        phraser_key:   unique phraser object key
+        model_name:    optional registered model name
+        output_type:   output type to match
+        layer:         optional layer to match
+        collar:        optional collar in milliseconds
+        collar_match:  exact, min, max, or nearest
+        verbose:       whether to print the deleted record count
+        feature_name:  optional acoustic feature name
         '''
+        if output_type is None: raise ValueError('output_type is required')
         metadatas = self.find_phraser(phraser_key)
-        matches = filter_metadata(metadatas,model_name=model_name,
-             output_type=output_type, layer=layer, collar=collar,
-             collar_match=collar_match)
+        matches = filter_metadata(metadatas, model_name=model_name,
+            output_type=output_type, layer=layer, collar=collar,
+            collar_match=collar_match, feature_name=feature_name)
         if not matches: return 
         echoframe_keys = [metadata.echoframe_key for metadata in matches]
         self.delete_many(echoframe_keys)
@@ -482,7 +513,7 @@ class Store:
         return metadatas
 
     def find_by_label(self, label, model_name=None, output_type=None,
-        layer=None, collar=None, collar_match='exact'):
+        layer=None, collar=None, collar_match='exact', feature_name=None):
         '''List metadata records for one phraser object label.
 
         Returns None when no stored records match the metadata filters;
@@ -494,14 +525,15 @@ class Store:
         layer:             optional layer filter
         collar:            optional collar filter
         collar_match:      exact, min, max, or nearest
+        feature_name:      optional acoustic feature filter
         '''
         if not isinstance(label, str) or not label.strip():
             raise ValueError('label must be a non-empty string')
 
         metadatas = self.index.all_metadatas(store=self)
         metadatas = filter_metadata(metadatas, model_name=model_name,
-            output_type=output_type, layer=layer, collar=collar, 
-            collar_match=collar_match)
+            output_type=output_type, layer=layer, collar=collar,
+            collar_match=collar_match, feature_name=feature_name)
         if len(metadatas) == 0: return None
         labels_by_key = self.collect_labels(metadatas)
         return [md for md in metadatas if labels_by_key.get(md.phraser_key) == label]

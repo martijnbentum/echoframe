@@ -1,9 +1,10 @@
 # echoframe
 
 `echoframe` is a small Python package for storing intermediate model artifacts
-on disk. The intended scope is hidden states, attention outputs, and derived
-artifacts such as codebooks, with support for both temporary caches and
-long-lived experiment stores.
+and acoustic features on disk. The intended scope is hidden states, attention
+outputs, derived artifacts such as codebooks, and frame-aligned features such
+as MFCCs, with support for both temporary caches and long-lived experiment
+stores.
 
 It treats `phraser` as the source of truth for object metadata and stores only
 metadata about model outputs plus pointers to payloads.
@@ -57,6 +58,17 @@ returns an `Embeddings` collection for multiple `echoframe_key` values.
 `phraser_key_to_embedding(...)` and `phraser_keys_to_embeddings(...)` are
 convenience helpers that derive hidden-state `echoframe_key` values from
 `phraser` inputs.
+
+For acoustic features, the public helpers are:
+
+- `store_mfcc(segment, store, tags=None, verbose=False)`
+- `store_mfcc_batch(segments, store, tags=None, verbose=True)`
+- `store.phraser_key_to_acoustic_feature(phraser_key, feature_name)`
+- `store.phraser_keys_to_acoustic_features(phraser_keys, feature_name)`
+
+Acoustic features use `output_type='acoustic_feature'` and a `feature_name`
+such as `'mfcc'`. They do not require a registered model, model name, layer,
+or collar.
 
 This is an intentional API shift from the earlier loader design. The old
 multi-layer `load_embeddings(...)`, `load_many_embeddings(...)`,
@@ -145,6 +157,28 @@ payload = store.load(echoframe_key)
 payload = store.metadata_to_payload(stored)
 payloads = store.metadatas_to_payloads([stored])
 ```
+
+Store and load MFCCs already computed by a `phraser` segment:
+
+```python
+from echoframe import store_mfcc
+
+store_mfcc(segment, store)
+mfcc = store.phraser_key_to_acoustic_feature(segment.key, 'mfcc')
+
+key = store.make_echoframe_key(
+    'acoustic_feature',
+    feature_name='mfcc',
+    phraser_key=segment.key,
+)
+metadata = store.load_metadata(key)
+
+print(metadata.output_type)   # acoustic_feature
+print(metadata.feature_name)  # mfcc
+```
+
+No `mfcc` pseudo-model registration is needed. The metadata has no
+`model_name`, `model_id`, `layer`, or `collar`.
 
 Load one typed embedding:
 
@@ -295,6 +329,8 @@ store.delete_phraser_key(
 `delete_phraser_key(...)` deletes every stored output that matches the given
 filters (`collar_match` can be `'exact'`, `'min'`, `'max'`, or `'nearest'`)
 and prints how many records were deleted (silence with `verbose=False`).
+Acoustic features can be deleted without a model name by passing
+`output_type='acoustic_feature'` and `feature_name='mfcc'`.
 
 List outputs by tag:
 

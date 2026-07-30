@@ -34,7 +34,7 @@ def _group_store_items_by_shard(items, get_shard_id, get_next_shard_id,
     batch_shard_sizes = {}
     for item in items:
         metadata = item['metadata']
-        key = (metadata.model_name, metadata.output_type)
+        key = _storage_key(metadata)
         item_size = _estimated_item_size(item)
 
         shard_id = batch_shard_ids.get(key)
@@ -207,8 +207,8 @@ class Hdf5ShardStore:
             with self.h5.File(new_file_path, 'a') as target:
                 for metadata in entries:
                     dataset = source[metadata.dataset_path][()]
-                    layer = _storage_layer(metadata)
-                    group = target.require_group(f'/layer_{layer:04d}')
+                    group = target.require_group(
+                        _dataset_group_path(metadata))
                     dataset_name = metadata.echoframe_key.hex()
                     if dataset_name in group:
                         del group[dataset_name]
@@ -289,8 +289,8 @@ class Hdf5ShardStore:
                         raise ValueError(message)
                     yield index, metadata, handle[metadata.dataset_path]
 
-    def _active_shard_id(self, model_name, output_type):
-        stem = f'{sanitize_name(model_name)}_{sanitize_name(output_type)}'
+    def _active_shard_id(self, storage_name, output_type):
+        stem = f'{sanitize_name(storage_name)}_{sanitize_name(output_type)}'
         return self._active_shard_id_from(stem, start_index=1)
 
     def _active_shard_id_from(self, stem, start_index):
@@ -320,18 +320,17 @@ class Hdf5ShardStore:
             index += 1
 
     def _cached_active_shard_id(self, metadata):
-        key = (metadata.model_name, metadata.output_type)
+        key = _storage_key(metadata)
         cached = self.active_shard_ids.get(key)
         if cached is not None:
             if cached['byte_size'] < self.max_shard_size_bytes:
                 return cached['shard_id']
-        shard_id = self._active_shard_id(metadata.model_name,
-            metadata.output_type)
+        shard_id = self._active_shard_id(*key)
         self._set_cached_shard_id(key, shard_id)
         return shard_id
 
     def _next_cached_active_shard_id(self, metadata, current_shard_id):
-        key = (metadata.model_name, metadata.output_type)
+        key = _storage_key(metadata)
         shard_id = self._next_active_shard_id(current_shard_id)
         self._set_cached_shard_id(key, shard_id)
         return shard_id
@@ -343,7 +342,7 @@ class Hdf5ShardStore:
         return self._active_shard_id_from(stem, start_index=int(suffix) + 1)
 
     def _cached_shard_size(self, metadata, shard_id):
-        key = (metadata.model_name, metadata.output_type)
+        key = _storage_key(metadata)
         cached = self.active_shard_ids.get(key)
         if cached is not None and cached['shard_id'] == shard_id:
             return cached['byte_size']
@@ -365,8 +364,7 @@ class Hdf5ShardStore:
         metadata = item['metadata']
         dataset_path = self._dataset_path(metadata)
         dataset_name = metadata.echoframe_key.hex()
-        layer = _storage_layer(metadata)
-        group = handle.require_group(f'/layer_{layer:04d}')
+        group = handle.require_group(_dataset_group_path(metadata))
         if dataset_name in group:
             del group[dataset_name]
         dataset = group.create_dataset(dataset_name, data=item['data'])
@@ -375,8 +373,8 @@ class Hdf5ShardStore:
             dataset_path=dataset_path, shape=shape)
 
     def _dataset_path(self, metadata):
-        layer = _storage_layer(metadata)
-        return f'/layer_{layer:04d}/{metadata.echoframe_key.hex()}'
+        group_path = _dataset_group_path(metadata)
+        return f'{group_path}/{metadata.echoframe_key.hex()}'
 
     def _copy_metadata(self, metadata, **updates):
         allowed = {'shard_id', 'dataset_path', 'shape'}
@@ -583,6 +581,20 @@ def _storage_layer(metadata):
     if layer is None:
         return 0
     return layer
+
+
+def _storage_key(metadata):
+    '''Return the shard grouping key for one metadata record.'''
+    is_feature = metadata.output_type == 'acoustic_feature'
+    storage_name = metadata.feature_name if is_feature else metadata.model_name
+    return storage_name, metadata.output_type
+
+
+def _dataset_group_path(metadata):
+    '''Return the HDF5 group for one stored output.'''
+    if metadata.output_type == 'acoustic_feature': return '/items'
+    layer = _storage_layer(metadata)
+    return f'/layer_{layer:04d}'
 
 
 def _validate_frame_mode(frame):

@@ -10,15 +10,18 @@ class EchoframeMetadata:
     '''Metadata for one stored echoframe output.'''
 
     def __init__(self, echoframe_key, store = None, tags=None, model_name=None,
-        phraser_source_id=None):
+        feature_name=None, phraser_source_id=None):
         '''Initialize one metadata record.
         echoframe_key:  canonical binary echoframe key
         store:          store used for model-name resolution
         tags:           optional grouping labels
+        model_name:     registered model name for model outputs
+        feature_name:   acoustic feature name for acoustic features
         '''
         self.echoframe_key = echoframe_key
         self.store = store
         self._model_name = model_name
+        self._feature_name = feature_name
         self.phraser_source_id = phraser_source_id
         self._set_echoframe_key_attributes()
         self.shard_id = None
@@ -31,7 +34,10 @@ class EchoframeMetadata:
     def __repr__(self):
         limit = 80
         tags = ','.join(self.tags) if self.tags else '-'
-        body = f'model={self.model_name}, layer={self.layer}, '
+        if self.output_type == 'acoustic_feature':
+            body = f'feature={self.feature_name}, '
+        else:
+            body = f'model={self.model_name}, layer={self.layer}, '
         body += f'tags={tags}'
         return 'MD(' + truncate_text(body, limit) + ')'
 
@@ -42,6 +48,8 @@ class EchoframeMetadata:
         self._key_fields = key_helper.unpack_echoframe_key(self.echoframe_key)
         self.echoframe_key_attributes = tuple(sorted(self._key_fields))
         self.model_id = self._key_fields.get('model_id', None)
+        self.feature_name_hash = self._key_fields.get(
+            'feature_name_hash', None)
         self.output_type = self._key_fields.get('output_type', None)
         self.phraser_key = self._key_fields.get('phraser_key', None)
         self.collar = self._key_fields.get('collar', None)
@@ -69,12 +77,19 @@ class EchoframeMetadata:
         '''Resolve model_name through the bound store registry if not present.'''
         if self._model_name is not None:
             return self._model_name
+        if self.model_id is None:
+            return None
         if self.store is None:
             raise ValueError('store is not attached to metadata')
         if self.store.model_registry is None:
             raise ValueError('store does not have a registry')
         return _model_name_from_registry(self.store.model_registry,
             self.model_id)
+
+    @property
+    def feature_name(self):
+        '''Return the acoustic feature name when this is a feature record.'''
+        return self._feature_name
 
     @property
     def phraser_object(self):
@@ -98,6 +113,7 @@ class EchoframeMetadata:
         '''Serialize one metadata record to a JSON-friendly dictionary.'''
         return {
             'model_name': self.model_name,
+            'feature_name': self.feature_name,
             'phraser_source_id': self.phraser_source_id,
             'shard_id': self.shard_id,
             'dataset_path': self.dataset_path,
@@ -115,6 +131,7 @@ class EchoframeMetadata:
             echoframe_key=echoframe_key,
             store=store,
             model_name=data.pop('model_name', None),
+            feature_name=data.pop('feature_name', None),
             phraser_source_id=data.pop('phraser_source_id', None),
             tags=data.pop('tags', None),
             shard_id=data.pop('shard_id', None),
@@ -139,6 +156,7 @@ class EchoframeMetadata:
             echoframe_key=self.echoframe_key,
             store=self.store,
             model_name=updates.pop('model_name', self._model_name),
+            feature_name=updates.pop('feature_name', self._feature_name),
             phraser_source_id=updates.pop('phraser_source_id',
                 self.phraser_source_id),
             tags=updates.pop('tags', self.tags),
@@ -154,10 +172,11 @@ class EchoframeMetadata:
 
     @classmethod
     def _from_state(cls, echoframe_key, store, model_name=None,
-        phraser_source_id=None, tags=None, shard_id=None, dataset_path=None,
-        shape=None, created_at=None):
+        feature_name=None, phraser_source_id=None, tags=None, shard_id=None,
+        dataset_path=None, shape=None, created_at=None):
         metadata = cls(echoframe_key=echoframe_key, store=store, tags=tags,
-            model_name=model_name, phraser_source_id=phraser_source_id)
+            model_name=model_name, feature_name=feature_name,
+            phraser_source_id=phraser_source_id)
         metadata.shard_id = shard_id
         metadata.dataset_path = dataset_path
         metadata.shape = shape
@@ -167,10 +186,26 @@ class EchoframeMetadata:
 
     def _validate_key_fields(self):
         _validate_output_type(self.output_type)
+        self._validate_feature_fields()
         if self.collar is not None and self.collar < 0:
             raise ValueError('collar must be >= 0')
         if self.layer is not None and self.layer < 0:
             raise ValueError('layer must be >= 0')
+
+    def _validate_feature_fields(self):
+        if self.output_type != 'acoustic_feature':
+            if self.feature_name is not None:
+                message = 'feature_name is only valid for acoustic_feature'
+                raise ValueError(message)
+            return
+        if self.model_name is not None:
+            message = 'acoustic_feature must not have a model_name'
+            raise ValueError(message)
+        _validate_feature_name(self.feature_name)
+        expected = key_helper.feature_name_hash(self.feature_name)
+        if self.feature_name_hash != expected:
+            message = 'feature_name does not match echoframe_key'
+            raise ValueError(message)
 
     def _display_dict(self):
         data = self._display_header_dict()
@@ -189,6 +224,7 @@ class EchoframeMetadata:
     def _display_header_dict(self):
         data = {'output_type': self.output_type}
         data['model_name'] = self.model_name
+        data['feature_name'] = self.feature_name
         data['phraser_source_id'] = self.phraser_source_id
         data['phraser_key'] = self.phraser_key
         data['collar'] = self.collar
@@ -199,26 +235,32 @@ class EchoframeMetadata:
 
 
 def filter_metadata(records, model_name=None, output_type=None, layer=None,
-    collar=None, collar_match='exact'):
+    collar=None, collar_match='exact', feature_name=None):
     '''Filter metadata records by common echoframe fields.
     records:       metadata iterable
     model_name:    optional model filter
     output_type:   optional output type filter
     layer:         optional layer filter
     collar:        optional collar filter
-    collar_match:         exact, min, max, or nearest
+    collar_match:  exact, min, max, or nearest
+    feature_name:  optional acoustic feature filter
     '''
     items = [x for x in records if x is not None]
     if model_name is not None:
         items = [record for record in items if record.model_name == model_name]
     if output_type is not None:
         items = [record for record in items if record.output_type == output_type]
+    if feature_name is not None:
+        matches = []
+        for record in items:
+            if record.feature_name == feature_name: matches.append(record)
+        items = matches
     if layer is not None:
         items = [record for record in items if record.layer == layer]
     if not items: return []
         
     items.sort(key=lambda record: (_sort_collar(record), record.output_type,
-        _sort_layer(record), _sort_model_name(record)))
+        _sort_layer(record), _sort_storage_name(record)))
     if collar is None: return items
         
     if collar_match not in VALID_MATCHES:
@@ -277,6 +319,12 @@ def _validate_output_type(output_type):
         raise ValueError(message)
 
 
+def _validate_feature_name(feature_name):
+    valid = isinstance(feature_name, str) and bool(feature_name.strip())
+    if valid: return
+    raise ValueError('feature_name must be a non-empty string')
+
+
 def _display_storage_dict(metadata):
     data = {}
     if metadata.shard_id is not None:
@@ -297,12 +345,14 @@ SEGMENT_OUTPUT_TYPES = {
     'attention',
     'codebook_indices',
     'codebook_matrix',
+    'acoustic_feature',
 }
 
 OUTPUT_TYPES = SEGMENT_OUTPUT_TYPES
 
 STABLE_METADATA_FIELDS = (
     'model_name',
+    'feature_name',
     'output_type',
     'shard_id',
     'dataset_path',
@@ -334,7 +384,7 @@ def _sort_layer(record):
     return record.layer
 
 
-def _sort_model_name(record):
-    if record.model_name is None:
-        return ''
+def _sort_storage_name(record):
+    if record.feature_name is not None: return record.feature_name
+    if record.model_name is None: return ''
     return record.model_name

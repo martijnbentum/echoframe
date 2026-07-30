@@ -5,6 +5,7 @@ import unittest
 
 from echoframe import key_helper
 from echoframe.key_helper import (
+    feature_name_hash,
     model_name_hash,
     tag_hash,
     validate_segment_phraser_key,
@@ -12,11 +13,13 @@ from echoframe.key_helper import (
     pack_attention_key,
     pack_codebook_indices_key,
     pack_codebook_matrix_key,
+    pack_acoustic_feature_key,
     pack_echoframe_key,
     unpack_hidden_state_key,
     unpack_attention_key,
     unpack_codebook_indices_key,
     unpack_codebook_matrix_key,
+    unpack_acoustic_feature_key,
     unpack_echoframe_key,
     output_type_from_echoframe_key,
     make_tag_scan_key,
@@ -27,6 +30,7 @@ from echoframe.key_helper import (
     ATTENTION_KEY_LEN,
     CODEBOOK_INDICES_KEY_LEN,
     CODEBOOK_MATRIX_KEY_LEN,
+    ACOUSTIC_FEATURE_KEY_LEN,
 )
 from echoframe.struct_helper import OUTPUT_TYPE_RANK_MAP
 
@@ -54,6 +58,13 @@ class TestHashing(unittest.TestCase):
             model_name_hash('bert-base-uncased'),
             model_name_hash('wav2vec2-base'),
         )
+
+    def test_feature_name_hash_is_stable_and_distinct(self):
+        self.assertEqual(feature_name_hash('mfcc'),
+            feature_name_hash('mfcc'))
+        self.assertNotEqual(feature_name_hash('mfcc'),
+            feature_name_hash('pitch'))
+        self.assertEqual(len(feature_name_hash('mfcc')), 8)
 
     def test_tag_hash_returns_8_bytes(self):
         result = tag_hash('train')
@@ -173,6 +184,28 @@ class TestPackUnpackCodebookMatrix(unittest.TestCase):
         self.assertEqual(fields['output_type'], 'codebook_matrix')
 
 
+class TestPackUnpackAcousticFeature(unittest.TestCase):
+
+    def setUp(self):
+        self.key = pack_acoustic_feature_key(
+            'mfcc', SAMPLE_PHRASER_KEY)
+
+    def test_pack_returns_correct_length(self):
+        self.assertEqual(len(self.key), ACOUSTIC_FEATURE_KEY_LEN)
+        self.assertEqual(len(self.key), 31)
+
+    def test_unpack_roundtrip(self):
+        fields = unpack_acoustic_feature_key(self.key)
+        self.assertEqual(fields['feature_name_hash'],
+            feature_name_hash('mfcc'))
+        self.assertEqual(fields['output_type'], 'acoustic_feature')
+        self.assertEqual(fields['phraser_key'], SAMPLE_PHRASER_KEY)
+
+    def test_feature_names_produce_distinct_keys(self):
+        pitch = pack_acoustic_feature_key('pitch', SAMPLE_PHRASER_KEY)
+        self.assertNotEqual(self.key, pitch)
+
+
 class TestPackDispatch(unittest.TestCase):
 
     def test_pack_dispatch_matches_specialized_packer(self):
@@ -200,6 +233,10 @@ class TestPackDispatch(unittest.TestCase):
             ('codebook_matrix', {
                 'model_id': MODEL_ID,
             }, pack_codebook_matrix_key(MODEL_ID)),
+            ('acoustic_feature', {
+                'feature_name': 'mfcc',
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }, pack_acoustic_feature_key('mfcc', SAMPLE_PHRASER_KEY)),
         ]
         for output_type, kwargs, expected in cases:
             with self.subTest(output_type=output_type):
@@ -230,6 +267,16 @@ class TestPackDispatch(unittest.TestCase):
                 'model_id': MODEL_ID,
                 'collar': COLLAR,
             }),
+            ('acoustic_feature', {
+                'model_id': MODEL_ID,
+                'feature_name': 'mfcc',
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }),
+            ('acoustic_feature', {
+                'feature_name': 'mfcc',
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'layer': LAYER,
+            }),
         ]
         for output_type, kwargs in cases:
             with self.subTest(output_type=output_type, kwargs=kwargs):
@@ -258,6 +305,8 @@ class TestPackRequiredFields(unittest.TestCase):
             (pack_codebook_indices_key,
                 (MODEL_ID, SAMPLE_PHRASER_KEY, None), 'collar'),
             (pack_codebook_matrix_key, (None,), 'model_id'),
+            (pack_acoustic_feature_key,
+                (None, SAMPLE_PHRASER_KEY), 'feature_name'),
         ]
         for pack, args, missing_field in cases:
             with self.subTest(pack=pack.__name__, missing=missing_field):
@@ -286,6 +335,9 @@ class TestPackRequiredFields(unittest.TestCase):
                 'phraser_key': SAMPLE_PHRASER_KEY,
             }, 'collar'),
             ('codebook_matrix', {'model_id': None}, 'model_id'),
+            ('acoustic_feature', {
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }, 'feature_name'),
         ]
         for output_type, kwargs, missing_field in cases:
             with self.subTest(output_type=output_type,
@@ -305,6 +357,8 @@ class TestUnpackDispatch(unittest.TestCase):
             ('codebook_indices', pack_codebook_indices_key(
                 MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
+            ('acoustic_feature', pack_acoustic_feature_key(
+                'mfcc', SAMPLE_PHRASER_KEY)),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):
@@ -323,6 +377,8 @@ class TestOutputTypeInference(unittest.TestCase):
             ('codebook_indices', pack_codebook_indices_key(
                 MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
+            ('acoustic_feature', pack_acoustic_feature_key(
+                'mfcc', SAMPLE_PHRASER_KEY)),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):

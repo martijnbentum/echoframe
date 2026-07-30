@@ -30,6 +30,19 @@ class FakeSegment:
         return self._mfcc
 
 
+class ComputedMfccSegment:
+    '''Segment whose MFCC property has no private cache attribute.'''
+    def __init__(self, key, matrix):
+        self.key = key
+        self.matrix = np.asarray(matrix)
+        self.mfcc_load_count = 0
+
+    @property
+    def mfcc(self):
+        self.mfcc_load_count += 1
+        return self.matrix
+
+
 class TestAcousticFeatureKeys(unittest.TestCase):
     def test_store_builds_key_without_registered_model(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -161,6 +174,21 @@ class TestMfccStorage(unittest.TestCase):
             [1, 1])
         np.testing.assert_array_equal(payloads[0], np.ones((2, 3)))
         np.testing.assert_array_equal(payloads[1], np.full((2, 3), 2))
+
+    def test_batch_does_not_require_private_mfcc_cache_state(self):
+        segment = ComputedMfccSegment(pk('segment-1'), np.ones((2, 3)))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            with mock.patch.object(store.phraser_registry,
+                    'segments_to_source_id', return_value='cgn-main'), \
+                    mock.patch('echoframe.acoustic_features.progressbar',
+                        side_effect=lambda values: values):
+                store_mfcc_batch([segment], store, verbose=False)
+            payload = store.phraser_key_to_acoustic_feature(
+                segment.key, 'mfcc')
+
+        self.assertEqual(segment.mfcc_load_count, 1)
+        np.testing.assert_array_equal(payload, np.ones((2, 3)))
 
     def test_item_requires_matrix_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:

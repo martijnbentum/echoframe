@@ -1,13 +1,9 @@
 '''Store precomputed frame-aligned acoustic features (mfcc, pitch, ...).'''
 
-import warnings
-
 import numpy as np
 from progressbar import progressbar
 
 from .metadata import EchoframeMetadata
-
-_UNCACHED_MFCC_WARNING_EMITTED = False
 
 
 def store_mfcc(segment, store, tags=None, verbose=False):
@@ -53,7 +49,6 @@ def store_mfcc_batch(segments, store, tags=None, verbose=True):
     missing_segments = []
     for segment, key in missing:
         missing_segments.append(segment)
-    _warn_if_uncached_mfcc(missing_segments)
     source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     items = []
     for segment, key in progressbar(missing):
@@ -91,23 +86,6 @@ def make_acoustic_feature_item(echoframe_key, feature_name, feature_matrix,
 def _mfcc_echoframe_key(segment, store):
     return store.make_echoframe_key('acoustic_feature',
         feature_name='mfcc', phraser_key=segment.key)
-
-
-def _warn_if_uncached_mfcc(segments):
-    global _UNCACHED_MFCC_WARNING_EMITTED
-    if _UNCACHED_MFCC_WARNING_EMITTED: return
-    if not _any_uncached(segments): return
-    message = 'some segments have no cached mfcc; computing them one at a '
-    message += 'time here. For faster batches, call '
-    message += 'phraser.audio.batch.mfcc_batch(segments) first.'
-    warnings.warn(message, UserWarning, stacklevel=3)
-    _UNCACHED_MFCC_WARNING_EMITTED = True
-
-
-def _any_uncached(segments):
-    for segment in segments:
-        if not hasattr(segment, '_mfcc'): return True
-    return False
 
 
 def _store_acoustic_feature(segment, feature_name, feature_matrix, store,

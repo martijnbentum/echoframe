@@ -530,20 +530,24 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
                 'numpify_output': True, 'batch_size': 2})
 
-    def test_batch_uses_writer_and_queue_size(self):
+    def test_batch_groups_writer_items_and_uses_queue_size(self):
         tmpdir, store = _make_store()
         RecordingBatchWriter.instances = []
         with tmpdir:
             segment_a = _make_segment(key=_pk('aabb'))
             segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
                 end_seconds=1.4)
+            segment_c = _make_segment(key=_pk('eeff'), start_seconds=1.5,
+                end_seconds=1.8)
             outputs = [
                 types.SimpleNamespace(name='output-a'),
                 types.SimpleNamespace(name='output-b'),
+                types.SimpleNamespace(name='output-c'),
             ]
             save_items = [
-                [{'item': 'a'}],
+                [{'item': 'a-1'}, {'item': 'a-3'}],
                 [{'item': 'b'}],
+                [{'item': 'c'}],
             ]
             with mock.patch.object(store, 'load_model',
                 return_value='model'):
@@ -557,18 +561,60 @@ class TestComputeEmbeddings(unittest.TestCase):
                             'StoreWriter', RecordingBatchWriter):
                             with mock.patch('builtins.print'):
                                 compute_embeddings_batch(
-                                    [segment_a, segment_b], 3, 'wav2vec2',
-                                    store=store, store_queue_size=9)
+                                    [segment_a, segment_b, segment_c], 3,
+                                    'wav2vec2', store=store, batch_size=2,
+                                    store_queue_size=9)
 
             writer = RecordingBatchWriter.instances[0]
             self.assertEqual(writer.store, store)
             self.assertEqual(writer.max_queue_size, 9)
-            self.assertEqual(writer.submitted, save_items)
+            self.assertEqual(writer.submitted, [
+                save_items[0] + save_items[1],
+                save_items[2],
+            ])
             self.assertEqual(make_items.call_args_list, [
                 mock.call(outputs[0], segment_a, 500, [3], 'wav2vec2',
                     store, None, phraser_source_id='cgn-main'),
                 mock.call(outputs[1], segment_b, 500, [3], 'wav2vec2',
                     store, None, phraser_source_id='cgn-main'),
+                mock.call(outputs[2], segment_c, 500, [3], 'wav2vec2',
+                    store, None, phraser_source_id='cgn-main'),
+            ])
+
+    def test_batch_defaults_to_32_segment_write_chunks(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk(f'{index:04x}'))
+                for index in range(33)
+            ]
+            outputs = [
+                types.SimpleNamespace(index=index)
+                for index in range(33)
+            ]
+            save_items = [
+                [{'item': index}]
+                for index in range(33)
+            ]
+            with mock.patch.object(store, 'load_model',
+                return_value='model'):
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True,
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_segment_features,
+                        'make_embedding_items', side_effect=save_items):
+                        with mock.patch.object(batch_segment_features,
+                            'StoreWriter', RecordingBatchWriter):
+                            with mock.patch('builtins.print'):
+                                compute_embeddings_batch(segments, 3,
+                                    'wav2vec2', store=store)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.submitted, [
+                [item for segment_items in save_items[:32]
+                    for item in segment_items],
+                save_items[32],
             ])
 
     def test_batch_mixed_cache_only_stores_missing_layers(self):

@@ -355,6 +355,12 @@ metadatas = store.load_many_metadata([echoframe_key])
 payloads = store.load_many([echoframe_key], keep_missing=True)
 ```
 
+`compute_embeddings_batch(...)` submits prepared results to a background
+writer as one `save_many()` chunk per configured batch. The configured
+`batch_size` is also the storage group size; when it is `None`, storage writes
+use groups of 32 segment results. `store_queue_size` controls how many complete
+write groups can wait while inference continues.
+
 Run maintenance checks:
 
 ```python

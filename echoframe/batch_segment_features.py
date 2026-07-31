@@ -9,6 +9,8 @@ from .utils_segment_features import (
     normalise_layers, segment_times,
 )
 
+_DEFAULT_WRITE_SEGMENT_COUNT = 32
+
 
 def compute_embeddings_batch(segments, layers, model_name, store,
     collar=500, gpu=False, tags=None,
@@ -21,9 +23,12 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     collar:               context window in milliseconds
     gpu:                  whether to run vectorization on GPU
     tags:                 optional tags stored on newly written metadata
-    batch_size:           optional item count per batch
+    batch_size:           optional segment count per inference batch; storage
+                          writes use the same count
     store_queue_size:     queued save chunks before compute waits
     verbose:              whether to print batch progress
+
+    Storage writes group 32 segment results when batch_size is None.
     '''
     if store is None: raise ValueError('store must be an echoframe Store')
     layers_list = normalise_layers(layers)
@@ -36,17 +41,32 @@ def compute_embeddings_batch(segments, layers, model_name, store,
         missing_segments.append(item.segment)
     source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     model = store.load_model(model_name, gpu=gpu)
+    write_segment_count = _DEFAULT_WRITE_SEGMENT_COUNT
+    if batch_size is not None: write_segment_count = int(batch_size)
+    if write_segment_count <= 0:
+        raise ValueError('batch_size must be greater than zero')
     outputs = to_vector.iter_filename_batch_to_vector(missing.audio_filenames,
         starts=missing.starts, ends=missing.ends, model=model, gpu=gpu,
         numpify_output=True, batch_size=batch_size)
     output_count = 0
+    pending_items = []
+    pending_segments = 0
     with StoreWriter(store, max_queue_size=store_queue_size) as writer:
-        for output, item in zip(outputs, missing.missing, strict=True):
-            save_items = make_embedding_items(output, item.segment, collar,
-                item.missing_layers, model_name, store, tags,
-                phraser_source_id=source_id)
-            writer.submit(save_items)
-            output_count += 1
+        try:
+            for output, item in zip(outputs, missing.missing, strict=True):
+                save_items = make_embedding_items(output, item.segment, collar,
+                    item.missing_layers, model_name, store, tags,
+                    phraser_source_id=source_id)
+                pending_items.extend(save_items)
+                pending_segments += 1
+                output_count += 1
+                if pending_segments == write_segment_count:
+                    chunk = pending_items
+                    pending_items = []
+                    pending_segments = 0
+                    writer.submit(chunk)
+        finally:
+            if pending_items: writer.submit(pending_items)
     if verbose: print(f'embeddings computed for {output_count} segments')
 
 

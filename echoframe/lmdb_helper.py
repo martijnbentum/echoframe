@@ -17,6 +17,12 @@ DB_NAMES = {
 _ENV_CACHE = {}
 
 
+def env_is_open(path):
+    '''Return whether this process has a cached environment for path.'''
+    resolved_root = Path(path).resolve()
+    return resolved_root in _ENV_CACHE
+
+
 def open_env(path, map_size):
     import lmdb
 

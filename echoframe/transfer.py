@@ -1,14 +1,51 @@
-'''Copy or move model-selected hidden states between stores.'''
+'''Transfer model outputs or relocate complete stores.'''
 
 from pathlib import Path
 
+from . import lmdb_helper
 from .metadata import EchoframeMetadata
+from .store import Store
 
 
 __all__ = [
     'copy_hidden_states_for_model',
     'move_hidden_states_for_model',
+    'move_store',
 ]
+
+
+def move_store(source_path, destination_path):
+    '''Move a closed store directory to a new location.
+    source_path:       existing Echoframe store directory
+    destination_path:  exact non-existing destination directory
+
+    The move is one atomic directory rename and therefore requires source and
+    destination to be on the same filesystem. Callers must ensure no other
+    process has the source store open.
+    '''
+    source, destination = _validate_store_move_paths(source_path,
+        destination_path)
+    index_path = source / 'index.lmdb'
+    if lmdb_helper.env_is_open(index_path):
+        raise ValueError('source store is open in the current process')
+
+    _verify_store_for_move(source, 'source')
+    file_count, byte_count = _store_file_totals(source)
+    source.rename(destination)
+
+    try:
+        integrity = _verify_store_for_move(destination, 'destination')
+    except Exception as exc:
+        _rollback_store_move(source, destination, exc)
+        raise
+
+    return {
+        'source_path': str(source),
+        'destination_path': str(destination),
+        'file_count': file_count,
+        'byte_count': byte_count,
+        'integrity': integrity,
+    }
 
 
 def copy_hidden_states_for_model(source_store, destination_store, model_name,
@@ -234,6 +271,70 @@ def _validate_distinct_stores(source_store, destination_store):
 
 def _resolved_path(path):
     return Path(path).expanduser().resolve()
+
+
+def _validate_store_move_paths(source_path, destination_path):
+    source_input = Path(source_path).expanduser()
+    destination_input = Path(destination_path).expanduser()
+    if not source_input.exists():
+        raise ValueError(f'source store does not exist: {source_input}')
+    if not source_input.is_dir():
+        raise ValueError(f'source store is not a directory: {source_input}')
+    if source_input.is_symlink():
+        raise ValueError('source store path must not be a symbolic link')
+    if destination_input.exists() or destination_input.is_symlink():
+        message = f'destination path already exists: {destination_input}'
+        raise ValueError(message)
+
+    source = source_input.resolve()
+    destination = destination_input.resolve()
+    if source == destination or source in destination.parents:
+        raise ValueError('destination path must not be inside source store')
+    if not destination.parent.is_dir():
+        message = f'destination parent does not exist: {destination.parent}'
+        raise ValueError(message)
+    _validate_store_directory(source)
+    return source, destination
+
+
+def _validate_store_directory(root):
+    index_path = root / 'index.lmdb'
+    data_path = index_path / 'data.mdb'
+    shards_path = root / 'shards'
+    if not index_path.is_dir() or not data_path.is_file():
+        raise ValueError(f'source is not an Echoframe store: {root}')
+    if not shards_path.is_dir():
+        raise ValueError(f'source is not an Echoframe store: {root}')
+
+
+def _verify_store_for_move(root, label):
+    store = Store(root)
+    try:
+        store.config.read()
+        integrity = store.verify_integrity()
+    finally:
+        store.close()
+    if not integrity.get('ok', False):
+        broken = integrity.get('broken_metadata_references', [])
+        message = f'{label} store integrity verification failed'
+        if broken: message += f': {broken!r}'
+        raise RuntimeError(message)
+    return integrity
+
+
+def _store_file_totals(root):
+    file_paths = [path for path in root.rglob('*') if path.is_file()]
+    byte_count = sum(path.stat().st_size for path in file_paths)
+    return len(file_paths), byte_count
+
+
+def _rollback_store_move(source, destination, verification_error):
+    try:
+        destination.rename(source)
+    except Exception as rollback_error:
+        message = 'destination verification failed and the store could not '
+        message += f'be restored to {source}: {rollback_error}'
+        raise RuntimeError(message) from verification_error
 
 
 def _paths_match(first, second):

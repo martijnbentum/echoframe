@@ -396,6 +396,35 @@ phraser store objects are not copied. A move keeps the source model and
 phraser registrations, but deletes the complete source hidden-state shard
 files directly without compaction.
 
+### Relocate a complete store
+
+Relocate a complete store on the same filesystem:
+
+```python
+from echoframe import Store
+from echoframe.transfer import move_store
+
+store = Store('cache')
+# Finish work and close every Store instance using this path.
+store.close()
+
+result = move_store('cache', '/data/echoframe/cache')
+moved_store = Store(result['destination_path'])
+# Use the moved store, then close it normally.
+moved_store.close()
+```
+
+`move_store(...)` relocates the complete directory with an atomic filesystem
+rename. The exact destination path must not exist, and all processes using the
+source must close it first. Its parent directory must already exist.
+Cross-filesystem moves are not supported.
+
+Stored shard and dataset references remain valid because they are relative to
+the store root. Registered model paths and phraser store paths are preserved
+unchanged because they refer to external resources. The function verifies
+integrity before and after relocation and returns file, byte, and integrity
+details.
+
 ### Overwrites and garbage
 
 Re-saving an existing echoframe key writes the new payload to the current

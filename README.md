@@ -364,6 +364,38 @@ journal = store.compaction_journal()
 stats = store.shard_stats()
 ```
 
+### Transfer hidden states by model
+
+Copy every hidden-state payload for one model into a new empty store:
+
+```python
+from echoframe import Store
+from echoframe.transfer import copy_hidden_states_for_model
+
+source = Store('full-cache')
+destination = Store('wav2vec2-cache')
+
+result = copy_hidden_states_for_model(
+    source,
+    destination,
+    model_name='wav2vec2',
+)
+print(result['copied_count'])
+```
+
+Use `move_hidden_states_for_model(...)` with the same arguments to delete the
+copied entries from the source after the destination has been verified. The
+selection is always all `hidden_state` records for `model_name`; other models
+and output types remain untouched.
+
+The destination must have no stored entries, registered models, registered
+phraser sources, or shard files. The transfer registers the selected model
+with a destination-local model ID, rebuilds its echoframe keys, and copies
+only the phraser source paths referenced by the selected records. Live
+phraser store objects are not copied. A move keeps the source model and
+phraser registrations, but deletes the complete source hidden-state shard
+files directly without compaction.
+
 ### Overwrites and garbage
 
 Re-saving an existing echoframe key writes the new payload to the current

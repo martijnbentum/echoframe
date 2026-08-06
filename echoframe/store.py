@@ -5,6 +5,7 @@ from pathlib import Path
 from progressbar import progressbar
 
 from . import compaction
+from .cnn_features import CNNFeature, CNNFeatures
 from .codebooks import Codevector, Codevectors
 from .embeddings import Embedding, Embeddings
 from . import model_loader
@@ -422,6 +423,22 @@ class Store:
         ]
         return self.load_many(echoframe_keys, keep_missing=True)
 
+    def phraser_key_to_cnn_feature(self, phraser_key, model_name, collar=500):
+        '''Load one CNN feature-extractor payload from a phraser key.'''
+        echoframe_key = self.make_echoframe_key('cnn', model_name=model_name,
+            phraser_key=phraser_key, collar=collar)
+        return self.load_cnn_feature(echoframe_key)
+
+    def phraser_keys_to_cnn_features(self, phraser_keys, model_name,
+        collar=500):
+        '''Load CNN feature-extractor payloads from multiple phraser keys.'''
+        echoframe_keys = [
+            self.make_echoframe_key('cnn', model_name=model_name,
+                phraser_key=phraser_key, collar=collar)
+            for phraser_key in phraser_keys
+        ]
+        return self.load_cnn_features(echoframe_keys)
+
     def load_embedding(self, echoframe_key):
         '''Load one typed Embedding object. Unlike load, this raises
         ValueError when the key has no stored metadata or payload.
@@ -451,6 +468,20 @@ class Store:
         if not isinstance(echoframe_keys, (list, tuple)):
             raise ValueError('echoframe_keys must be a list or tuple')
         return Codevectors.from_echoframe_keys(self, echoframe_keys)
+
+    def load_cnn_feature(self, echoframe_key):
+        '''Load one typed CNNFeature object.
+        echoframe_key:  canonical echoframe identifier
+        '''
+        return CNNFeature(echoframe_key, self)
+
+    def load_cnn_features(self, echoframe_keys):
+        '''Load typed CNNFeatures for multiple echoframe keys.
+        echoframe_keys:  canonical echoframe identifiers
+        '''
+        if not isinstance(echoframe_keys, (list, tuple)):
+            raise ValueError('echoframe_keys must be a list or tuple')
+        return CNNFeatures.from_echoframe_keys(self, echoframe_keys)
 
     def delete_phraser_key(self, phraser_key, model_name=None,
         output_type=None, layer=None, collar=None, collar_match='exact',

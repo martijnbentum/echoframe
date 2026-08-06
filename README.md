@@ -2,9 +2,9 @@
 
 `echoframe` is a small Python package for storing intermediate model artifacts
 and acoustic features on disk. The intended scope is hidden states, attention
-outputs, derived artifacts such as codebooks, and frame-aligned features such
-as MFCCs, with support for both temporary caches and long-lived experiment
-stores.
+outputs, derived artifacts such as codebooks, CNN feature-extractor output,
+and frame-aligned features such as MFCCs, with support for both temporary
+caches and long-lived experiment stores.
 
 It treats `phraser` as the source of truth for object metadata and stores only
 metadata about model outputs plus pointers to payloads.
@@ -69,6 +69,19 @@ For acoustic features, the public helpers are:
 Acoustic features use `output_type='acoustic_feature'` and a `feature_name`
 such as `'mfcc'`. They do not require a registered model, model name, layer,
 or collar.
+
+For CNN feature-extractor output (the convolutional stage of a Wav2Vec2-style
+model, before its transformer layers), `Store` exposes the same typed-loader
+shape as hidden states:
+
+- `store.load_cnn_feature(echoframe_key)`
+- `store.load_cnn_features(echoframe_keys)`
+- `store.phraser_key_to_cnn_feature(phraser_key, model_name, collar=500)`
+- `store.phraser_keys_to_cnn_features(phraser_keys, model_name, collar=500)`
+
+CNN features use `output_type='cnn'` and, like `codebook_indices`, have no
+`layer` — a CNN feature is one fixed conv-stage payload per segment, not one
+per transformer layer.
 
 This is an intentional API shift from the earlier loader design. The old
 multi-layer `load_embeddings(...)`, `load_many_embeddings(...)`,
@@ -239,6 +252,38 @@ embeddings = store.phraser_keys_to_embeddings(
     collar=150,
 )
 ```
+
+Store and load a CNN feature-extractor payload the same way, using
+`output_type='cnn'` (no `layer`):
+
+```python
+cnn_key = store.make_echoframe_key(
+    'cnn',
+    model_name='wav2vec2',
+    phraser_key=phraser_key,
+    collar=150,
+)
+metadata = EchoframeMetadata(cnn_key, store=store, model_name='wav2vec2')
+store.save(cnn_key, metadata, [[0.1, 0.2], [0.3, 0.4]])
+
+cnn_feature = store.load_cnn_feature(cnn_key)
+print(cnn_feature.shape)
+print(cnn_feature.data)
+
+cnn_feature = store.phraser_key_to_cnn_feature(
+    phraser_key,
+    model_name='wav2vec2',
+    collar=150,
+)
+```
+
+`CNNFeature` supports the same frame-slicing API as `Embedding` (`to_frames`,
+`slice_time`, `slice_segment`, `middle_frame_time`, `aggregate_time`, ...),
+since CNN feature-extractor output is frame-aligned the same way hidden
+states are — just without a `layer`. `CNNFeature.sub_feature(...)` returns a
+`SlicedCNNFeature` (the `CNNFeature` analogue of `SlicedEmbedding`), and
+`CNNFeature.sub_features(object_class, ...)` slices to every descendant of a
+class at once, exactly like `Embedding.sub_embeddings(...)`.
 
 Bind a live phraser store so phraser segments can reach their stored embeddings
 directly. `attach_phraser_store` registers the source and sets a back-reference

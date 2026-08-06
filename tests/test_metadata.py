@@ -56,6 +56,8 @@ class TestLoadEmbedding(unittest.TestCase):
             'attention': dict(layer=4, data=np.zeros((1, 2, 2)).astype(float)),
             'codebook_indices': dict(layer=None,
                 data=np.arange(4).reshape(2, 2).astype('int64')),
+            'cnn': dict(layer=None,
+                data=np.arange(6).reshape(2, 3).astype(float)),
         }
         for output_type, kwargs in cases.items():
             with self.subTest(output_type=output_type):
@@ -70,6 +72,22 @@ class TestLoadEmbedding(unittest.TestCase):
                         f'Embedding, got {output_type}')
                     with self.assertRaisesRegex(ValueError, message):
                         metadata.load_embedding()
+
+
+class TestCnnMetadataRoundtrip(unittest.TestCase):
+    def test_unpacks_expected_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            data = np.arange(6).reshape(2, 3).astype(float)
+            item = _put(store, phraser_key='phrase-1', collar=500,
+                model_name='wav2vec2', output_type='cnn', layer=None,
+                data=data)
+            metadata = store.load_metadata(item.echoframe_key)
+
+            self.assertEqual(metadata.output_type, 'cnn')
+            self.assertEqual(metadata.model_name, 'wav2vec2')
+            self.assertIsNone(metadata.layer)
+            self.assertEqual(metadata.collar, 500)
 
 
 class TestCopy(unittest.TestCase):

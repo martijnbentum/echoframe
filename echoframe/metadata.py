@@ -346,6 +346,7 @@ SEGMENT_OUTPUT_TYPES = {
     'codebook_indices',
     'codebook_matrix',
     'acoustic_feature',
+    'cnn',
 }
 
 OUTPUT_TYPES = SEGMENT_OUTPUT_TYPES

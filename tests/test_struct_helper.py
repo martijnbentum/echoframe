@@ -21,7 +21,7 @@ class TestRankMaps(unittest.TestCase):
     def test_output_type_rank_map_contains_all_types(self):
         expected = {
             'hidden_state', 'attention', 'codebook_indices',
-            'codebook_matrix', 'acoustic_feature',
+            'codebook_matrix', 'acoustic_feature', 'cnn',
         }
         self.assertEqual(set(OUTPUT_TYPE_RANK_MAP.keys()), expected)
 
@@ -43,6 +43,7 @@ class TestKeyFmt(unittest.TestCase):
             'codebook_indices': 29,
             'codebook_matrix': 5,
             'acoustic_feature': 31,
+            'cnn': 29,
         }
         for output_type, expected_size in cases.items():
             with self.subTest(output_type=output_type):
@@ -53,6 +54,10 @@ class TestKeyFmt(unittest.TestCase):
     def test_attention_fmt_matches_hidden_state(self):
         self.assertEqual(make_key_fmt('attention'),
             make_key_fmt('hidden_state'))
+
+    def test_cnn_fmt_matches_codebook_indices(self):
+        self.assertEqual(make_key_fmt('cnn'),
+            make_key_fmt('codebook_indices'))
 
     def test_unknown_output_type_raises(self):
         with self.assertRaises(ValueError):
@@ -68,6 +73,7 @@ class TestKeyLen(unittest.TestCase):
             'codebook_indices': 29,
             'codebook_matrix': 5,
             'acoustic_feature': 31,
+            'cnn': 29,
         }
         for output_type, expected_length in cases.items():
             with self.subTest(output_type=output_type):

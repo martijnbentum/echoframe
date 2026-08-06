@@ -220,7 +220,7 @@ def make_key(store: Store, *, phraser_key, collar, model_name, output_type,
             'layer': layer,
             'collar': collar,
         })
-    elif output_type == 'codebook_indices':
+    elif output_type in {'codebook_indices', 'cnn'}:
         kwargs.update({
             'phraser_key': phraser_key,
             'collar': collar,

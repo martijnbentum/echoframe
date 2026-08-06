@@ -14,12 +14,14 @@ from echoframe.key_helper import (
     pack_codebook_indices_key,
     pack_codebook_matrix_key,
     pack_acoustic_feature_key,
+    pack_cnn_key,
     pack_echoframe_key,
     unpack_hidden_state_key,
     unpack_attention_key,
     unpack_codebook_indices_key,
     unpack_codebook_matrix_key,
     unpack_acoustic_feature_key,
+    unpack_cnn_key,
     unpack_echoframe_key,
     output_type_from_echoframe_key,
     make_tag_scan_key,
@@ -31,6 +33,7 @@ from echoframe.key_helper import (
     CODEBOOK_INDICES_KEY_LEN,
     CODEBOOK_MATRIX_KEY_LEN,
     ACOUSTIC_FEATURE_KEY_LEN,
+    CNN_KEY_LEN,
 )
 from echoframe.struct_helper import OUTPUT_TYPE_RANK_MAP
 
@@ -169,6 +172,29 @@ class TestPackUnpackCodebookIndices(unittest.TestCase):
         self.assertEqual(fields['collar'], COLLAR)
 
 
+class TestPackUnpackCnn(unittest.TestCase):
+
+    def setUp(self):
+        self.key = pack_cnn_key(
+            MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)
+
+    def test_pack_returns_correct_length(self):
+        self.assertEqual(len(self.key), CNN_KEY_LEN)
+        self.assertEqual(len(self.key), 29)
+
+    def test_unpack_roundtrip(self):
+        fields = unpack_cnn_key(self.key)
+        self.assertEqual(fields['model_id'], MODEL_ID)
+        self.assertEqual(fields['output_type'], 'cnn')
+        self.assertEqual(fields['phraser_key'], SAMPLE_PHRASER_KEY)
+        self.assertEqual(fields['collar'], COLLAR)
+
+    def test_cnn_and_codebook_indices_differ_by_output_type_id(self):
+        ci_key = pack_codebook_indices_key(
+            MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)
+        self.assertNotEqual(ci_key, self.key)
+
+
 class TestPackUnpackCodebookMatrix(unittest.TestCase):
 
     def setUp(self):
@@ -237,6 +263,12 @@ class TestPackDispatch(unittest.TestCase):
                 'feature_name': 'mfcc',
                 'phraser_key': SAMPLE_PHRASER_KEY,
             }, pack_acoustic_feature_key('mfcc', SAMPLE_PHRASER_KEY)),
+            ('cnn', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+            }, pack_cnn_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
         ]
         for output_type, kwargs, expected in cases:
             with self.subTest(output_type=output_type):
@@ -277,6 +309,12 @@ class TestPackDispatch(unittest.TestCase):
                 'phraser_key': SAMPLE_PHRASER_KEY,
                 'layer': LAYER,
             }),
+            ('cnn', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+                'collar': COLLAR,
+                'layer': LAYER,
+            }),
         ]
         for output_type, kwargs in cases:
             with self.subTest(output_type=output_type, kwargs=kwargs):
@@ -307,6 +345,10 @@ class TestPackRequiredFields(unittest.TestCase):
             (pack_codebook_matrix_key, (None,), 'model_id'),
             (pack_acoustic_feature_key,
                 (None, SAMPLE_PHRASER_KEY), 'feature_name'),
+            (pack_cnn_key,
+                (None, SAMPLE_PHRASER_KEY, COLLAR), 'model_id'),
+            (pack_cnn_key,
+                (MODEL_ID, SAMPLE_PHRASER_KEY, None), 'collar'),
         ]
         for pack, args, missing_field in cases:
             with self.subTest(pack=pack.__name__, missing=missing_field):
@@ -338,6 +380,10 @@ class TestPackRequiredFields(unittest.TestCase):
             ('acoustic_feature', {
                 'phraser_key': SAMPLE_PHRASER_KEY,
             }, 'feature_name'),
+            ('cnn', {
+                'model_id': MODEL_ID,
+                'phraser_key': SAMPLE_PHRASER_KEY,
+            }, 'collar'),
         ]
         for output_type, kwargs, missing_field in cases:
             with self.subTest(output_type=output_type,
@@ -359,6 +405,8 @@ class TestUnpackDispatch(unittest.TestCase):
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
             ('acoustic_feature', pack_acoustic_feature_key(
                 'mfcc', SAMPLE_PHRASER_KEY)),
+            ('cnn', pack_cnn_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):
@@ -379,6 +427,8 @@ class TestOutputTypeInference(unittest.TestCase):
             ('codebook_matrix', pack_codebook_matrix_key(MODEL_ID)),
             ('acoustic_feature', pack_acoustic_feature_key(
                 'mfcc', SAMPLE_PHRASER_KEY)),
+            ('cnn', pack_cnn_key(
+                MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)),
         ]
         for output_type, key in cases:
             with self.subTest(output_type=output_type):
@@ -388,6 +438,15 @@ class TestOutputTypeInference(unittest.TestCase):
     def test_output_type_from_unknown_length_raises(self):
         with self.assertRaises(ValueError):
             output_type_from_echoframe_key(b'bad')
+
+    def test_29_byte_keys_disambiguate_codebook_indices_and_cnn(self):
+        ci_key = pack_codebook_indices_key(
+            MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)
+        cnn_key = pack_cnn_key(MODEL_ID, SAMPLE_PHRASER_KEY, COLLAR)
+        self.assertEqual(len(ci_key), len(cnn_key))
+        self.assertEqual(output_type_from_echoframe_key(ci_key),
+            'codebook_indices')
+        self.assertEqual(output_type_from_echoframe_key(cnn_key), 'cnn')
 
 
 class TestSecondaryTagScanKey(unittest.TestCase):

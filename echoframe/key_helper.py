@@ -16,12 +16,14 @@ _AT_FMT = struct_helper.make_key_fmt('attention')
 _CI_FMT = struct_helper.make_key_fmt('codebook_indices')
 _CM_FMT = struct_helper.make_key_fmt('codebook_matrix')
 _AF_FMT = struct_helper.make_key_fmt('acoustic_feature')
+_CNN_FMT = struct_helper.make_key_fmt('cnn')
 
 HIDDEN_STATE_KEY_LEN = struct.calcsize(_HS_FMT)   # 30
 ATTENTION_KEY_LEN = struct.calcsize(_AT_FMT)   # 30
 CODEBOOK_INDICES_KEY_LEN = struct.calcsize(_CI_FMT)   # 29
 CODEBOOK_MATRIX_KEY_LEN = struct.calcsize(_CM_FMT)   # 5
 ACOUSTIC_FEATURE_KEY_LEN = struct.calcsize(_AF_FMT)   # 31
+CNN_KEY_LEN = struct.calcsize(_CNN_FMT)   # 29
 
 
 # -------- hashing --------
@@ -143,6 +145,19 @@ def pack_acoustic_feature_key(feature_name, phraser_key):
     return struct.pack(_AF_FMT, name_hash, output_type_id, phraser_key)
 
 
+def pack_cnn_key(model_id, phraser_key, collar):
+    '''Pack an echoframe_key for a cnn record.
+    model_id:     int  (uint32)
+    phraser_key:  bytes (22 bytes)
+    collar:       int  (uint16)
+    '''
+    _require_key_fields('cnn', model_id=model_id, collar=collar)
+    phraser_key = validate_segment_phraser_key(phraser_key)
+    output_type_id = struct_helper.OUTPUT_TYPE_RANK_MAP['cnn']
+    return struct.pack(_CNN_FMT, model_id, output_type_id, phraser_key,
+        collar)
+
+
 def pack_echoframe_key(output_type, model_id=None, phraser_key=None,
     layer=None, collar=None, feature_name=None):
     '''Pack one echoframe_key by output type.
@@ -171,6 +186,10 @@ def pack_echoframe_key(output_type, model_id=None, phraser_key=None,
         _reject_unused_key_fields(output_type, model_id=model_id,
             layer=layer, collar=collar)
         return pack_acoustic_feature_key(feature_name, phraser_key)
+    if output_type == 'cnn':
+        _reject_unused_key_fields(output_type, layer=layer,
+            feature_name=feature_name)
+        return pack_cnn_key(model_id, phraser_key, collar)
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
@@ -258,6 +277,20 @@ def unpack_acoustic_feature_key(key_bytes):
     }
 
 
+def unpack_cnn_key(key_bytes):
+    '''Unpack a cnn echoframe_key into its component fields.
+    Returns dict with model_id, output_type, phraser_key, collar.
+    '''
+    model_id, output_type_id, phraser_key, collar = struct.unpack(
+        _CNN_FMT, key_bytes)
+    return {
+        'model_id': model_id,
+        'output_type': struct_helper.RANK_OUTPUT_TYPE_MAP[output_type_id],
+        'phraser_key': phraser_key,
+        'collar': collar,
+    }
+
+
 def unpack_echoframe_key(key_bytes):
     '''Unpack one echoframe_key by inferring its output type.'''
     output_type = output_type_from_echoframe_key(key_bytes)
@@ -271,6 +304,7 @@ def unpack_echoframe_key(key_bytes):
         return unpack_codebook_matrix_key(key_bytes)
     if output_type == 'acoustic_feature':
         return unpack_acoustic_feature_key(key_bytes)
+    if output_type == 'cnn': return unpack_cnn_key(key_bytes)
     raise ValueError(f'unknown output type: {output_type!r}')
 
 
@@ -297,8 +331,8 @@ def output_type_from_echoframe_key(key_bytes):
         raise ValueError(
             f'invalid output_type_id for 30-byte echoframe_key: '
             f'{output_type_id}')
-    if n_bytes == CODEBOOK_INDICES_KEY_LEN and output_type != (
-            'codebook_indices'):
+    if n_bytes == CODEBOOK_INDICES_KEY_LEN and output_type not in {
+            'codebook_indices', 'cnn'}:
         raise ValueError(
             f'invalid output_type_id for 29-byte echoframe_key: '
             f'{output_type_id}')

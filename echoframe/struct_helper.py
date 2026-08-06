@@ -22,6 +22,7 @@ OUTPUT_TYPE_RANK_MAP = {
     'codebook_indices': 2,
     'codebook_matrix':  3,
     'acoustic_feature': 4,
+    'cnn':              5,
 }
 
 RANK_OUTPUT_TYPE_MAP = {v: k for k, v in OUTPUT_TYPE_RANK_MAP.items()}
@@ -36,7 +37,7 @@ def make_key_fmt(output_type):
     '''Return the struct fmt string for one echoframe key type.'''
     if output_type in ('hidden_state', 'attention'):
         return f'>IBB{PHRASER_KEY_LEN}sH'
-    if output_type == 'codebook_indices':
+    if output_type in ('codebook_indices', 'cnn'):
         return f'>IB{PHRASER_KEY_LEN}sH'
     if output_type == 'codebook_matrix':
         return '>IB'

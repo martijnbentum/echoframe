@@ -1,10 +1,13 @@
 '''Single-segment feature retrieval orchestration for echoframe.'''
 
 from .utils_segment_features import (
+    cnn_missing,
     codebook_indices_missing, codebook_matrix_missing,
+    compute_cnn_features_for_segment,
     compute_codebook_indices as compute_codebook_indices_for_segment,
     compute_embeddings_for_segment,
     find_embedding_layers, normalise_layers, segment_times,
+    store_cnn_feature_from_outputs,
     store_codebook_indices_from_artifacts, store_codebook_matrix,
     store_embeddings_from_outputs,
 )
@@ -60,6 +63,28 @@ def compute_codebook_indices(segment, model_name, store, collar=500,
         store_codebook_matrix(artifacts.codebook_matrix, model_name, store,
             tags)
     if verbose: print('codebook indices computed and stored')
+
+def compute_cnn_features(segment, model_name, store, collar=500,
+    gpu=False, tags=None, verbose=False):
+    '''Compute and store CNN feature-extractor output for one segment object.
+    segment:      phraser segment object with key, timing, and audio
+    model_name:   registered model name
+    store:        echoframe Store used for model outputs
+    collar:       context window in milliseconds
+    gpu:          whether to run CNN extraction on GPU
+    tags:         optional tags stored on newly written metadata
+    '''
+    if store is None: raise ValueError('store must be an echoframe Store')
+    phraser_key = segment.key
+    if not cnn_missing(store, phraser_key, collar, model_name):
+        if verbose: print('cnn features found in store')
+        return
+    source_id = store.phraser_registry.segment_to_source_id(segment)
+    model = store.load_model(model_name, gpu=gpu)
+    outputs = compute_cnn_features_for_segment(segment, collar, model, gpu)
+    store_cnn_feature_from_outputs(outputs, segment, collar, model_name,
+        store, tags, phraser_source_id=source_id)
+    if verbose: print('cnn features computed and stored')
 
 
 _segment_times = segment_times

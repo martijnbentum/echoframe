@@ -42,6 +42,13 @@ def codebook_matrix_missing(store, model_name):
     return store.load_metadata(matrix_key) is None
 
 
+def cnn_missing(store, phraser_key, collar, model_name):
+    '''Return whether segment-level CNN features are absent.'''
+    cnn_key = store.make_echoframe_key('cnn', model_name=model_name,
+        phraser_key=phraser_key, collar=collar)
+    return store.load_metadata(cnn_key) is None
+
+
 def compute_embeddings_for_segment(segment, collar, model, gpu):
     '''Compute hidden states for one collared segment window.'''
     _, _, collared_start, collared_end = segment_times(segment, collar)
@@ -135,6 +142,39 @@ def store_codebook_matrix(codebook_matrix, model_name, store, tags):
     cm_metadata = EchoframeMetadata(echoframe_key=cm_key, store=store,
         model_name=model_name, tags=tags)
     store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
+
+
+def compute_cnn_features_for_segment(segment, collar, model, gpu):
+    '''Compute CNN feature-extractor output for one collared segment window.'''
+    _, _, collared_start, collared_end = segment_times(segment, collar)
+    outputs = to_vector.filename_to_cnn(segment.audio.filename,
+        start=collared_start, end=collared_end, model=model, gpu=gpu)
+    return outputs
+
+
+def store_cnn_feature_from_outputs(outputs, segment, collar, model_name,
+    store, tags, phraser_source_id=None):
+    '''Persist selected CNN feature-extractor frames for one segment.'''
+    item = make_cnn_feature_item(outputs, segment, collar, model_name, store,
+        tags, phraser_source_id=phraser_source_id)
+    return store.save(item['echoframe_key'], item['metadata'], item['data'])
+
+
+def make_cnn_feature_item(outputs, segment, collar, model_name, store, tags,
+    phraser_source_id=None):
+    '''Build one save_many item for selected CNN feature-extractor frames.'''
+    validate_cnn_features(outputs)
+    indices = get_selected_cnn_frame_indices(outputs, segment, collar)
+    extract_features = outputs.extract_features
+    if extract_features.ndim == 3: data = extract_features[0, indices, :]
+    else: data = extract_features[indices, :]
+    phraser_key = segment.key
+    echoframe_key = store.make_echoframe_key('cnn', model_name=model_name,
+        phraser_key=phraser_key, collar=collar)
+    metadata = EchoframeMetadata(echoframe_key=echoframe_key, store=store,
+        model_name=model_name, tags=tags,
+        phraser_source_id=phraser_source_id)
+    return {'echoframe_key': metadata.echoframe_key, 'metadata': metadata, 'data': data}
 
 
 class StoreWriter:
@@ -302,6 +342,27 @@ def validate_codebook_artifacts(artifacts):
         raise ValueError(m)
 
 
+def validate_cnn_features(outputs, batch=False):
+    '''Validate CNN feature-extractor output before frame selection.'''
+    if not hasattr(outputs, 'extract_features'):
+        m = 'to-vector outputs did not contain extract_features attribute\n'
+        m += f'outputs type: {type(outputs)}\n'
+        m += f'outputs attributes: {dir(outputs)}'
+        raise ValueError(m)
+    extract_features = outputs.extract_features
+    if not isinstance(extract_features, np.ndarray):
+        m = 'to-vector outputs extract_features is not a numpy array, '
+        m += f'got {type(extract_features)}'
+        raise ValueError(m)
+    shape = extract_features.shape
+    if len(shape) not in (2, 3):
+        m = f'extract_features has invalid shape {shape}'
+        raise ValueError(m)
+    if len(shape) == 3 and shape[0] != 1 and batch is False:
+        m = f'batch size for extract_features {shape} is {shape[0]}, expected 1'
+        raise ValueError(m)
+
+
 def validate_codebook_indices(indices):
     '''Validate codebook indices before frame selection.'''
     if not isinstance(indices, np.ndarray):
@@ -352,6 +413,27 @@ def get_selected_codebook_indices_frame_indices(indices, segment, collar):
     indices = [f.index for f in selected]
     if max(indices) >= n_frames:
         m = f'frame index {max(indices)} out of range for codebook indices '
+        m += f'with {n_frames} frames'
+        m += f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    return indices
+
+
+def get_selected_cnn_frame_indices(outputs, segment, collar):
+    '''Return selected frame indices using extract_features frame count only.'''
+    start, end, collared_start, _ = segment_times(segment, collar)
+    extract_features = outputs.extract_features
+    if extract_features.ndim == 3: n_frames = extract_features.shape[1]
+    else: n_frames = extract_features.shape[0]
+    frames = frame.Frames(n_frames, start_time=collared_start)
+    selected = frames.select_frames(start, end, percentage_overlap=100)
+    if not selected:
+        m = f'no frames fully within {start} - {end}s, {segment!r}'
+        m += f'for segment {segment!r} with collar {collar} seconds'
+        raise ValueError(m)
+    indices = [f.index for f in selected]
+    if max(indices) >= n_frames:
+        m = f'frame index {max(indices)} out of range for cnn features '
         m += f'with {n_frames} frames'
         m += f'for segment {segment!r} with collar {collar} seconds'
         raise ValueError(m)

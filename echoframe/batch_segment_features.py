@@ -5,8 +5,9 @@ import to_vector
 
 from .utils_segment_features import (
     StoreWriter,
-    make_embedding_items,
-    normalise_layers, segment_times,
+    make_cnn_feature_item, make_embedding_items,
+    normalise_layers, reject_spidr_cnn_request, segment_times,
+    split_requested_layers,
 )
 
 _DEFAULT_WRITE_SEGMENT_COUNT = 32
@@ -17,7 +18,8 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     batch_size=None, store_queue_size=4, verbose=True):
     '''Compute and store embeddings for multiple segment objects.
     segments:             iterable of phraser segment objects
-    layers:               layer index or iterable of layer indices
+    layers:               layer index or iterable containing layer indices
+                          and optionally 'cnn'
     model_name:           registered model name for store storage
     store:                echoframe Store used for model outputs
     collar:               context window in milliseconds
@@ -32,6 +34,9 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     '''
     if store is None: raise ValueError('store must be an echoframe Store')
     layers_list = normalise_layers(layers)
+    hidden_state_layers, cnn_requested = split_requested_layers(layers_list)
+    if cnn_requested:
+        reject_spidr_cnn_request(store, model_name)
     missing = MissingSegments(segments, layers_list, model_name, collar, store)
     if verbose: print(missing)
     if not missing.missing:
@@ -41,6 +46,8 @@ def compute_embeddings_batch(segments, layers, model_name, store,
         missing_segments.append(item.segment)
     source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     model = store.load_model(model_name, gpu=gpu)
+    if cnn_requested:
+        reject_spidr_cnn_request(store, model_name, model=model)
     write_segment_count = _DEFAULT_WRITE_SEGMENT_COUNT
     if batch_size is not None: write_segment_count = int(batch_size)
     if write_segment_count <= 0:
@@ -54,9 +61,15 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     with StoreWriter(store, max_queue_size=store_queue_size) as writer:
         try:
             for output, item in zip(outputs, missing.missing, strict=True):
-                save_items = make_embedding_items(output, item.segment, collar,
-                    item.missing_layers, model_name, store, tags,
-                    phraser_source_id=source_id)
+                save_items = []
+                if item.missing_layers:
+                    save_items.extend(make_embedding_items(output,
+                        item.segment, collar, item.missing_layers, model_name,
+                        store, tags, phraser_source_id=source_id))
+                if item.cnn_missing:
+                    save_items.append(make_cnn_feature_item(output,
+                        item.segment, collar, model_name, store, tags,
+                        phraser_source_id=source_id))
                 pending_items.extend(save_items)
                 pending_segments += 1
                 output_count += 1
@@ -67,7 +80,13 @@ def compute_embeddings_batch(segments, layers, model_name, store,
                     writer.submit(chunk)
         finally:
             if pending_items: writer.submit(pending_items)
-    if verbose: print(f'embeddings computed for {output_count} segments')
+    if verbose:
+        output_name = 'embeddings'
+        if cnn_requested and hidden_state_layers:
+            output_name = 'embeddings and cnn features'
+        elif cnn_requested:
+            output_name = 'cnn features'
+        print(f'{output_name} computed for {output_count} segments')
 
 
 class SegmentRequest:
@@ -106,9 +125,15 @@ class SegmentRequest:
         if hasattr(self, '_echoframe_keys'): return self._echoframe_keys
         keys = []
         for layer in self.layers:
-            echoframe_key = self.parent.store.make_echoframe_key('hidden_state',
-                model_name=self.model_name, phraser_key=self.segment.key,
-                layer=layer, collar=self.collar)
+            if layer == 'cnn':
+                echoframe_key = self.parent.store.make_echoframe_key('cnn',
+                    model_name=self.model_name,
+                    phraser_key=self.segment.key, collar=self.collar)
+            else:
+                echoframe_key = self.parent.store.make_echoframe_key(
+                    'hidden_state', model_name=self.model_name,
+                    phraser_key=self.segment.key, layer=layer,
+                    collar=self.collar)
             keys.append(echoframe_key)
         self._echoframe_keys = keys
         return self._echoframe_keys
@@ -130,9 +155,19 @@ class SegmentRequest:
         if hasattr(self, '_missing_layers'): return self._missing_layers
         missing_layers = []
         for md, layer in zip(self.metadatas, self.layers, strict=True):
-            if md is None: missing_layers.append(layer)
+            if layer != 'cnn' and md is None: missing_layers.append(layer)
         self._missing_layers = missing_layers
         return self._missing_layers
+
+    @property
+    def cnn_missing(self):
+        if hasattr(self, '_cnn_missing'): return self._cnn_missing
+        self._cnn_missing = False
+        for md, layer in zip(self.metadatas, self.layers, strict=True):
+            if layer == 'cnn':
+                self._cnn_missing = md is None
+                break
+        return self._cnn_missing
 
 class MissingSegments:
     '''Batch wrapper for segment-layer embedding requests.'''

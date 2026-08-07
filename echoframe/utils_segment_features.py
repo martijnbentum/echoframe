@@ -144,22 +144,6 @@ def store_codebook_matrix(codebook_matrix, model_name, store, tags):
     store.save(cm_metadata.echoframe_key, cm_metadata, codebook_matrix)
 
 
-def compute_cnn_features_for_segment(segment, collar, model, gpu):
-    '''Compute CNN feature-extractor output for one collared segment window.'''
-    _, _, collared_start, collared_end = segment_times(segment, collar)
-    outputs = to_vector.filename_to_cnn(segment.audio.filename,
-        start=collared_start, end=collared_end, model=model, gpu=gpu)
-    return outputs
-
-
-def store_cnn_feature_from_outputs(outputs, segment, collar, model_name,
-    store, tags, phraser_source_id=None):
-    '''Persist selected CNN feature-extractor frames for one segment.'''
-    item = make_cnn_feature_item(outputs, segment, collar, model_name, store,
-        tags, phraser_source_id=phraser_source_id)
-    return store.save(item['echoframe_key'], item['metadata'], item['data'])
-
-
 def make_cnn_feature_item(outputs, segment, collar, model_name, store, tags,
     phraser_source_id=None):
     '''Build one save_many item for selected CNN feature-extractor frames.'''
@@ -267,24 +251,47 @@ def validate_frame_aggregation(frame_aggregation):
 
 
 def normalise_layers(layers):
-    '''Normalize layer input to a validated list of non-negative ints.'''
+    '''Normalize hidden-state layers and an optional cnn output marker.'''
     if layers is None:
-        raise ValueError('layers must be int or a list of ints, got None')
+        raise ValueError('layers must be int or an iterable, got None')
+    if isinstance(layers, str):
+        message = "'cnn' must be requested inside the layers iterable, "
+        message += "for example ['cnn'] or [9, 'cnn']"
+        raise ValueError(message)
     layers_list = [layers] if isinstance(layers, int) else list(layers)
     if len(layers_list) == 0:
-        raise ValueError('layers must be a non-empty list')
+        raise ValueError('layers must be a non-empty iterable')
+    normalized = []
+    cnn_seen = False
     for layer in layers_list:
         if layer == 'cnn':
-            m = "layer 'cnn' is not a transformer layer index; use "
-            m += 'compute_cnn_features_batch (or '
-            m += 'compute_embeddings_and_cnn_features_batch for both) to '
-            m += 'request cnn output'
-            raise ValueError(m)
+            if not cnn_seen: normalized.append(layer)
+            cnn_seen = True
+            continue
         if not isinstance(layer, int):
             raise ValueError(f'layer must be int {layer}, {layers_list}')
         if layer < 0:
             raise ValueError(f'layer must be non-negative integers {layer}')
-    return layers_list
+        normalized.append(layer)
+    return normalized
+
+
+def split_requested_layers(layers):
+    '''Return numeric hidden-state layers and whether cnn was requested.'''
+    hidden_state_layers = [layer for layer in layers if layer != 'cnn']
+    return hidden_state_layers, 'cnn' in layers
+
+
+def reject_spidr_cnn_request(store, model_name, model=None):
+    '''Reject unsupported SpidR cnn requests before model inference.'''
+    metadata = store.load_model_metadata(model_name)
+    architecture = getattr(metadata, 'architecture', None)
+    if isinstance(architecture, str) and architecture.lower() == 'spidr':
+        raise ValueError("'cnn' output is not supported for SpidR models")
+    if model is None: return
+    from to_vector import model_registry
+    if model_registry.model_to_type(model) == 'spidr':
+        raise ValueError("'cnn' output is not supported for SpidR models")
 
 
 def validate_hidden_states(outputs, layers, batch=False):

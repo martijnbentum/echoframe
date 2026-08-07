@@ -400,6 +400,21 @@ metadatas = store.load_many_metadata([echoframe_key])
 payloads = store.load_many([echoframe_key], keep_missing=True)
 ```
 
+Compute hidden states, CNN feature-extractor output, or both through the
+embedding APIs:
+
+```python
+from echoframe.batch_segment_features import compute_embeddings_batch
+from echoframe.segment_features import compute_embeddings
+
+compute_embeddings(segment, [9, 'cnn'], 'wav2vec2', store)
+compute_embeddings_batch(segments, ['cnn'], 'wav2vec2', store)
+```
+
+`'cnn'` must appear inside the `layers` iterable; scalar `'cnn'` is rejected.
+CNN requests use the same full forward pass as hidden-state requests and are
+not supported for SpidR models.
+
 `compute_embeddings_batch(...)` submits prepared results to a background
 writer as one `save_many()` chunk per configured batch. The configured
 `batch_size` is also the storage group size; when it is `None`, storage writes

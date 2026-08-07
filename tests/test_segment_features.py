@@ -21,18 +21,9 @@ from echoframe.output_storage import Hdf5ShardStore
 sys.modules.setdefault('frame', types.SimpleNamespace())
 
 import echoframe.segment_features as segment_features
-import echoframe.batch_cnn_features as batch_cnn_features
 import echoframe.batch_codebook_indices as batch_codebook_indices
-import echoframe.batch_embeddings_cnn_features as batch_embeddings_cnn_features
 import echoframe.batch_segment_features as batch_segment_features
 import echoframe.utils_segment_features as utils_segment_features
-from echoframe.batch_cnn_features import (
-    MissingCnnFeatures,
-    compute_cnn_features_batch,
-)
-from echoframe.batch_embeddings_cnn_features import (
-    compute_embeddings_and_cnn_features_batch,
-)
 from echoframe.batch_codebook_indices import (
     MissingIndices,
     compute_codebook_indices_batch,
@@ -43,7 +34,6 @@ from echoframe.batch_segment_features import (
 )
 from echoframe.segment_features import (
     _segment_times,
-    compute_cnn_features,
     compute_codebook_indices,
     compute_embeddings,
 )
@@ -126,10 +116,8 @@ class TestFeatureStoreContract(unittest.TestCase):
         helpers = (
             compute_embeddings,
             compute_codebook_indices,
-            compute_cnn_features,
             compute_embeddings_batch,
             compute_codebook_indices_batch,
-            compute_cnn_features_batch,
         )
         for helper in helpers:
             with self.subTest(helper=helper.__name__):
@@ -143,10 +131,8 @@ class TestFeatureStoreContract(unittest.TestCase):
         cases = (
             (compute_embeddings, (segment, 3, 'wav2vec2')),
             (compute_codebook_indices, (segment, 'wav2vec2')),
-            (compute_cnn_features, (segment, 'wav2vec2')),
             (compute_embeddings_batch, ([segment], 3, 'wav2vec2')),
             (compute_codebook_indices_batch, ([segment], 'wav2vec2')),
-            (compute_cnn_features_batch, ([segment], 'wav2vec2')),
         )
         for helper, args in cases:
             with self.subTest(helper=helper.__name__):
@@ -374,12 +360,12 @@ class TestNormaliseLayers(unittest.TestCase):
 
     def test_none_raises(self):
         with self.assertRaisesRegex(ValueError,
-            'layers must be int or a list of ints, got None'):
+            'layers must be int or an iterable, got None'):
             utils_segment_features.normalise_layers(None)
 
     def test_empty_list_raises(self):
         with self.assertRaisesRegex(ValueError,
-            'layers must be a non-empty list'):
+            'layers must be a non-empty iterable'):
             utils_segment_features.normalise_layers([])
 
     def test_negative_layer_raises(self):
@@ -393,15 +379,21 @@ class TestNormaliseLayers(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'layer must be int'):
             utils_segment_features.normalise_layers(['x'])
 
-    def test_cnn_alone_raises_helpful_message(self):
-        with self.assertRaisesRegex(ValueError,
-            'compute_cnn_features_batch'):
-            utils_segment_features.normalise_layers(['cnn'])
+    def test_cnn_alone_is_accepted_in_iterable(self):
+        self.assertEqual(utils_segment_features.normalise_layers(['cnn']),
+            ['cnn'])
 
-    def test_cnn_mixed_with_valid_layers_raises_helpful_message(self):
-        with self.assertRaisesRegex(ValueError,
-            'compute_embeddings_and_cnn_features_batch'):
-            utils_segment_features.normalise_layers([1, 'cnn'])
+    def test_cnn_can_be_mixed_with_valid_layers(self):
+        self.assertEqual(utils_segment_features.normalise_layers([1, 'cnn']),
+            [1, 'cnn'])
+
+    def test_duplicate_cnn_markers_are_collapsed(self):
+        self.assertEqual(utils_segment_features.normalise_layers(
+            ['cnn', 1, 'cnn']), ['cnn', 1])
+
+    def test_scalar_cnn_raises_helpful_message(self):
+        with self.assertRaisesRegex(ValueError, 'inside the layers iterable'):
+            utils_segment_features.normalise_layers('cnn')
 
 
 class TestComputeEmbeddings(unittest.TestCase):
@@ -1337,456 +1329,249 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
             self.assertIsNone(store.load_metadata(key_b))
 
 
-class TestComputeCnnFeatures(unittest.TestCase):
-    def test_cache_hit_skips_model_and_leaves_store_unchanged(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            _put_cnn_feature(store, 'aabb', 500, 'wav2vec2',
-                np.array([[0.0, 1.0], [2.0, 3.0]]))
-            segment = _make_segment(key=_pk('aabb'))
-            with mock.patch.object(store, 'load_model') as load_model:
-                with mock.patch.object(utils_segment_features.to_vector,
-                    'filename_to_cnn', create=True) as filename_to_cnn:
-                    compute_cnn_features(segment, 'wav2vec2', store=store)
-            echoframe_key = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment.key, collar=500)
-            data = store.load(echoframe_key)
-            np.testing.assert_array_equal(data,
-                np.array([[0.0, 1.0], [2.0, 3.0]]))
-            load_model.assert_not_called()
-            filename_to_cnn.assert_not_called()
 
-    def test_cache_miss_stores_cnn_features(self):
+class TestComputeEmbeddingsCnn(unittest.TestCase):
+    def test_removed_compute_routes_are_not_available(self):
+        self.assertFalse(hasattr(segment_features, 'compute_cnn_features'))
+        self.assertFalse(
+            Path('echoframe/batch_cnn_features.py').exists())
+        self.assertFalse(
+            Path('echoframe/batch_embeddings_cnn_features.py').exists())
+
+    def test_segment_request_tracks_hidden_state_and_cnn(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment(key=_pk('aabb'))
-            outputs = types.SimpleNamespace(extract_features=np.array(
-                [[0.0, 1.0], [2.0, 3.0], [1.0, 0.0]]))
-            with mock.patch.object(store, 'load_model',
-                return_value='model') as load_model:
-                with mock.patch.object(utils_segment_features.to_vector,
-                    'filename_to_cnn', create=True,
-                    return_value=outputs) as filename_to_cnn:
-                    with mock.patch.object(utils_segment_features.frame,
-                        'Frames',
-                        create=True, side_effect=lambda n_frames, start_time:
-                        FakeFrames(n_frames, start_time, [0, 2])):
-                        compute_cnn_features(segment, 'wav2vec2',
-                            store=store, tags=['exp-a'])
+            hidden_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=segment.key, layer=1,
+                collar=500)
             cnn_key = store.make_echoframe_key('cnn',
                 model_name='wav2vec2', phraser_key=segment.key, collar=500)
-            data = store.load(cnn_key)
-            metadata = store.load_metadata(cnn_key)
-            np.testing.assert_array_equal(data,
-                np.array([[0.0, 1.0], [1.0, 0.0]]))
-            self.assertEqual(metadata.tags, ['exp-a'])
-            load_model.assert_called_once_with('wav2vec2', gpu=False)
-            filename_to_cnn.assert_called_once()
+            parent = types.SimpleNamespace(store=store,
+                echoframe_key_to_metadata_dict={
+                    hidden_key: None,
+                    cnn_key: None,
+                })
+            request = batch_segment_features.SegmentRequest(
+                segment, [1, 'cnn'], 500, 'wav2vec2', parent)
 
+            self.assertEqual(request.echoframe_keys, [hidden_key, cnn_key])
+            self.assertEqual(request.missing_layers, [1])
+            self.assertTrue(request.cnn_missing)
 
-class TestComputeCnnFeaturesBatch(unittest.TestCase):
-    def test_missing_reports_found_and_missing(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            _put_cnn_feature(store, 'aabb', 500, 'wav2vec2',
-                np.array([[0.0, 1.0], [2.0, 3.0]]))
-
-            missing = MissingCnnFeatures([segment_a, segment_b], 'wav2vec2',
-                500, store)
-
-            self.assertEqual(len(missing.segments), 2)
-            self.assertEqual(len(missing.segment_requests), 2)
-            self.assertEqual(len(missing.found), 1)
-            self.assertEqual(len(missing.missing), 1)
-            self.assertIs(missing.found[0].segment, segment_a)
-            self.assertIs(missing.missing[0].segment, segment_b)
-            self.assertEqual(missing.cnn_items_found, 1)
-            self.assertEqual(missing.cnn_items_missing, 1)
-            self.assertEqual(missing.audio_filenames,
-                [segment_b.audio.filename])
-            np.testing.assert_allclose(missing.starts, [0.6])
-            np.testing.assert_allclose(missing.ends, [1.9])
-
-    def test_batch_cache_hit_skips_model_and_iterator(self):
+    def test_single_cnn_only_uses_full_forward_and_stores_output(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment(key=_pk('aabb'))
-            _put_cnn_feature(store, 'aabb', 500, 'wav2vec2',
-                np.array([[0.0, 1.0], [2.0, 3.0]]))
-            with mock.patch.object(store, 'load_model') as load_model:
-                with mock.patch.object(batch_cnn_features.to_vector,
-                    'iter_filename_batch_to_cnn', create=True) as iter_cnn:
-                    with mock.patch('builtins.print') as print_mock:
-                        result = compute_cnn_features_batch([segment],
-                            'wav2vec2', store=store)
-
-            self.assertIsNone(result)
-            print_mock.assert_called_once()
-            self.assertIn('missing segments: 0',
-                str(print_mock.call_args.args[0]))
-            load_model.assert_not_called()
-            iter_cnn.assert_not_called()
-
-    def test_batch_cache_miss_stores_cnn_features(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            outputs = [
-                types.SimpleNamespace(extract_features=np.array(
-                    [[0.0, 1.0], [2.0, 3.0], [1.0, 0.0]])),
-                types.SimpleNamespace(extract_features=np.array(
-                    [[3.0, 2.0], [1.0, 1.0], [0.0, 0.0]])),
-            ]
-            frame_values = [
-                FakeFrames(selected_indices=[0, 2]),
-                FakeFrames(selected_indices=[1, 2]),
-            ]
+            outputs = types.SimpleNamespace(extract_features=np.array([[
+                [0.0, 1.0],
+                [2.0, 3.0],
+                [4.0, 5.0],
+            ]]))
             with mock.patch.object(store, 'load_model',
                 return_value='model') as load_model:
-                with mock.patch.object(batch_cnn_features.to_vector,
-                    'iter_filename_batch_to_cnn', create=True,
-                    return_value=iter(outputs)) as iter_cnn:
-                    with mock.patch.object(
-                        utils_segment_features.frame, 'Frames',
-                        side_effect=lambda n_frames, start_time:
-                        frame_values.pop(0), create=True):
-                        with mock.patch('builtins.print') as print_mock:
-                            result = compute_cnn_features_batch(
-                                [segment_a, segment_b], 'wav2vec2',
-                                store=store, tags=['exp-a'], batch_size=2)
+                with mock.patch.object(utils_segment_features.to_vector,
+                    'filename_to_vector', create=True,
+                    return_value=outputs) as filename_to_vector:
+                    with mock.patch.object(utils_segment_features.frame,
+                        'Frames', create=True,
+                        return_value=FakeFrames(selected_indices=[0, 2])):
+                        result = compute_embeddings(segment, ['cnn'],
+                            'wav2vec2', store=store, tags=['cnn-test'])
 
-            key_a = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
-            key_b = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
-
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
             self.assertIsNone(result)
-            self.assertEqual(print_mock.call_args_list[-1],
-                mock.call('cnn features computed for 2 segments'))
-            np.testing.assert_array_equal(store.load(key_a),
-                np.array([[0.0, 1.0], [1.0, 0.0]]))
-            np.testing.assert_array_equal(store.load(key_b),
-                np.array([[1.0, 1.0], [0.0, 0.0]]))
-            self.assertEqual(store.load_metadata(key_a).tags, ['exp-a'])
+            np.testing.assert_array_equal(store.load(cnn_key),
+                np.array([[0.0, 1.0], [4.0, 5.0]]))
+            self.assertEqual(store.load_metadata(cnn_key).tags, ['cnn-test'])
             load_model.assert_called_once_with('wav2vec2', gpu=False)
-            iter_cnn.assert_called_once()
-            args, kwargs = iter_cnn.call_args
-            self.assertEqual(args, (
-                [segment_a.audio.filename, segment_b.audio.filename],))
-            np.testing.assert_allclose(kwargs.pop('starts'), [0.5, 0.6])
-            np.testing.assert_allclose(kwargs.pop('ends'), [1.8, 1.9])
-            self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
-                'batch_size': 2})
+            filename_to_vector.assert_called_once()
 
-    def test_batch_uses_writer_and_queue_size(self):
+    def test_single_mixed_request_stores_both_outputs(self):
         tmpdir, store = _make_store()
-        RecordingBatchWriter.instances = []
         with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            outputs = [
-                types.SimpleNamespace(extract_features=np.array([[0.0, 1.0]])),
-                types.SimpleNamespace(extract_features=np.array([[1.0, 1.0]])),
+            segment = _make_segment(key=_pk('aabb'))
+            hidden_states = [
+                np.zeros((1, 3, 2)),
+                np.array([[
+                    [1.0, 2.0],
+                    [3.0, 4.0],
+                    [5.0, 6.0],
+                ]]),
             ]
-            save_items = [
-                {'item': 'a'},
-                {'item': 'b'},
-            ]
+            outputs = types.SimpleNamespace(hidden_states=hidden_states,
+                extract_features=np.array([[
+                    [7.0, 8.0],
+                    [9.0, 10.0],
+                    [11.0, 12.0],
+                ]]))
             with mock.patch.object(store, 'load_model',
                 return_value='model'):
-                with mock.patch.object(batch_cnn_features.to_vector,
-                    'iter_filename_batch_to_cnn', create=True,
-                    return_value=iter(outputs)):
-                    with mock.patch.object(batch_cnn_features,
-                        'make_cnn_feature_item',
-                        side_effect=save_items) as make_item:
-                        with mock.patch.object(batch_cnn_features,
-                            'StoreWriter', RecordingBatchWriter):
-                            with mock.patch('builtins.print'):
-                                compute_cnn_features_batch(
-                                    [segment_a, segment_b], 'wav2vec2',
-                                    store=store, store_queue_size=8)
+                with mock.patch.object(utils_segment_features.to_vector,
+                    'filename_to_vector', create=True,
+                    return_value=outputs):
+                    with mock.patch.object(utils_segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        return_value=FakeFrames(selected_indices=[0, 2])):
+                        with mock.patch.object(utils_segment_features.frame,
+                            'Frames', create=True,
+                            return_value=FakeFrames(
+                                selected_indices=[1, 2])):
+                            compute_embeddings(segment, [1, 'cnn'],
+                                'wav2vec2', store=store)
 
-            writer = RecordingBatchWriter.instances[0]
-            self.assertEqual(writer.store, store)
-            self.assertEqual(writer.max_queue_size, 8)
-            self.assertEqual(writer.submitted, [
-                [save_items[0]],
-                [save_items[1]],
-            ])
-            self.assertEqual(make_item.call_args_list, [
-                mock.call(outputs[0], segment_a, 500, 'wav2vec2', store,
-                    None, phraser_source_id='cgn-main'),
-                mock.call(outputs[1], segment_b, 500, 'wav2vec2', store,
-                    None, phraser_source_id='cgn-main'),
-            ])
+            hidden_key = store.make_echoframe_key('hidden_state',
+                model_name='wav2vec2', phraser_key=segment.key, layer=1,
+                collar=500)
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
+            np.testing.assert_array_equal(store.load(hidden_key),
+                np.array([[1.0, 2.0], [5.0, 6.0]]))
+            np.testing.assert_array_equal(store.load(cnn_key),
+                np.array([[9.0, 10.0], [11.0, 12.0]]))
 
-    def test_batch_output_count_must_match_missing_segments(self):
+    def test_batch_cnn_only_uses_full_forward(self):
         tmpdir, store = _make_store()
         with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            outputs = [types.SimpleNamespace(extract_features=np.array(
-                [[0.0, 1.0], [2.0, 3.0], [1.0, 0.0]]))]
+            segment = _make_segment(key=_pk('aabb'))
+            outputs = [types.SimpleNamespace(extract_features=np.array([[
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]]))]
             with mock.patch.object(store, 'load_model',
                 return_value='model'):
-                with mock.patch.object(batch_cnn_features.to_vector,
-                    'iter_filename_batch_to_cnn', create=True,
-                    return_value=iter(outputs)):
-                    with mock.patch.object(
-                        utils_segment_features.frame, 'Frames',
-                        side_effect=lambda n_frames, start_time:
-                        FakeFrames(n_frames, start_time, [0, 2]),
-                        create=True):
-                        with self.assertRaisesRegex(ValueError,
-                            'zip\\(\\) argument'):
-                            compute_cnn_features_batch(
-                                [segment_a, segment_b], 'wav2vec2',
-                                store=store)
-
-
-class TestComputeEmbeddingsAndCnnFeaturesBatch(unittest.TestCase):
-    def test_full_overlap_uses_single_full_forward_call(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            hidden_states_a = [np.zeros((1, 3, 2)),
-                np.array([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]])]
-            hidden_states_b = [np.zeros((1, 3, 2)),
-                np.array([[[10.0, 11.0], [12.0, 13.0], [14.0, 15.0]]])]
-            extract_features_a = np.array(
-                [[[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]])
-            extract_features_b = np.array(
-                [[[17.0, 18.0], [19.0, 20.0], [21.0, 22.0]]])
-            outputs = [
-                types.SimpleNamespace(hidden_states=hidden_states_a,
-                    extract_features=extract_features_a),
-                types.SimpleNamespace(hidden_states=hidden_states_b,
-                    extract_features=extract_features_b),
-            ]
-            hs_frames = [FakeFrames(selected_indices=[0, 2]),
-                FakeFrames(selected_indices=[1, 2])]
-            cnn_frames = [FakeFrames(selected_indices=[0, 1]),
-                FakeFrames(selected_indices=[1, 2])]
-            with mock.patch.object(store, 'load_model',
-                return_value='model') as load_model:
-                with mock.patch.object(
-                    batch_embeddings_cnn_features.to_vector,
+                with mock.patch.object(batch_segment_features.to_vector,
                     'iter_filename_batch_to_vector', create=True,
                     return_value=iter(outputs)) as iter_vector:
-                    with mock.patch.object(
-                        batch_embeddings_cnn_features.to_vector,
-                        'iter_filename_batch_to_cnn', create=True) as iter_cnn:
-                        with mock.patch.object(utils_segment_features.frame,
-                            'make_frames_from_outputs', create=True,
-                            side_effect=hs_frames):
-                            with mock.patch.object(
-                                utils_segment_features.frame, 'Frames',
-                                create=True, side_effect=cnn_frames):
-                                with mock.patch('builtins.print'
-                                    ) as print_mock:
-                                    result = (
-                                        compute_embeddings_and_cnn_features_batch(
-                                        [segment_a, segment_b], [1],
-                                        'wav2vec2', store=store,
-                                        tags=['exp-a']))
+                    with mock.patch.object(utils_segment_features.frame,
+                        'Frames', create=True,
+                        return_value=FakeFrames(selected_indices=[0, 2])):
+                        compute_embeddings_batch([segment], ['cnn'],
+                            'wav2vec2', store=store, verbose=False)
 
-            key_hidden_a = store.make_echoframe_key('hidden_state',
-                model_name='wav2vec2', phraser_key=segment_a.key, layer=1,
-                collar=500)
-            key_hidden_b = store.make_echoframe_key('hidden_state',
-                model_name='wav2vec2', phraser_key=segment_b.key, layer=1,
-                collar=500)
-            key_cnn_a = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
-            key_cnn_b = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
-
-            self.assertIsNone(result)
-            load_model.assert_called_once_with('wav2vec2', gpu=False)
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
             iter_vector.assert_called_once()
-            iter_cnn.assert_not_called()
-            np.testing.assert_array_equal(store.load(key_hidden_a),
+            np.testing.assert_array_equal(store.load(cnn_key),
                 np.array([[1.0, 2.0], [5.0, 6.0]]))
-            np.testing.assert_array_equal(store.load(key_hidden_b),
-                np.array([[12.0, 13.0], [14.0, 15.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_a),
-                np.array([[7.0, 8.0], [9.0, 10.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_b),
-                np.array([[19.0, 20.0], [21.0, 22.0]]))
-            self.assertEqual(print_mock.call_args_list[-1], mock.call(
-                'embeddings computed for 2 segments, cnn features computed '
-                'for 2 segments'))
 
-    def test_cnn_only_when_hidden_state_already_stored(self):
+    def test_batch_mixed_cache_uses_one_full_forward_route(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment_a = _make_segment(key=_pk('aabb'))
             segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
                 end_seconds=1.4)
             _put_hidden_state(store, 'aabb', 500, 'wav2vec2', 1,
-                np.array([[1.0, 2.0], [3.0, 4.0]]))
-            _put_hidden_state(store, 'ccdd', 500, 'wav2vec2', 1,
-                np.array([[5.0, 6.0], [7.0, 8.0]]))
-            outputs = [
-                types.SimpleNamespace(extract_features=np.array(
-                    [[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])),
-                types.SimpleNamespace(extract_features=np.array(
-                    [[6.0, 7.0], [8.0, 9.0], [10.0, 11.0]])),
-            ]
-            cnn_frames = [FakeFrames(selected_indices=[0, 2]),
-                FakeFrames(selected_indices=[1, 2])]
-            with mock.patch.object(store, 'load_model',
-                return_value='model'):
-                with mock.patch.object(
-                    batch_embeddings_cnn_features.to_vector,
-                    'iter_filename_batch_to_vector', create=True) as (
-                    iter_vector):
-                    with mock.patch.object(
-                        batch_embeddings_cnn_features.to_vector,
-                        'iter_filename_batch_to_cnn', create=True,
-                        return_value=iter(outputs)) as iter_cnn:
-                        with mock.patch.object(utils_segment_features.frame,
-                            'Frames', create=True, side_effect=cnn_frames):
-                            with mock.patch('builtins.print') as print_mock:
-                                result = (
-                                    compute_embeddings_and_cnn_features_batch(
-                                    [segment_a, segment_b], [1], 'wav2vec2',
-                                    store=store))
-
-            self.assertIsNone(result)
-            iter_vector.assert_not_called()
-            iter_cnn.assert_called_once()
-            args, kwargs = iter_cnn.call_args
-            self.assertEqual(args, (
-                [segment_a.audio.filename, segment_b.audio.filename],))
-            np.testing.assert_allclose(kwargs.pop('starts'), [0.5, 0.6])
-            np.testing.assert_allclose(kwargs.pop('ends'), [1.8, 1.9])
-            self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
-                'batch_size': None})
-            key_cnn_a = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
-            key_cnn_b = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
-            np.testing.assert_array_equal(store.load(key_cnn_a),
-                np.array([[0.0, 1.0], [4.0, 5.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_b),
-                np.array([[8.0, 9.0], [10.0, 11.0]]))
-            self.assertEqual(print_mock.call_args_list[-1], mock.call(
-                'embeddings computed for 0 segments, cnn features computed '
-                'for 2 segments'))
-
-    def test_mixed_partition_routes_each_segment_correctly(self):
-        tmpdir, store = _make_store()
-        with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            segment_c = _make_segment(key=_pk('eeff'), start_seconds=1.2,
-                end_seconds=1.5)
+                np.array([[91.0, 92.0]]))
             _put_cnn_feature(store, 'ccdd', 500, 'wav2vec2',
-                np.array([[99.0, 99.0]]))
-            _put_hidden_state(store, 'eeff', 500, 'wav2vec2', 1,
-                np.array([[88.0, 88.0]]))
-
-            hidden_states_a = [np.zeros((1, 3, 2)),
-                np.array([[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]])]
-            hidden_states_b = [np.zeros((1, 3, 2)),
-                np.array([[[13.0, 14.0], [15.0, 16.0], [17.0, 18.0]]])]
-            extract_features_a = np.array(
-                [[[7.0, 8.0], [9.0, 10.0], [11.0, 12.0]]])
-            full_forward_outputs = [
-                types.SimpleNamespace(hidden_states=hidden_states_a,
-                    extract_features=extract_features_a),
-                types.SimpleNamespace(hidden_states=hidden_states_b),
+                np.array([[93.0, 94.0]]))
+            outputs = [
+                types.SimpleNamespace(extract_features=np.array([[
+                    [1.0, 2.0],
+                    [3.0, 4.0],
+                    [5.0, 6.0],
+                ]])),
+                types.SimpleNamespace(hidden_states=[
+                    np.zeros((1, 3, 2)),
+                    np.array([[
+                        [7.0, 8.0],
+                        [9.0, 10.0],
+                        [11.0, 12.0],
+                    ]]),
+                ]),
             ]
-            extract_features_c = np.array(
-                [[[19.0, 20.0], [21.0, 22.0], [23.0, 24.0]]])
-            cnn_only_outputs = [
-                types.SimpleNamespace(extract_features=extract_features_c),
-            ]
-            hs_frames = [FakeFrames(selected_indices=[0, 2]),
-                FakeFrames(selected_indices=[1, 2])]
-            cnn_frames = [FakeFrames(selected_indices=[0, 1]),
-                FakeFrames(selected_indices=[0, 2])]
+            segments = (segment for segment in [segment_a, segment_b])
             with mock.patch.object(store, 'load_model',
                 return_value='model'):
-                with mock.patch.object(
-                    batch_embeddings_cnn_features.to_vector,
+                with mock.patch.object(batch_segment_features.to_vector,
                     'iter_filename_batch_to_vector', create=True,
-                    return_value=iter(full_forward_outputs)) as iter_vector:
-                    with mock.patch.object(
-                        batch_embeddings_cnn_features.to_vector,
-                        'iter_filename_batch_to_cnn', create=True,
-                        return_value=iter(cnn_only_outputs)) as iter_cnn:
+                    return_value=iter(outputs)) as iter_vector:
+                    with mock.patch.object(utils_segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        return_value=FakeFrames(selected_indices=[0, 2])):
                         with mock.patch.object(utils_segment_features.frame,
-                            'make_frames_from_outputs', create=True,
-                            side_effect=hs_frames):
-                            with mock.patch.object(utils_segment_features.frame,
-                                'Frames', create=True, side_effect=cnn_frames):
-                                with mock.patch('builtins.print'
-                                    ) as print_mock:
-                                    result = (
-                                        compute_embeddings_and_cnn_features_batch(
-                                        [segment_a, segment_b, segment_c],
-                                        [1], 'wav2vec2', store=store))
+                            'Frames', create=True,
+                            return_value=FakeFrames(
+                                selected_indices=[1, 2])):
+                            compute_embeddings_batch(segments, [1, 'cnn'],
+                                'wav2vec2', store=store, verbose=False)
 
-            self.assertIsNone(result)
-            iter_vector.assert_called_once()
-            v_args, v_kwargs = iter_vector.call_args
-            self.assertEqual(v_args, (
-                [segment_a.audio.filename, segment_b.audio.filename],))
-            np.testing.assert_allclose(v_kwargs['starts'], [0.5, 0.6])
-            np.testing.assert_allclose(v_kwargs['ends'], [1.8, 1.9])
-
-            iter_cnn.assert_called_once()
-            c_args, c_kwargs = iter_cnn.call_args
-            self.assertEqual(c_args, ([segment_c.audio.filename],))
-            np.testing.assert_allclose(c_kwargs['starts'], [0.7])
-            np.testing.assert_allclose(c_kwargs['ends'], [2.0])
-
-            key_hidden_a = store.make_echoframe_key('hidden_state',
+            hidden_a = store.make_echoframe_key('hidden_state',
                 model_name='wav2vec2', phraser_key=segment_a.key, layer=1,
                 collar=500)
-            key_hidden_b = store.make_echoframe_key('hidden_state',
+            hidden_b = store.make_echoframe_key('hidden_state',
                 model_name='wav2vec2', phraser_key=segment_b.key, layer=1,
                 collar=500)
-            key_hidden_c = store.make_echoframe_key('hidden_state',
-                model_name='wav2vec2', phraser_key=segment_c.key, layer=1,
-                collar=500)
-            key_cnn_a = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_a.key, collar=500)
-            key_cnn_b = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_b.key, collar=500)
-            key_cnn_c = store.make_echoframe_key('cnn',
-                model_name='wav2vec2', phraser_key=segment_c.key, collar=500)
+            cnn_a = store.make_echoframe_key('cnn', model_name='wav2vec2',
+                phraser_key=segment_a.key, collar=500)
+            cnn_b = store.make_echoframe_key('cnn', model_name='wav2vec2',
+                phraser_key=segment_b.key, collar=500)
 
-            np.testing.assert_array_equal(store.load(key_hidden_a),
-                np.array([[1.0, 2.0], [5.0, 6.0]]))
-            np.testing.assert_array_equal(store.load(key_hidden_b),
-                np.array([[15.0, 16.0], [17.0, 18.0]]))
-            np.testing.assert_array_equal(store.load(key_hidden_c),
-                np.array([[88.0, 88.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_a),
-                np.array([[7.0, 8.0], [9.0, 10.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_b),
-                np.array([[99.0, 99.0]]))
-            np.testing.assert_array_equal(store.load(key_cnn_c),
-                np.array([[19.0, 20.0], [23.0, 24.0]]))
-            self.assertEqual(print_mock.call_args_list[-1], mock.call(
-                'embeddings computed for 2 segments, cnn features computed '
-                'for 2 segments'))
+            iter_vector.assert_called_once()
+            args, kwargs = iter_vector.call_args
+            self.assertEqual(args, (
+                [segment_a.audio.filename, segment_b.audio.filename],))
+            self.assertEqual(kwargs['numpify_output'], True)
+            np.testing.assert_array_equal(store.load(hidden_a),
+                np.array([[91.0, 92.0]]))
+            np.testing.assert_array_equal(store.load(hidden_b),
+                np.array([[7.0, 8.0], [11.0, 12.0]]))
+            np.testing.assert_array_equal(store.load(cnn_a),
+                np.array([[3.0, 4.0], [5.0, 6.0]]))
+            np.testing.assert_array_equal(store.load(cnn_b),
+                np.array([[93.0, 94.0]]))
 
-    def test_nothing_missing_skips_model_and_iterators(self):
+    def test_batch_groups_hidden_state_and_cnn_items_by_segment(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segments = [
+                _make_segment(key=_pk('aabb')),
+                _make_segment(key=_pk('ccdd'), start_seconds=1.1),
+                _make_segment(key=_pk('eeff'), start_seconds=1.2),
+            ]
+            outputs = [
+                types.SimpleNamespace(name=f'output-{index}')
+                for index in range(3)
+            ]
+            hidden_items = [
+                [{'item': 'hidden-a'}],
+                [{'item': 'hidden-b'}],
+                [{'item': 'hidden-c'}],
+            ]
+            cnn_items = [
+                {'item': 'cnn-a'},
+                {'item': 'cnn-b'},
+                {'item': 'cnn-c'},
+            ]
+            with mock.patch.object(store, 'load_model',
+                return_value='model'):
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True,
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_segment_features,
+                        'make_embedding_items', side_effect=hidden_items):
+                        with mock.patch.object(batch_segment_features,
+                            'make_cnn_feature_item', side_effect=cnn_items):
+                            with mock.patch.object(batch_segment_features,
+                                'StoreWriter', RecordingBatchWriter):
+                                compute_embeddings_batch(segments, [1, 'cnn'],
+                                    'wav2vec2', store=store, batch_size=2,
+                                    store_queue_size=8, verbose=False)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.max_queue_size, 8)
+            self.assertEqual(writer.submitted, [
+                [
+                    {'item': 'hidden-a'}, {'item': 'cnn-a'},
+                    {'item': 'hidden-b'}, {'item': 'cnn-b'},
+                ],
+                [{'item': 'hidden-c'}, {'item': 'cnn-c'}],
+            ])
+
+    def test_complete_mixed_cache_skips_model_and_inference(self):
         tmpdir, store = _make_store()
         with tmpdir:
             segment = _make_segment(key=_pk('aabb'))
@@ -1795,68 +1580,39 @@ class TestComputeEmbeddingsAndCnnFeaturesBatch(unittest.TestCase):
             _put_cnn_feature(store, 'aabb', 500, 'wav2vec2',
                 np.array([[3.0, 4.0]]))
             with mock.patch.object(store, 'load_model') as load_model:
-                with mock.patch.object(
-                    batch_embeddings_cnn_features.to_vector,
-                    'iter_filename_batch_to_vector', create=True) as (
-                    iter_vector):
-                    with mock.patch.object(
-                        batch_embeddings_cnn_features.to_vector,
-                        'iter_filename_batch_to_cnn', create=True) as (
-                        iter_cnn):
-                        with mock.patch('builtins.print') as print_mock:
-                            result = compute_embeddings_and_cnn_features_batch(
-                                [segment], [1], 'wav2vec2', store=store)
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True
+                    ) as iter_vector:
+                    result = compute_embeddings_batch([segment], [1, 'cnn'],
+                        'wav2vec2', store=store, verbose=False)
 
             self.assertIsNone(result)
             load_model.assert_not_called()
             iter_vector.assert_not_called()
-            iter_cnn.assert_not_called()
-            self.assertEqual(print_mock.call_count, 2)
 
-    def test_batch_size_controls_write_chunking_and_queue_size(self):
+    def test_spidr_cnn_requests_fail_before_request_or_model_work(self):
         tmpdir, store = _make_store()
-        RecordingBatchWriter.instances = []
         with tmpdir:
-            segment_a = _make_segment(key=_pk('aabb'))
-            segment_b = _make_segment(key=_pk('ccdd'), start_seconds=1.1,
-                end_seconds=1.4)
-            segment_c = _make_segment(key=_pk('eeff'), start_seconds=1.2,
-                end_seconds=1.5)
-            outputs = [
-                types.SimpleNamespace(hidden_states=[None, None],
-                    extract_features=None)
-                for _ in range(3)
-            ]
-            hidden_items = [
-                [{'item': 'hs-a'}], [{'item': 'hs-b'}], [{'item': 'hs-c'}]]
-            cnn_items = [
-                {'item': 'cnn-a'}, {'item': 'cnn-b'}, {'item': 'cnn-c'}]
-            with mock.patch.object(store, 'load_model',
-                return_value='model'):
-                with mock.patch.object(
-                    batch_embeddings_cnn_features.to_vector,
-                    'iter_filename_batch_to_vector', create=True,
-                    return_value=iter(outputs)):
-                    with mock.patch.object(batch_embeddings_cnn_features,
-                        'make_embedding_items', side_effect=hidden_items):
-                        with mock.patch.object(batch_embeddings_cnn_features,
-                            'make_cnn_feature_item', side_effect=cnn_items):
-                            with mock.patch.object(
-                                batch_embeddings_cnn_features, 'StoreWriter',
-                                RecordingBatchWriter):
-                                with mock.patch('builtins.print'):
-                                    compute_embeddings_and_cnn_features_batch(
-                                        [segment_a, segment_b, segment_c],
-                                        [1], 'wav2vec2', store=store,
-                                        store_queue_size=8, batch_size=2)
+            store.register_model('spidr-model', architecture='spidr')
+            segment = _make_segment(key=_pk('aabb'))
+            with mock.patch.object(store, 'load_model') as load_model:
+                with mock.patch.object(segment_features,
+                    'find_embedding_layers') as find_layers:
+                    with self.assertRaisesRegex(ValueError,
+                        'not supported for SpidR'):
+                        compute_embeddings(segment, ['cnn'],
+                            'spidr-model', store=store)
 
-            writer = RecordingBatchWriter.instances[0]
-            self.assertEqual(writer.max_queue_size, 8)
-            self.assertEqual(writer.submitted, [
-                [{'item': 'hs-a'}, {'item': 'cnn-a'},
-                    {'item': 'hs-b'}, {'item': 'cnn-b'}],
-                [{'item': 'hs-c'}, {'item': 'cnn-c'}],
-            ])
+                with mock.patch.object(batch_segment_features,
+                    'MissingSegments') as missing_segments:
+                    with self.assertRaisesRegex(ValueError,
+                        'not supported for SpidR'):
+                        compute_embeddings_batch([segment], ['cnn'],
+                            'spidr-model', store=store)
+
+            load_model.assert_not_called()
+            find_layers.assert_not_called()
+            missing_segments.assert_not_called()
 
 
 if __name__ == '__main__':

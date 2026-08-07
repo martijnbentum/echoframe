@@ -274,6 +274,12 @@ def normalise_layers(layers):
     if len(layers_list) == 0:
         raise ValueError('layers must be a non-empty list')
     for layer in layers_list:
+        if layer == 'cnn':
+            m = "layer 'cnn' is not a transformer layer index; use "
+            m += 'compute_cnn_features_batch (or '
+            m += 'compute_embeddings_and_cnn_features_batch for both) to '
+            m += 'request cnn output'
+            raise ValueError(m)
         if not isinstance(layer, int):
             raise ValueError(f'layer must be int {layer}, {layers_list}')
         if layer < 0:

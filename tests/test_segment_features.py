@@ -364,6 +364,46 @@ class TestSegmentTimes(unittest.TestCase):
         self.assertEqual(collared_end, 1.5)
 
 
+class TestNormaliseLayers(unittest.TestCase):
+    def test_single_int_becomes_list(self):
+        self.assertEqual(utils_segment_features.normalise_layers(3), [3])
+
+    def test_list_of_ints_passes_through(self):
+        self.assertEqual(utils_segment_features.normalise_layers([1, 3, 5]),
+            [1, 3, 5])
+
+    def test_none_raises(self):
+        with self.assertRaisesRegex(ValueError,
+            'layers must be int or a list of ints, got None'):
+            utils_segment_features.normalise_layers(None)
+
+    def test_empty_list_raises(self):
+        with self.assertRaisesRegex(ValueError,
+            'layers must be a non-empty list'):
+            utils_segment_features.normalise_layers([])
+
+    def test_negative_layer_raises(self):
+        with self.assertRaisesRegex(ValueError,
+            'layer must be non-negative integers'):
+            utils_segment_features.normalise_layers([-1])
+
+    def test_non_int_non_cnn_raises_generic_message(self):
+        with self.assertRaisesRegex(ValueError, 'layer must be int'):
+            utils_segment_features.normalise_layers([1.5])
+        with self.assertRaisesRegex(ValueError, 'layer must be int'):
+            utils_segment_features.normalise_layers(['x'])
+
+    def test_cnn_alone_raises_helpful_message(self):
+        with self.assertRaisesRegex(ValueError,
+            'compute_cnn_features_batch'):
+            utils_segment_features.normalise_layers(['cnn'])
+
+    def test_cnn_mixed_with_valid_layers_raises_helpful_message(self):
+        with self.assertRaisesRegex(ValueError,
+            'compute_embeddings_and_cnn_features_batch'):
+            utils_segment_features.normalise_layers([1, 'cnn'])
+
+
 class TestComputeEmbeddings(unittest.TestCase):
     def test_segment_request_builds_expected_keys_and_times(self):
         tmpdir, store = _make_store()

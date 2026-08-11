@@ -400,8 +400,22 @@ metadatas = store.load_many_metadata([echoframe_key])
 payloads = store.load_many([echoframe_key], keep_missing=True)
 ```
 
-Compute hidden states, CNN feature-extractor output, or both through the
-embedding APIs:
+Compute CNN feature-extractor output for one phraser segment without running
+the transformer:
+
+```python
+from echoframe import compute_cnn
+
+compute_cnn(segment, 'wav2vec2', store, collar=500)
+```
+
+`compute_cnn(...)` is the efficient CNN-only path for a single segment. It
+supports the model families handled by `to_vector.filename_to_cnn`, including
+wav2vec2, HuBERT, and WavLM, and rejects SpidR models. Existing output is
+skipped unless `overwrite=True` is passed.
+
+CNN output can also be requested with hidden states through the embedding
+APIs:
 
 ```python
 from echoframe.batch_segment_features import compute_embeddings_batch
@@ -412,8 +426,8 @@ compute_embeddings_batch(segments, ['cnn'], 'wav2vec2', store)
 ```
 
 `'cnn'` must appear inside the `layers` iterable; scalar `'cnn'` is rejected.
-CNN requests use the same full forward pass as hidden-state requests and are
-not supported for SpidR models.
+These embedding API requests use the full forward pass, even for a CNN-only
+request, and are not supported for SpidR models.
 
 `compute_embeddings_batch(...)` submits prepared results to a background
 writer as one `save_many()` chunk per configured batch. The configured

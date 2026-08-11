@@ -13,7 +13,8 @@ from unittest import mock
 
 import numpy as np
 
-from echoframe import Store
+import echoframe
+from echoframe import compute_cnn, Store
 from echoframe.index import LmdbIndex
 from echoframe.metadata import EchoframeMetadata
 from echoframe.output_storage import Hdf5ShardStore
@@ -34,6 +35,7 @@ from echoframe.batch_segment_features import (
 )
 from echoframe.segment_features import (
     _segment_times,
+    compute_cnn as compute_cnn_implementation,
     compute_codebook_indices,
     compute_embeddings,
 )
@@ -115,6 +117,7 @@ class TestFeatureStoreContract(unittest.TestCase):
     def test_compute_helpers_require_store(self):
         helpers = (
             compute_embeddings,
+            compute_cnn,
             compute_codebook_indices,
             compute_embeddings_batch,
             compute_codebook_indices_batch,
@@ -130,6 +133,7 @@ class TestFeatureStoreContract(unittest.TestCase):
         segment = _make_segment()
         cases = (
             (compute_embeddings, (segment, 3, 'wav2vec2')),
+            (compute_cnn, (segment, 'wav2vec2')),
             (compute_codebook_indices, (segment, 'wav2vec2')),
             (compute_embeddings_batch, ([segment], 3, 'wav2vec2')),
             (compute_codebook_indices_batch, ([segment], 'wav2vec2')),
@@ -1328,6 +1332,122 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
                 np.array([[0, 1], [1, 0]]))
             self.assertIsNone(store.load_metadata(key_b))
 
+
+
+class TestComputeCnn(unittest.TestCase):
+    def test_cnn_only_stores_complete_matrix_without_full_forward(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            matrix = np.array([
+                [0.0, 1.0],
+                [2.0, 3.0],
+                [4.0, 5.0],
+            ])
+            outputs = types.SimpleNamespace(
+                extract_features=matrix[np.newaxis, :, :])
+            with mock.patch.object(store, 'load_model',
+                return_value='model') as load_model:
+                with mock.patch.object(utils_segment_features.to_vector,
+                    'filename_to_cnn', return_value=outputs
+                    ) as filename_to_cnn:
+                    with mock.patch.object(utils_segment_features.to_vector,
+                        'filename_to_vector', create=True
+                        ) as filename_to_vector:
+                        with mock.patch.object(utils_segment_features.frame,
+                            'Frames', create=True,
+                            return_value=FakeFrames(
+                                selected_indices=[0, 1, 2])):
+                            result = compute_cnn(segment, 'wav2vec2', store,
+                                collar=500, gpu=True, tags=['cnn-test'])
+
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
+            cnn_feature = store.load_cnn_feature(cnn_key)
+            self.assertIsNone(result)
+            np.testing.assert_array_equal(cnn_feature.data, matrix)
+            self.assertEqual(cnn_feature.metadata.tags, ['cnn-test'])
+            load_model.assert_called_once_with('wav2vec2', gpu=True)
+            filename_to_cnn.assert_called_once_with(segment.audio.filename,
+                start=0.5, end=1.8, model='model', gpu=True)
+            filename_to_vector.assert_not_called()
+
+    def test_existing_cnn_output_is_skipped(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            original = np.array([[1.0, 2.0]])
+            _put_cnn_feature(store, 'aabb', 500, 'wav2vec2', original)
+            with mock.patch.object(store, 'load_model') as load_model:
+                with mock.patch.object(utils_segment_features.to_vector,
+                    'filename_to_cnn') as filename_to_cnn:
+                    result = compute_cnn(segment, 'wav2vec2', store)
+
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
+            self.assertIsNone(result)
+            np.testing.assert_array_equal(store.load(cnn_key), original)
+            load_model.assert_not_called()
+            filename_to_cnn.assert_not_called()
+
+    def test_overwrite_recomputes_and_replaces_output(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            _put_cnn_feature(store, 'aabb', 500, 'wav2vec2',
+                np.array([[1.0, 2.0]]))
+            replacement = np.array([[3.0, 4.0], [5.0, 6.0]])
+            outputs = types.SimpleNamespace(
+                extract_features=replacement[np.newaxis, :, :])
+            with mock.patch.object(store, 'load_model',
+                return_value='model'):
+                with mock.patch.object(utils_segment_features.to_vector,
+                    'filename_to_cnn', return_value=outputs
+                    ) as filename_to_cnn:
+                    with mock.patch.object(utils_segment_features.frame,
+                        'Frames', create=True,
+                        return_value=FakeFrames(selected_indices=[0, 1])):
+                        compute_cnn(segment, 'wav2vec2', store,
+                            overwrite=True, tags=['replacement'])
+
+            cnn_key = store.make_echoframe_key('cnn',
+                model_name='wav2vec2', phraser_key=segment.key, collar=500)
+            cnn_feature = store.load_cnn_feature(cnn_key)
+            np.testing.assert_array_equal(cnn_feature.data, replacement)
+            self.assertEqual(cnn_feature.metadata.tags, ['replacement'])
+            filename_to_cnn.assert_called_once()
+
+    def test_spidr_is_rejected_from_metadata_and_resolved_model(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            store.register_model('spidr-metadata', architecture='spidr')
+            store.register_model('spidr-resolved')
+            segment = _make_segment(key=_pk('aabb'))
+
+            with mock.patch.object(store, 'load_model') as load_model:
+                with self.assertRaisesRegex(ValueError,
+                    'not supported for SpidR'):
+                    compute_cnn(segment, 'spidr-metadata', store)
+            load_model.assert_not_called()
+
+            with mock.patch.object(store, 'load_model',
+                return_value='spidr-model') as load_model:
+                with mock.patch.object(
+                    utils_segment_features.to_vector.model_registry,
+                    'model_to_type', return_value='spidr'):
+                    with mock.patch.object(utils_segment_features.to_vector,
+                        'filename_to_cnn') as filename_to_cnn:
+                        with self.assertRaisesRegex(ValueError,
+                            'not supported for SpidR'):
+                            compute_cnn(segment, 'spidr-resolved', store)
+            load_model.assert_called_once_with('spidr-resolved', gpu=False)
+            filename_to_cnn.assert_not_called()
+
+    def test_compute_cnn_is_public_without_exporting_internal_helper(self):
+        self.assertIs(echoframe.compute_cnn, compute_cnn)
+        self.assertIn('compute_cnn', echoframe.__all__)
+        self.assertIsNot(echoframe.compute_cnn, compute_cnn_implementation)
+        self.assertFalse(hasattr(echoframe, 'compute_cnn_for_segment'))
 
 
 class TestComputeEmbeddingsCnn(unittest.TestCase):

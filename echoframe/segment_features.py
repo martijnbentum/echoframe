@@ -3,6 +3,7 @@
 from .utils_segment_features import (
     cnn_missing,
     codebook_indices_missing, codebook_matrix_missing,
+    compute_cnn_for_segment,
     compute_codebook_indices as compute_codebook_indices_for_segment,
     compute_embeddings_for_segment,
     find_embedding_layers, make_cnn_feature_item, make_embedding_items,
@@ -56,6 +57,35 @@ def compute_embeddings(segment, layers, model_name, store, collar=500,
     if missing_layers and verbose:
         print(f'embeddings computed for layers {missing_layers}')
     if missing_cnn and verbose: print('cnn features computed and stored')
+
+
+def compute_cnn(segment, model_name, store, collar=500, gpu=False, tags=None,
+    overwrite=False, verbose=False):
+    '''Compute and store CNN output for one phraser segment.
+    segment:      phraser segment object with key, timing, and audio
+    model_name:   registered model name
+    store:        echoframe Store used for model outputs
+    collar:       context window in milliseconds
+    gpu:          whether to run CNN extraction on GPU
+    tags:         optional tags stored on newly written metadata
+    overwrite:    whether to replace an existing CNN feature
+    '''
+    if store is None: raise ValueError('store must be an echoframe Store')
+    reject_spidr_cnn_request(store, model_name)
+    phraser_key = segment.key
+    if not overwrite and not cnn_missing(store, phraser_key, collar,
+        model_name):
+        if verbose: print('cnn features found in store')
+        return
+    source_id = store.phraser_registry.segment_to_source_id(segment)
+    model = store.load_model(model_name, gpu=gpu)
+    reject_spidr_cnn_request(store, model_name, model=model)
+    outputs = compute_cnn_for_segment(segment, collar, model, gpu)
+    item = make_cnn_feature_item(outputs, segment, collar, model_name, store,
+        tags, phraser_source_id=source_id)
+    store.save(item['echoframe_key'], item['metadata'], item['data'])
+    if verbose: print('cnn features computed and stored')
+
 
 def compute_codebook_indices(segment, model_name, store, collar=500,
     gpu=False, tags=None, verbose=False):

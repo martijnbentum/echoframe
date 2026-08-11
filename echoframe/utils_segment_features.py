@@ -58,6 +58,13 @@ def compute_embeddings_for_segment(segment, collar, model, gpu):
     return outputs
 
 
+def compute_cnn_for_segment(segment, collar, model, gpu):
+    '''Compute CNN output for one collared segment window.'''
+    _, _, collared_start, collared_end = segment_times(segment, collar)
+    return to_vector.filename_to_cnn(segment.audio.filename,
+        start=collared_start, end=collared_end, model=model, gpu=gpu)
+
+
 def store_embeddings_from_outputs(outputs, segment, collar, layers,
     model_name, store, tags, phraser_source_id=None):
     '''Select segment frames from model outputs and store layer specific data.'''

@@ -531,6 +531,14 @@ Registered model metadata records contain:
 - `size`
 - `model_name`
 
+### Shard rollover
+
+New stores roll over when a shard has at least 20,000 indexed items or
+reaches the byte-size limit. A `save_many` batch can take a shard past
+20,000 items; the next write selects another shard. Existing shards are
+not rewritten. Set `max_shard_items` in `Store(...)` to change the
+threshold, or to `None` to use only the byte-size limit.
+
 ### Concurrency
 
 A store expects a single writer process at a time. The active shard cursor

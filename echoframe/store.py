@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 class Store:
     '''Link phraser keys to stored model outputs.'''
     def __init__(self, root, max_shard_size_bytes=1_000_000_000,
-        index=None, storage=None):
+        index=None, storage=None, max_shard_items=20_000):
         '''Initialize a store.
         root:                  store root directory
         max_shard_size_bytes:  HDF5 shard size cap
+        max_shard_items:       indexed-item rollover threshold
         index:                 optional LMDB index instance
         storage:               optional payload storage instance
         '''
@@ -40,7 +41,9 @@ class Store:
             index = LmdbIndex(self.root / 'index.lmdb', shards_root=shards_root)
         self.index = index
         if storage is None: 
-            storage = Hdf5ShardStore(shards_root, max_shard_size_bytes)
+            storage = Hdf5ShardStore(shards_root, max_shard_size_bytes,
+                max_shard_items=max_shard_items,
+                shard_entry_count=index.shard_entry_count)
         self.storage = storage
         self.config = StoreConfig(self.config_path)
         self.model_registry = ModelRegistry(self.config)

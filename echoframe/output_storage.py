@@ -73,10 +73,19 @@ class Hdf5ShardStore:
     MAX_SCAN_SUFFIXES = None
 
     def __init__(self, root, max_shard_size_bytes=1_000_000_000,
-        h5_module=None):
+        h5_module=None, max_shard_items=None, shard_entry_count=None):
+        if max_shard_items is not None:
+            if (isinstance(max_shard_items, bool)
+                    or not isinstance(max_shard_items, int)
+                    or max_shard_items < 1):
+                raise ValueError('max_shard_items must be a positive integer')
+            if shard_entry_count is None:
+                raise ValueError('shard_entry_count is required')
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.max_shard_size_bytes = max_shard_size_bytes
+        self.max_shard_items = max_shard_items
+        self.shard_entry_count = shard_entry_count
         self.h5 = h5_module or self._import_h5()
         self.health_events = []
         self.max_health_events = 500
@@ -315,7 +324,8 @@ class Hdf5ShardStore:
                     error=state['error'])
                 index += 1
                 continue
-            if state['byte_size'] < self.max_shard_size_bytes:
+            if (state['byte_size'] < self.max_shard_size_bytes
+                    and self._has_item_room(shard_id)):
                 return shard_id
             index += 1
 
@@ -323,11 +333,17 @@ class Hdf5ShardStore:
         key = _storage_key(metadata)
         cached = self.active_shard_ids.get(key)
         if cached is not None:
-            if cached['byte_size'] < self.max_shard_size_bytes:
+            if (cached['byte_size'] < self.max_shard_size_bytes
+                    and self._has_item_room(cached['shard_id'])):
                 return cached['shard_id']
         shard_id = self._active_shard_id(*key)
         self._set_cached_shard_id(key, shard_id)
         return shard_id
+
+    def _has_item_room(self, shard_id):
+        '''Check indexed item count without opening an HDF5 shard.'''
+        if self.max_shard_items is None: return True
+        return self.shard_entry_count(shard_id) < self.max_shard_items
 
     def _next_cached_active_shard_id(self, metadata, current_shard_id):
         key = _storage_key(metadata)

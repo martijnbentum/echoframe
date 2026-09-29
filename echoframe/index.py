@@ -249,6 +249,11 @@ class LmdbIndex:
                 shard_ids.append(shard_id)
         return shard_ids
 
+    def shard_entry_count(self, shard_id):
+        '''Return the number of indexed items in a shard.'''
+        stats = self.load_shard_metadata(shard_id)
+        return 0 if stats is None else stats['entry_count']
+
     def load_shard_metadata(self, shard_id):
         '''Return shard-level stats.'''
         with lmdb_helper.read_txn(self.env) as txn:

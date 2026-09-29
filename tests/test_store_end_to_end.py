@@ -25,6 +25,7 @@ from tests.helpers import (
     payload_to_list,
     pk as _pk,
     put as _put,
+    put_item as _put_item,
     put_many as _put_many,
 )
 
@@ -34,6 +35,68 @@ from tests.helpers import (
 @unittest.skipUnless(importlib.util.find_spec('h5py'),
     'h5py is not installed')
 class TestStoreEndToEnd(unittest.TestCase):
+
+    def test_store_defaults_to_twenty_thousand_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = Store(tmpdir)
+            self.assertEqual(store.storage.max_shard_items, 20_000)
+            store.close()
+
+    def test_default_item_limit_rolls_over_after_indexed_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = Store(tmpdir, max_shard_items=2)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            second = _put(store, phraser_key='phrase-2', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[2.0]])
+            third = _put(store, phraser_key='phrase-3', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[3.0]])
+            first_path = Path(tmpdir) / 'shards' / f'{first.shard_id}.h5'
+            first_size = first_path.stat().st_size
+            store.close()
+
+            reopened = Store(tmpdir, max_shard_items=2)
+            fourth = _put(reopened, phraser_key='phrase-4', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[4.0]])
+            fifth = _put(reopened, phraser_key='phrase-5', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[5.0]])
+            self.assertEqual(first.shard_id, second.shard_id)
+            self.assertEqual(third.shard_id, fourth.shard_id)
+            self.assertNotEqual(first.shard_id, third.shard_id)
+            self.assertNotEqual(third.shard_id, fifth.shard_id)
+            self.assertEqual(first_path.stat().st_size, first_size)
+            self.assertEqual(reopened.index.shard_entry_count(first.shard_id),
+                2)
+            self.assertEqual(reopened.index.shard_entry_count(third.shard_id),
+                2)
+            reopened.close()
+
+    def test_item_limit_allows_one_batch_to_overshoot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = Store(tmpdir, max_shard_items=2)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            items = [_put_item(store, phraser_key=f'phrase-{number}',
+                collar=100, model_name='wav2vec2',
+                output_type='hidden_state', layer=1, data=[[float(number)]])
+                for number in (2, 3, 4)]
+            store.save_many(items)
+            batch_metadata = store.load_many_metadata(
+                [item['echoframe_key'] for item in items])
+            next_item = _put(store, phraser_key='phrase-5', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[5.0]])
+            self.assertTrue(all(metadata.shard_id == first.shard_id
+                for metadata in batch_metadata))
+            self.assertEqual(store.index.shard_entry_count(first.shard_id), 4)
+            self.assertNotEqual(next_item.shard_id, first.shard_id)
+            store.close()
 
     def test_equivalent_paths_reuse_the_same_lmdb_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

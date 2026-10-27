@@ -290,13 +290,15 @@ class Hdf5ShardStore:
                 raise ValueError(message) from exc
             with handle:
                 for index, metadata in shard_items:
-                    if metadata.dataset_path not in handle:
+                    try:
+                        dataset = handle[metadata.dataset_path]
+                    except KeyError as exc:
                         message = f'payload dataset {metadata.dataset_path} '
                         message += f'is missing from shard {shard_id} but '
                         message += 'still indexed; '
                         message += _INCONSISTENT_STORE_HINT
-                        raise ValueError(message)
-                    yield index, metadata, handle[metadata.dataset_path]
+                        raise ValueError(message) from exc
+                    yield index, metadata, dataset
 
     def _active_shard_id(self, storage_name, output_type):
         stem = f'{sanitize_name(storage_name)}_{sanitize_name(output_type)}'

@@ -19,6 +19,7 @@ from echoframe.output_storage import (
 from echoframe.store import Store
 from tests.helpers import (
     FakeEnv,
+    FakeH5File,
     FakeH5Module,
     make_fake_store,
     put as _put,
@@ -59,6 +60,60 @@ class TestStorageRuntime(unittest.TestCase):
             store.storage._delete_file(stored.shard_id)
             with self.assertRaisesRegex(ValueError, 'verify_integrity'):
                 store.storage.load_many([stored])
+
+    def test_batch_readers_avoid_redundant_dataset_membership_checks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            first = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0], [3.0]])
+            second = _put(store, phraser_key='phrase-2', collar=100,
+                model_name='hubert', output_type='hidden_state',
+                layer=1, data=[[5.0], [7.0]])
+            rows = [second, None, first, second]
+            readers = [
+                (store.storage.load_many,
+                    [[[5.0], [7.0]], None, [[1.0], [3.0]], [[5.0], [7.0]]]),
+                (store.storage.load_many_frames,
+                    [[7.0], None, [3.0], [7.0]])]
+            for reader, expected in readers:
+                with self.subTest(reader=reader.__name__):
+                    with mock.patch.object(FakeH5File, '__contains__',
+                        side_effect=AssertionError('redundant HDF5 lookup')):
+                        actual = reader(rows)
+                    self.assertEqual(actual, expected)
+
+    def test_batch_readers_keep_missing_dataset_context(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            stored = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            store.storage.delete(stored)
+            for reader in (store.storage.load_many,
+                store.storage.load_many_frames):
+                with self.subTest(reader=reader.__name__):
+                    with self.assertRaises(ValueError) as caught:
+                        reader([stored])
+                    message = str(caught.exception)
+                    self.assertIn(stored.dataset_path, message)
+                    self.assertIn(stored.shard_id, message)
+                    self.assertIn('verify_integrity', message)
+                    self.assertIsInstance(caught.exception.__cause__, KeyError)
+
+    def test_batch_readers_do_not_report_io_errors_as_missing_datasets(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            stored = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            for reader in (store.storage.load_many,
+                store.storage.load_many_frames):
+                with self.subTest(reader=reader.__name__):
+                    with mock.patch.object(FakeH5File, '__getitem__',
+                        side_effect=OSError('payload I/O failure')):
+                        with self.assertRaisesRegex(OSError, 'I/O failure'):
+                            reader([stored])
 
     def test_store_many_batches_writes_by_shard(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

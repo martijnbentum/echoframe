@@ -36,6 +36,35 @@ from tests.helpers import (
     'h5py is not installed')
 class TestStoreEndToEnd(unittest.TestCase):
 
+    def test_real_batch_readers_keep_order_and_missing_dataset_errors(self):
+        tmpdir, store = make_real_store()
+        with tmpdir:
+            try:
+                first = _put(store, phraser_key='phrase-1', collar=100,
+                    model_name='wav2vec2', output_type='hidden_state',
+                    layer=1, data=[[1.0], [3.0]])
+                second = _put(store, phraser_key='phrase-2', collar=100,
+                    model_name='hubert', output_type='hidden_state',
+                    layer=1, data=[[5.0], [7.0]])
+                rows = [second, None, first, second]
+                payloads = store.storage.load_many(rows)
+                means = store.storage.load_many_frames(rows, frame='mean')
+                self.assertEqual([payload_to_list(p) for p in payloads],
+                    [[[5.0], [7.0]], None, [[1.0], [3.0]], [[5.0], [7.0]]])
+                self.assertEqual([payload_to_list(p) for p in means],
+                    [[6.0], None, [2.0], [6.0]])
+                missing = first.copy(dataset_path='/absent/nested/payload')
+                for reader in (store.storage.load_many,
+                    store.storage.load_many_frames):
+                    with self.subTest(reader=reader.__name__):
+                        with self.assertRaisesRegex(ValueError,
+                            'verify_integrity') as caught:
+                            reader([missing])
+                        self.assertIsInstance(caught.exception.__cause__,
+                            KeyError)
+            finally:
+                store.close()
+
     def test_store_defaults_to_twenty_thousand_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = Store(tmpdir)

@@ -400,6 +400,13 @@ metadatas = store.load_many_metadata([echoframe_key])
 payloads = store.load_many([echoframe_key], keep_missing=True)
 ```
 
+Batch payload and frame reads group requests by shard, opening each HDF5
+file once per batch while preserving input order and duplicate requests.
+They open each requested dataset directly, avoiding a separate existence
+lookup that can add substantial metadata I/O on network storage. An indexed
+dataset that is missing still raises `ValueError` with its path, shard, and
+an integrity-check hint; other HDF5 I/O errors propagate.
+
 Compute CNN feature-extractor output for one phraser segment without running
 the transformer:
 

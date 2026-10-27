@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+from progressbar import progressbar
 
 from .metadata import utc_now
 
@@ -167,15 +168,16 @@ class Hdf5ShardStore:
             return _read_frame(dataset, metadata.shape, frame)
 
     def load_many_frames(self, metadata_list, frame='center'):
-        '''Load frame vectors for multiple matrix payloads.'''
+        '''Load frame vectors with progress for each available matrix payload.'''
         _validate_frame_mode(frame)
         rows = [None] * len(metadata_list)
         for metadata in metadata_list:
             if metadata is None:
                 continue
             _validate_matrix_metadata(metadata)
-        for index, metadata, dataset in self._iter_shard_datasets(
-            metadata_list):
+        n_tokens = sum(metadata is not None for metadata in metadata_list)
+        datasets = self._iter_shard_datasets(metadata_list)
+        for index, metadata, dataset in progressbar(datasets, max_value=n_tokens):
             rows[index] = _read_frame(dataset, metadata.shape, frame)
         return rows
 

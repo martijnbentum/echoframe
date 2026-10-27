@@ -45,6 +45,11 @@ from echoframe import Store
 store = Store('cache')
 ```
 
+`store.load_many_frames(keys, frame='mean')` shows progress while loading
+and pooling each available payload. The same progress bar appears for
+`'center'`, `'first'`, and `'last'`; missing entries do not count toward the
+total. Each HDF5 shard is still opened only once per call.
+
 For hidden-state retrieval, `Store` now exposes two typed loaders:
 
 - `store.load_embedding(echoframe_key)`

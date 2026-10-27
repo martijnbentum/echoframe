@@ -208,6 +208,13 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(rows, [[3.0], None, [6.0]])
         self.assertEqual(len(read_paths), 1)
 
+    def test_load_many_frames_handles_empty_and_missing_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            self.assertEqual(store.load_many_frames([], frame='mean'), [])
+            self.assertEqual(store.storage.load_many_frames([None, None],
+                frame='mean'), [None, None])
+
     def test_load_frame_validates_mode_and_shape(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

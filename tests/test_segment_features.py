@@ -589,6 +589,49 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(kwargs, {'model': 'model', 'gpu': False,
                 'numpify_output': True, 'batch_size': 2})
 
+    def test_batch_on_gpu_passes_model_source_to_to_vector(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            store.register_model('w2v-hf',
+                huggingface_id='facebook/wav2vec2-base')
+            segment = _make_segment(key=_pk('aabb'))
+            hidden_states = [np.zeros((1, 4, 2)) for _ in range(4)]
+            outputs = [types.SimpleNamespace(hidden_states=hidden_states)]
+            with mock.patch.object(store, 'load_model') as load_model:
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True,
+                    return_value=iter(outputs)
+                    ) as iter_filename_batch_to_vector:
+                    with mock.patch.object(utils_segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        return_value=FakeFrames(selected_indices=[1, 2])):
+                        with mock.patch('builtins.print'):
+                            compute_embeddings_batch([segment], 3, 'w2v-hf',
+                                store=store, gpu=True)
+
+            load_model.assert_not_called()
+            _, kwargs = iter_filename_batch_to_vector.call_args
+            self.assertEqual(kwargs['model'], 'facebook/wav2vec2-base')
+            self.assertTrue(kwargs['gpu'])
+
+    def test_batch_on_gpu_rejects_spidr_cnn_from_model_source(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            model_dir = Path(tmpdir.name) / 'spidr'
+            model_dir.mkdir()
+            (model_dir / 'config.json').write_text('{"model_type": "spidr"}')
+            store.register_model('spidr-local', local_path=str(model_dir))
+            segment = _make_segment(key=_pk('aabb'))
+            with mock.patch.object(batch_segment_features.to_vector,
+                'iter_filename_batch_to_vector', create=True
+                ) as iter_filename_batch_to_vector:
+                with mock.patch('builtins.print'):
+                    with self.assertRaisesRegex(ValueError,
+                        'not supported for SpidR'):
+                        compute_embeddings_batch([segment], ['cnn'],
+                            'spidr-local', store=store, gpu=True)
+            iter_filename_batch_to_vector.assert_not_called()
+
     def test_batch_groups_writer_items_and_uses_queue_size(self):
         tmpdir, store = _make_store()
         RecordingBatchWriter.instances = []
@@ -1431,7 +1474,7 @@ class TestComputeCnn(unittest.TestCase):
             load_model.assert_not_called()
 
             with mock.patch.object(store, 'load_model',
-                return_value='spidr-model') as load_model:
+                return_value=mock.sentinel.spidr_model) as load_model:
                 with mock.patch.object(
                     utils_segment_features.to_vector.model_registry,
                     'model_to_type', return_value='spidr'):

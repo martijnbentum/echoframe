@@ -290,14 +290,19 @@ def split_requested_layers(layers):
 
 
 def reject_spidr_cnn_request(store, model_name, model=None):
-    '''Reject unsupported SpidR cnn requests before model inference.'''
+    '''Reject unsupported SpidR cnn requests before model inference.
+    model may be a loaded model or a model source (name or path).
+    '''
     metadata = store.load_model_metadata(model_name)
     architecture = getattr(metadata, 'architecture', None)
     if isinstance(architecture, str) and architecture.lower() == 'spidr':
         raise ValueError("'cnn' output is not supported for SpidR models")
     if model is None: return
     from to_vector import model_registry
-    if model_registry.model_to_type(model) == 'spidr':
+    if isinstance(model, str):
+        model_type = model_registry.filename_model_type(model)
+    else: model_type = model_registry.model_to_type(model)
+    if model_type == 'spidr':
         raise ValueError("'cnn' output is not supported for SpidR models")
 
 

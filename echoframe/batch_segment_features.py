@@ -3,6 +3,7 @@ from pathlib import Path
 
 import to_vector
 
+from . import model_loader
 from .utils_segment_features import (
     StoreWriter,
     make_cnn_feature_item, make_embedding_items,
@@ -45,7 +46,12 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     for item in missing.missing:
         missing_segments.append(item.segment)
     source_id = store.phraser_registry.segments_to_source_id(missing_segments)
-    model = store.load_model(model_name, gpu=gpu)
+    # On GPU, pass the model source so to-vector runs the batch in a child
+    # process that frees the GPU when it exits.
+    if gpu:
+        metadata = store.load_model_metadata(model_name)
+        model = model_loader.model_name_or_path(metadata)
+    else: model = store.load_model(model_name, gpu=gpu)
     if cnn_requested:
         reject_spidr_cnn_request(store, model_name, model=model)
     write_segment_count = _DEFAULT_WRITE_SEGMENT_COUNT

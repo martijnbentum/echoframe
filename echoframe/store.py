@@ -101,16 +101,18 @@ class Store:
         '''Register a phraser store path under source_id in this config.'''
         return self.phraser_registry.register(source_id, path)
 
-    def attach_phraser_store(self, source_id, phraser_store):
+    def attach_phraser_store(self, source_id, phraser_store, *,
+        set_back_reference=True):
         '''Attach a live phraser Store for this process under source_id.
         Registers source_id -> phraser_store.path (idempotent; raises on a
         path conflict) and keeps the live store so phraser objects on
         metadata can be loaded. Does not open or load any store itself.
 
-        Also sets a back-reference (phraser_store.echoframe_store = self) so
-        bound phraser segments can reach this store, e.g. segment.embedding().
+        set_back_reference: set phraser_store.echoframe_store to this store
+            (default True). False leaves any existing back-reference unchanged;
+            use it when sharing Phraser across multiple embedding stores.
         '''
-        phraser_store.echoframe_store = self
+        if set_back_reference: phraser_store.echoframe_store = self
         return self.phraser_registry.attach(source_id, phraser_store)
 
     def load_phraser_store(self, source_id):

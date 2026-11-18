@@ -302,6 +302,16 @@ embedding = word.embedding('wav2vec2', layer=7)   # one Embedding
 embedding.data
 ```
 
+When sharing one Phraser store across multiple Echoframe stores, disable
+this reverse link. Forward annotation lookup still works, and an existing
+reverse link is left unchanged:
+
+```python
+store.attach_phraser_store('cgn-main', phraser_store,
+    set_back_reference=False)
+embedding = word.embedding('wav2vec2', layer=7, store=store)
+```
+
 Slice a stored embedding to a descendant phraser object (word, syllable, or
 phone) with `Embedding.sub_embedding(...)`. This is useful when a hidden state
 is stored at a coarser level, such as a phrase:

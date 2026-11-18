@@ -319,8 +319,39 @@ class TestPhraserStores(unittest.TestCase):
                 'load': lambda self, key: ('loaded', key),
             })()
             store.attach_phraser_store('cgn-main', phraser_store)
+            self.assertIs(phraser_store.echoframe_store, store)
             loaded = store.load_phraser_object(b'phrase-key', 'cgn-main')
         self.assertEqual(loaded, ('loaded', b'phrase-key'))
+
+    def test_attach_without_back_reference_keeps_forward_access(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _make_store(tmp)
+            self.addCleanup(store.close)
+            phraser_store = type('FakePhraserStore', (), {
+                'path': '/data/cgn',
+                'load': lambda self, key: ('loaded', key),
+            })()
+            store.attach_phraser_store('cgn-main', phraser_store,
+                set_back_reference=False)
+            self.assertFalse(hasattr(phraser_store, 'echoframe_store'))
+            self.assertIs(store.load_phraser_store('cgn-main'), phraser_store)
+            loaded = store.load_phraser_object(b'word-key', 'cgn-main')
+            self.assertEqual(loaded, ('loaded', b'word-key'))
+
+    def test_attach_without_back_reference_preserves_existing_link(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first = _make_store(Path(tmp) / 'first')
+            second = _make_store(Path(tmp) / 'second')
+            self.addCleanup(first.close)
+            self.addCleanup(second.close)
+            phraser_store = type('FakePhraserStore', (), {
+                'path': '/data/cgn',
+            })()
+            first.attach_phraser_store('cgn-main', phraser_store)
+            second.attach_phraser_store('cgn-main', phraser_store,
+                set_back_reference=False)
+            self.assertIs(phraser_store.echoframe_store, first)
+            self.assertIs(second.load_phraser_store('cgn-main'), phraser_store)
 
     def test_get_store_opens_registered_phraser_store(self):
         try:
@@ -334,6 +365,7 @@ class TestPhraserStores(unittest.TestCase):
                 self.skipTest('installed phraser Store does not self-register')
             speaker = writer.create(phraser.Speaker, name='spk-1',
                 dataset='test')
+            writer.save(speaker)
             key = speaker.key
             writer.close()
 

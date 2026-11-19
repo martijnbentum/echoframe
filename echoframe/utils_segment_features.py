@@ -406,8 +406,8 @@ def get_selected_frame_indices(outputs, segment, collar, layers):
     frames = frame.make_frames_from_outputs(outputs, start_time=collared_start)
     selected = frames.select_frames(start, end, percentage_overlap=100)
     if not selected:
-        m = f'no frames fully within {start} - {end}s, {segment!r}'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m = f'no frames fully within {start} - {end}s '
+        m += f'for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     hs = outputs.hidden_states[layers[0]]
     indices = [f.index for f in selected]
@@ -415,7 +415,7 @@ def get_selected_frame_indices(outputs, segment, collar, layers):
     if max(indices) >= frame_count:
         m = f'frame index {max(indices)} out of range for layer {layers[0]} '
         m += f'with {frame_count} frames'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m += f' for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     return indices
 
@@ -433,14 +433,14 @@ def get_selected_codebook_indices_frame_indices(indices, segment, collar):
     frames = frame.Frames(n_frames, start_time=collared_start)
     selected = frames.select_frames(start, end, percentage_overlap=100)
     if not selected:
-        m = f'no frames fully within {start} - {end}s, {segment!r}'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m = f'no frames fully within {start} - {end}s '
+        m += f'for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     indices = [f.index for f in selected]
     if max(indices) >= n_frames:
         m = f'frame index {max(indices)} out of range for codebook indices '
         m += f'with {n_frames} frames'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m += f' for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     return indices
 
@@ -454,13 +454,13 @@ def get_selected_cnn_frame_indices(outputs, segment, collar):
     frames = frame.Frames(n_frames, start_time=collared_start)
     selected = frames.select_frames(start, end, percentage_overlap=100)
     if not selected:
-        m = f'no frames fully within {start} - {end}s, {segment!r}'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m = f'no frames fully within {start} - {end}s '
+        m += f'for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     indices = [f.index for f in selected]
     if max(indices) >= n_frames:
         m = f'frame index {max(indices)} out of range for cnn features '
         m += f'with {n_frames} frames'
-        m += f'for segment {segment!r} with collar {collar} seconds'
+        m += f' for segment {segment!r} with collar {collar} ms'
         raise ValueError(m)
     return indices

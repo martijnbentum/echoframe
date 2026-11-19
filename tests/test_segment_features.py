@@ -354,6 +354,38 @@ class TestSegmentTimes(unittest.TestCase):
         self.assertEqual(collared_end, 1.5)
 
 
+class TestFrameSelectionErrors(unittest.TestCase):
+    def test_messages_name_segment_once_and_collar_in_ms(self):
+        segment = _make_segment()
+        hidden_states = [np.zeros((1, 2, 2))]
+        outputs = types.SimpleNamespace(hidden_states=hidden_states,
+            extract_features=np.zeros((1, 2, 2)))
+        indices = np.zeros((2, 2))
+        usf = utils_segment_features
+        selectors = (
+            lambda: usf.get_selected_frame_indices(outputs, segment, 500, [0]),
+            lambda: usf.get_selected_cnn_frame_indices(outputs, segment, 500),
+            lambda: usf.get_selected_codebook_indices_frame_indices(indices,
+                segment, 500),
+        )
+        cases = (('no frames', []), ('out of range', [5]))
+        for name, selected in cases:
+            fake = FakeFrames(selected_indices=selected)
+            for selector in selectors:
+                with self.subTest(case=name, selector=selector):
+                    with mock.patch.object(utils_segment_features.frame,
+                        'make_frames_from_outputs', return_value=fake,
+                        create=True):
+                        with mock.patch.object(utils_segment_features.frame,
+                            'Frames', return_value=fake, create=True):
+                            with self.assertRaises(ValueError) as caught:
+                                selector()
+                    message = str(caught.exception)
+                    self.assertEqual(message.count(repr(segment)), 1)
+                    self.assertIn(f' for segment {segment!r}', message)
+                    self.assertTrue(message.endswith('with collar 500 ms'))
+
+
 class TestNormaliseLayers(unittest.TestCase):
     def test_single_int_becomes_list(self):
         self.assertEqual(utils_segment_features.normalise_layers(3), [3])

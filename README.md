@@ -462,7 +462,9 @@ With `gpu=True`, `compute_embeddings_batch(...)` passes the registered model
 source (local path or Hugging Face id) to to-vector, which runs the whole job
 in a child process and frees the GPU when it exits. The model is loaded in
 that child on every call, so a model already cached on the store is not
-reused. With `gpu=False`, the store's cached model is used in-process.
+reused; it is dropped from the store and its GPU memory released before the
+child starts, so the GPU never holds two copies. With `gpu=False`, the
+store's cached model is used in-process.
 
 Run maintenance checks:
 

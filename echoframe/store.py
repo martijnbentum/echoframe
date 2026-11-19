@@ -218,7 +218,7 @@ class Store:
     def remove_cached_model(self):
         if self._model is not None:
             if model_loader.model_is_on_gpu(self._model):
-                self._model = model_loader.move_model_to_cpu(self._model)
+                model_loader.remove_model_from_gpu(self._model)
         self._model = None
         self._model_name = None
 

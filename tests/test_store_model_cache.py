@@ -70,8 +70,8 @@ class TestStoreLoadModel(unittest.TestCase):
                 side_effect=['m1', 'm2']) as load_model, mock.patch(
                 'echoframe.store.model_loader.model_is_on_gpu',
                 return_value=True) as model_is_on_gpu, mock.patch(
-                'echoframe.store.model_loader.move_model_to_cpu',
-                return_value='m1-cpu') as move_cpu:
+                'echoframe.store.model_loader.remove_model_from_gpu'
+                ) as remove_from_gpu:
                 first = store.load_model('wav2vec2', gpu=True)
                 second = store.load_model('hubert')
 
@@ -80,7 +80,7 @@ class TestStoreLoadModel(unittest.TestCase):
         self.assertEqual(store._model, 'm2')
         self.assertEqual(store._model_name, 'hubert')
         self.assertEqual(load_model.call_count, 2)
-        move_cpu.assert_called_once_with('m1')
+        remove_from_gpu.assert_called_once_with('m1')
         model_is_on_gpu.assert_called_once_with('m1')
 
     def test_load_codebook_model_uses_codebook_loader(self):
@@ -126,13 +126,30 @@ class TestStoreLoadModel(unittest.TestCase):
 
             with mock.patch('echoframe.store.model_loader.model_is_on_gpu',
                 return_value=False) as model_is_on_gpu, mock.patch(
-                'echoframe.store.model_loader.move_model_to_cpu') as move_cpu:
+                'echoframe.store.model_loader.remove_model_from_gpu'
+                ) as remove_from_gpu:
                 store.remove_cached_model()
 
         self.assertIsNone(store._model)
         self.assertIsNone(store._model_name)
         model_is_on_gpu.assert_called_once_with('model')
-        move_cpu.assert_not_called()
+        remove_from_gpu.assert_not_called()
+
+    def test_remove_cached_model_releases_gpu_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            store._model = 'gpu-model'
+            store._model_name = 'wav2vec2'
+
+            with mock.patch('echoframe.store.model_loader.model_is_on_gpu',
+                return_value=True), mock.patch(
+                'echoframe.store.model_loader.remove_model_from_gpu'
+                ) as remove_from_gpu:
+                store.remove_cached_model()
+
+        self.assertIsNone(store._model)
+        self.assertIsNone(store._model_name)
+        remove_from_gpu.assert_called_once_with('gpu-model')
 
 
 if __name__ == '__main__':

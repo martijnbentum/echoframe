@@ -54,8 +54,14 @@ def move_model_to_cpu(model):
     return to_vector_load.move_model_to_cpu(model)
 
 def remove_model_from_gpu(model):
+    '''Move a model to CPU and return cached GPU memory to the device.'''
+    import torch
     from to_vector import load as to_vector_load
-    return to_vector_load.move_model_to_cpu(model)
+    model = to_vector_load.move_model_to_cpu(model)
+    # torch keeps freed GPU memory reserved for this process; release it so
+    # other processes (e.g. a to-vector child) can use it.
+    torch.cuda.empty_cache()
+    return model
 
 def model_is_on_gpu(model):
     '''Return whether a loaded model is on GPU.

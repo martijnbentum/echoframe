@@ -51,15 +51,17 @@ class TestGpuHelpers(unittest.TestCase):
         self.assertFalse(result)
         model_is_on_gpu.assert_called_once_with(model)
 
-    def test_remove_model_from_gpu_moves_to_cpu(self):
+    def test_remove_model_from_gpu_moves_to_cpu_and_empties_cache(self):
         model = object()
 
         with mock.patch('to_vector.load.move_model_to_cpu',
-            return_value='cpu-model') as move_to_cpu:
+            return_value='cpu-model') as move_to_cpu, mock.patch(
+            'torch.cuda.empty_cache') as empty_cache:
             result = model_loader.remove_model_from_gpu(model)
 
         self.assertEqual(result, 'cpu-model')
         move_to_cpu.assert_called_once_with(model)
+        empty_cache.assert_called_once_with()
 
 
 if __name__ == '__main__':

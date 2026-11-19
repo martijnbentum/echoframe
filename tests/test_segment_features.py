@@ -646,6 +646,40 @@ class TestComputeEmbeddings(unittest.TestCase):
             self.assertEqual(kwargs['model'], 'facebook/wav2vec2-base')
             self.assertTrue(kwargs['gpu'])
 
+    def test_batch_on_gpu_drops_cached_model_before_child_starts(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            store.register_model('w2v-hf',
+                huggingface_id='facebook/wav2vec2-base')
+            store._model = 'gpu-model'
+            store._model_name = 'w2v-hf'
+            segment = _make_segment(key=_pk('aabb'))
+            hidden_states = [np.zeros((1, 4, 2)) for _ in range(4)]
+            outputs = [types.SimpleNamespace(hidden_states=hidden_states)]
+            cached_at_call = []
+
+            def fake_iter(*args, **kwargs):
+                cached_at_call.append(store._model)
+                return iter(outputs)
+
+            with mock.patch('echoframe.store.model_loader.model_is_on_gpu',
+                return_value=True), mock.patch(
+                'echoframe.store.model_loader.remove_model_from_gpu'
+                ) as remove_from_gpu:
+                with mock.patch.object(batch_segment_features.to_vector,
+                    'iter_filename_batch_to_vector', create=True,
+                    side_effect=fake_iter):
+                    with mock.patch.object(utils_segment_features.frame,
+                        'make_frames_from_outputs', create=True,
+                        return_value=FakeFrames(selected_indices=[1, 2])):
+                        with mock.patch('builtins.print'):
+                            compute_embeddings_batch([segment], 3, 'w2v-hf',
+                                store=store, gpu=True)
+
+            remove_from_gpu.assert_called_once_with('gpu-model')
+            self.assertEqual(cached_at_call, [None])
+            self.assertIsNone(store._model_name)
+
     def test_batch_on_gpu_rejects_spidr_cnn_from_model_source(self):
         tmpdir, store = _make_store()
         with tmpdir:

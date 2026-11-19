@@ -45,8 +45,10 @@ def compute_embeddings_batch(segments, layers, model_name, store,
         missing_segments.append(item.segment)
     source_id = store.phraser_registry.segments_to_source_id(missing_segments)
     # On GPU, pass the model source so to-vector runs the batch in a child
-    # process that frees the GPU when it exits.
+    # process that frees the GPU when it exits. Drop any store-cached model
+    # first so the GPU does not hold a second copy while the child runs.
     if gpu:
+        store.remove_cached_model()
         metadata = store.load_model_metadata(model_name)
         model = model_loader.model_name_or_path(metadata)
     else: model = store.load_model(model_name, gpu=gpu)

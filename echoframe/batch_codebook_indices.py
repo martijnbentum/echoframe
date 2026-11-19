@@ -8,7 +8,7 @@ from pathlib import Path
 from to_vector import wav2vec2_codebook
 
 from .utils_segment_features import (
-    StoreWriter,
+    DEFAULT_WRITE_SEGMENT_COUNT, StoreWriter,
     codebook_matrix_missing,
     make_codebook_indices_item,
     segment_times,
@@ -26,13 +26,19 @@ def compute_codebook_indices_batch(segments, model_name, store,
     collar:               context window in milliseconds
     gpu:                  whether to run codebook extraction on GPU
     tags:                 optional tags stored on newly written metadata
-    batch_size:           optional item count per batch
+    batch_size:           optional segment count per inference batch; storage
+                          writes use the same count
     store_queue_size:     queued save chunks before compute waits
 
+    Storage writes group 32 segment results when batch_size is None.
     SpidR codebook batching is not implemented in this Wav2Vec2-specific
     batch path.
     '''
     if store is None: raise ValueError('store must be an echoframe Store')
+    write_segment_count = DEFAULT_WRITE_SEGMENT_COUNT
+    if batch_size is not None: write_segment_count = int(batch_size)
+    if write_segment_count <= 0:
+        raise ValueError('batch_size must be greater than zero')
     missing = MissingIndices(segments, model_name, collar, store)
     if verbose: print(missing)
     if not missing.missing:
@@ -49,12 +55,21 @@ def compute_codebook_indices_batch(segments, model_name, store,
         missing.audio_filenames, starts=missing.starts, ends=missing.ends,
         model_pt=model, gpu=gpu, batch_size=batch_size)
     stored_count = 0
+    pending_items = []
     with StoreWriter(store, max_queue_size=store_queue_size) as writer:
-        for indices, item in zip(outputs, missing.missing, strict=True):
-            save_item = make_codebook_indices_item(indices, item.segment,
-                collar, model_name, store, tags, phraser_source_id=source_id)
-            writer.submit([save_item])
-            stored_count += 1
+        try:
+            for indices, item in zip(outputs, missing.missing, strict=True):
+                save_item = make_codebook_indices_item(indices, item.segment,
+                    collar, model_name, store, tags,
+                    phraser_source_id=source_id)
+                pending_items.append(save_item)
+                stored_count += 1
+                if len(pending_items) == write_segment_count:
+                    chunk = pending_items
+                    pending_items = []
+                    writer.submit(chunk)
+        finally:
+            if pending_items: writer.submit(pending_items)
     if verbose: print(f'codebook indices computed for {stored_count} segments')
 
 

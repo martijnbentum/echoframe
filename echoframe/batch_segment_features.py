@@ -5,13 +5,11 @@ import to_vector
 
 from . import model_loader
 from .utils_segment_features import (
-    StoreWriter,
+    DEFAULT_WRITE_SEGMENT_COUNT, StoreWriter,
     make_cnn_feature_item, make_embedding_items,
     normalise_layers, reject_spidr_cnn_request, segment_times,
     split_requested_layers,
 )
-
-_DEFAULT_WRITE_SEGMENT_COUNT = 32
 
 
 def compute_embeddings_batch(segments, layers, model_name, store,
@@ -54,7 +52,7 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     else: model = store.load_model(model_name, gpu=gpu)
     if cnn_requested:
         reject_spidr_cnn_request(store, model_name, model=model)
-    write_segment_count = _DEFAULT_WRITE_SEGMENT_COUNT
+    write_segment_count = DEFAULT_WRITE_SEGMENT_COUNT
     if batch_size is not None: write_segment_count = int(batch_size)
     if write_segment_count <= 0:
         raise ValueError('batch_size must be greater than zero')

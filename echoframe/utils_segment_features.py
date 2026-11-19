@@ -10,6 +10,7 @@ import to_vector
 from .metadata import EchoframeMetadata
 
 _VALID_FRAME_AGGREGATIONS = (None, 'mean', 'centroid')
+DEFAULT_WRITE_SEGMENT_COUNT = 32
 
 
 def find_embedding_layers(store, phraser_key, collar, model_name, layers):

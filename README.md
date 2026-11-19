@@ -455,7 +455,8 @@ request, and are not supported for SpidR models.
 writer as one `save_many()` chunk per configured batch. The configured
 `batch_size` is also the storage group size; when it is `None`, storage writes
 use groups of 32 segment results. `store_queue_size` controls how many complete
-write groups can wait while inference continues.
+write groups can wait while inference continues. `compute_codebook_indices_batch`
+groups its writes the same way.
 
 With `gpu=True`, `compute_embeddings_batch(...)` passes the registered model
 source (local path or Hugging Face id) to to-vector, which runs the whole job

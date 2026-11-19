@@ -1253,16 +1253,88 @@ class TestComputeCodebookIndicesBatch(unittest.TestCase):
             writer = RecordingBatchWriter.instances[0]
             self.assertEqual(writer.store, store)
             self.assertEqual(writer.max_queue_size, 8)
-            self.assertEqual(writer.submitted, [
-                [save_items[0]],
-                [save_items[1]],
-            ])
+            self.assertEqual(writer.submitted, [save_items])
             self.assertEqual(make_item.call_args_list, [
                 mock.call(outputs[0], segment_a, 500, 'wav2vec2', store,
                     None, phraser_source_id='cgn-main'),
                 mock.call(outputs[1], segment_b, 500, 'wav2vec2', store,
                     None, phraser_source_id='cgn-main'),
             ])
+
+    def test_batch_groups_writer_items_by_batch_size(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segments = [_make_segment(key=_pk(f'{index:04x}'))
+                for index in range(3)]
+            _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2',
+                np.array([[10.0, 11.0], [20.0, 21.0]]))
+            outputs = [np.array([[index, 0]]) for index in range(3)]
+            save_items = [{'item': index} for index in range(3)]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'iter_filename_batch_to_codebook_indices',
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_codebook_indices,
+                        'make_codebook_indices_item', side_effect=save_items):
+                        with mock.patch.object(batch_codebook_indices,
+                            'StoreWriter', RecordingBatchWriter):
+                            with mock.patch('builtins.print'):
+                                compute_codebook_indices_batch(segments,
+                                    'wav2vec2', store=store, batch_size=2)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.submitted, [save_items[:2], save_items[2:]])
+
+    def test_batch_defaults_to_32_segment_write_chunks(self):
+        tmpdir, store = _make_store()
+        RecordingBatchWriter.instances = []
+        with tmpdir:
+            segments = [_make_segment(key=_pk(f'{index:04x}'))
+                for index in range(33)]
+            _put_codebook_matrix(store, 'aabb', 500, 'wav2vec2',
+                np.array([[10.0, 11.0], [20.0, 21.0]]))
+            outputs = [np.array([[index, 0]]) for index in range(33)]
+            save_items = [{'item': index} for index in range(33)]
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'iter_filename_batch_to_codebook_indices',
+                    return_value=iter(outputs)):
+                    with mock.patch.object(batch_codebook_indices,
+                        'make_codebook_indices_item', side_effect=save_items):
+                        with mock.patch.object(batch_codebook_indices,
+                            'StoreWriter', RecordingBatchWriter):
+                            with mock.patch('builtins.print'):
+                                compute_codebook_indices_batch(segments,
+                                    'wav2vec2', store=store)
+
+            writer = RecordingBatchWriter.instances[0]
+            self.assertEqual(writer.submitted,
+                [save_items[:32], save_items[32:]])
+
+    def test_batch_rejects_non_positive_batch_size(self):
+        tmpdir, store = _make_store()
+        with tmpdir:
+            segment = _make_segment(key=_pk('aabb'))
+            with mock.patch.object(store, 'load_codebook_model',
+                return_value='model'):
+                with mock.patch.object(
+                    batch_codebook_indices.wav2vec2_codebook,
+                    'load_codebook', return_value=np.zeros((2, 2))):
+                    with mock.patch.object(
+                        batch_codebook_indices.wav2vec2_codebook,
+                        'iter_filename_batch_to_codebook_indices'
+                        ) as iter_indices:
+                        with mock.patch('builtins.print'):
+                            with self.assertRaisesRegex(ValueError,
+                                'batch_size must be greater than zero'):
+                                compute_codebook_indices_batch([segment],
+                                    'wav2vec2', store=store, batch_size=0)
+            iter_indices.assert_not_called()
 
     def test_batch_does_not_overwrite_existing_matrix(self):
         tmpdir, store = _make_store()

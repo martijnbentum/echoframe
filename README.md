@@ -457,6 +457,12 @@ writer as one `save_many()` chunk per configured batch. The configured
 use groups of 32 segment results. `store_queue_size` controls how many complete
 write groups can wait while inference continues.
 
+With `gpu=True`, `compute_embeddings_batch(...)` passes the registered model
+source (local path or Hugging Face id) to to-vector, which runs the whole job
+in a child process and frees the GPU when it exits. The model is loaded in
+that child on every call, so a model already cached on the store is not
+reused. With `gpu=False`, the store's cached model is used in-process.
+
 Run maintenance checks:
 
 ```python

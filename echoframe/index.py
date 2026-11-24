@@ -40,6 +40,7 @@ class LmdbIndex:
 
     def load(self, echoframe_key, store = None, txn = None):
         '''Load one metadata record; reads through txn when given.'''
+        echoframe_key = lmdb_helper.normalize_echoframe_key(echoframe_key)
         if txn is None:
             value = lmdb_helper.load(self.env, self.entries_db, echoframe_key)
         else:
@@ -57,7 +58,10 @@ class LmdbIndex:
         store:             optional Store instance to attach to loaded metadata
         keep_missing:      if True, preserve input alignment with None for misses
         '''
-        echoframe_keys = list(echoframe_keys)
+        normalized_keys = []
+        for key in echoframe_keys:
+            normalized_keys.append(lmdb_helper.normalize_echoframe_key(key))
+        echoframe_keys = normalized_keys
         values = lmdb_helper.load_many(self.env, self.entries_db, echoframe_keys)
         metadata_list = []
         for key, value in zip(echoframe_keys,values):

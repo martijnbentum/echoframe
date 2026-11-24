@@ -87,7 +87,7 @@ def scan_prefix_in_txn(txn, db, prefix):
     return entry_ids
 
 
-def _normalize_echoframe_key(echoframe_key):
+def normalize_echoframe_key(echoframe_key):
     if isinstance(echoframe_key, bytes):
         return echoframe_key
     if isinstance(echoframe_key, bytearray):
@@ -132,7 +132,7 @@ def load_all_keys(env, db):
 
 
 def load_in_txn(txn, entries_db, echoframe_key):
-    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    echoframe_key = normalize_echoframe_key(echoframe_key)
     return txn.get(echoframe_key, db=entries_db)
 
 
@@ -178,12 +178,12 @@ def delete_phraser_keys(txn, db_handles, metadata):
 
 
 def shard_key(shard_id, echoframe_key):
-    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    echoframe_key = normalize_echoframe_key(echoframe_key)
     return f'shard:{shard_id}:'.encode('utf-8') + echoframe_key
 
 
 def tag_key(tag, echoframe_key):
-    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    echoframe_key = normalize_echoframe_key(echoframe_key)
     return f'tag:{tag}:'.encode('utf-8') + echoframe_key
 
 
@@ -192,5 +192,5 @@ def phraser_scan_prefix(phraser_key):
 
 
 def phraser_scan_key(phraser_key, echoframe_key):
-    echoframe_key = _normalize_echoframe_key(echoframe_key)
+    echoframe_key = normalize_echoframe_key(echoframe_key)
     return phraser_scan_prefix(phraser_key) + echoframe_key

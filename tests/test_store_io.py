@@ -166,6 +166,28 @@ class TestStoreIo(unittest.TestCase):
                     expected = [key, None, key] if keep_missing else [key, key]
                     self.assertEqual(actual, expected)
 
+    def test_load_and_delete_accept_hex_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            key = created.echoframe_key
+            hex_key = key.hex()
+            self.assertEqual(store.load_metadata(hex_key).echoframe_key, key)
+            self.assertEqual(store.load(hex_key), [[1.0]])
+            missing_key = b'\xff' * len(key)
+            inputs = [hex_key, missing_key.hex(), key, bytearray(key)]
+            metadatas = store.load_many_metadata(iter(inputs),
+                keep_missing=True)
+            actual = []
+            for metadata in metadatas:
+                actual.append(metadata.echoframe_key if metadata else None)
+            self.assertEqual(actual, [key, None, key, key])
+            self.assertEqual(store.load_many([hex_key]), [[[1.0]]])
+            store.delete(hex_key)
+            self.assertIsNone(store.load_metadata(key))
+
     def test_load_many_can_preserve_missing_payload_slots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

@@ -32,6 +32,10 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     Storage writes group 32 segment results when batch_size is None.
     '''
     if store is None: raise ValueError('store must be an echoframe Store')
+    write_segment_count = DEFAULT_WRITE_SEGMENT_COUNT
+    if batch_size is not None: write_segment_count = int(batch_size)
+    if write_segment_count <= 0:
+        raise ValueError('batch_size must be greater than zero')
     layers_list = normalise_layers(layers)
     hidden_state_layers, cnn_requested = split_requested_layers(layers_list)
     if cnn_requested:
@@ -54,10 +58,6 @@ def compute_embeddings_batch(segments, layers, model_name, store,
     else: model = store.load_model(model_name, gpu=gpu)
     if cnn_requested:
         reject_spidr_cnn_request(store, model_name, model=model)
-    write_segment_count = DEFAULT_WRITE_SEGMENT_COUNT
-    if batch_size is not None: write_segment_count = int(batch_size)
-    if write_segment_count <= 0:
-        raise ValueError('batch_size must be greater than zero')
     outputs = to_vector.iter_filename_batch_to_vector(missing.audio_filenames,
         starts=missing.starts, ends=missing.ends, model=model, gpu=gpu,
         numpify_output=True, batch_size=batch_size)

@@ -148,6 +148,24 @@ class TestStoreIo(unittest.TestCase):
         self.assertEqual(payloads, [[[1.0]], [[2.0]]])
         self.assertEqual(len(read_paths), 1)
 
+    def test_load_many_metadata_accepts_generator(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = make_fake_store(tmpdir)
+            created = _put(store, phraser_key='phrase-1', collar=100,
+                model_name='wav2vec2', output_type='hidden_state',
+                layer=1, data=[[1.0]])
+            key = created.echoframe_key
+            missing_key = b'\xff' * len(key)
+            for keep_missing in (False, True):
+                with self.subTest(keep_missing=keep_missing):
+                    keys = (item for item in [key, missing_key, key])
+                    metadatas = store.load_many_metadata(keys,
+                        keep_missing=keep_missing)
+                    actual = [md.echoframe_key if md is not None else None
+                        for md in metadatas]
+                    expected = [key, None, key] if keep_missing else [key, key]
+                    self.assertEqual(actual, expected)
+
     def test_load_many_can_preserve_missing_payload_slots(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             store = make_fake_store(tmpdir)

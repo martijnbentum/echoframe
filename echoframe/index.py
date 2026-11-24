@@ -53,10 +53,11 @@ class LmdbIndex:
 
     def load_many(self, echoframe_keys, store = None, keep_missing=False):
         '''Load multiple raw metadata values by echoframe key.
-        echoframe_keys:     list of identifiers for metadata records to load
+        echoframe_keys:     iterable of identifiers for metadata records to load
         store:             optional Store instance to attach to loaded metadata
         keep_missing:      if True, preserve input alignment with None for misses
         '''
+        echoframe_keys = list(echoframe_keys)
         values = lmdb_helper.load_many(self.env, self.entries_db, echoframe_keys)
         metadata_list = []
         for key, value in zip(echoframe_keys,values):

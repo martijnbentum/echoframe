@@ -103,7 +103,7 @@ def compute_codebook_indices(segment, model_name, store, collar=500,
         if verbose: print('codebook indices found in store')
         return
     source_id = store.phraser_registry.segment_to_source_id(segment)
-    model = store.load_model(model_name, gpu=gpu)
+    model = store.load_codebook_model(model_name, gpu=gpu)
     artifacts = compute_codebook_indices_for_segment(segment, collar, model,
         gpu)
     store_codebook_indices_from_artifacts(artifacts, segment, collar,

@@ -21,15 +21,30 @@ def load_model(model_metadata, gpu=False):
 
 
 def load_codebook_model(model_metadata, gpu=False):
-    '''Load one Wav2Vec2 pretraining model for codebook extraction.
+    '''Load one model that can produce codebook indices.
+    SpidR models load through the normal loader (the codebook is part of
+    the model); wav2vec2 models load as a pretraining model with quantizer.
     model_metadata:  registered model metadata record
     gpu:             whether to move the model to GPU
     '''
     from to_vector import load as to_vector_load
     _validate_model_metadata(model_metadata)
     source = model_name_or_path(model_metadata)
+    if is_spidr(model_metadata, source):
+        return to_vector_load.load_model(source, gpu=gpu)
     model = to_vector_load.load_model_pt(source, gpu=gpu)
     return model
+
+
+def is_spidr(model_metadata, source):
+    '''Return whether a registered model is a SpidR model.
+    Uses the registered architecture when set, else the local config.json.
+    '''
+    architecture = getattr(model_metadata, 'architecture', None)
+    if isinstance(architecture, str):
+        return architecture.lower() == 'spidr'
+    from to_vector import model_registry
+    return model_registry.filename_model_type(source) == 'spidr'
 
 
 def load_model_for_attention_extraction(model_metadata, gpu=False):

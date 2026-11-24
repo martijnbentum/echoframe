@@ -1066,7 +1066,8 @@ class TestComputeCodebookIndices(unittest.TestCase):
                 np.array([[10.0, 11.0], [20.0, 21.0], [30.0, 31.0],
                     [40.0, 41.0]]))
             segment = _make_segment(key=_pk('aabb'))
-            with mock.patch.object(store, 'load_model') as load_model:
+            with mock.patch.object(store, 'load_codebook_model'
+                ) as load_model:
                 with mock.patch.object(utils_segment_features.to_vector,
                     'filename_to_codebook_artifacts', create=True
                     ) as filename_to_artifacts:
@@ -1095,7 +1096,7 @@ class TestComputeCodebookIndices(unittest.TestCase):
                     [40.0, 41.0],
                 ]),
             )
-            with mock.patch.object(store, 'load_model',
+            with mock.patch.object(store, 'load_codebook_model',
                 return_value='model') as load_model:
                 with mock.patch.object(utils_segment_features.to_vector,
                     'filename_to_codebook_artifacts', create=True,
@@ -1144,7 +1145,7 @@ class TestComputeCodebookIndices(unittest.TestCase):
                     [400.0, 401.0],
                 ]),
             )
-            with mock.patch.object(store, 'load_model',
+            with mock.patch.object(store, 'load_codebook_model',
                 return_value='model'):
                 with mock.patch.object(utils_segment_features.to_vector,
                     'filename_to_codebook_artifacts', create=True,

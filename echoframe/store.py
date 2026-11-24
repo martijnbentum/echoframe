@@ -50,6 +50,7 @@ class Store:
         self.phraser_registry = PhraserStoreRegistry(self.config)
         self._model = None
         self._model_name = None
+        self._model_loader = None
 
     def __repr__(self):
         m = f'Store(root={str(self.root)})'
@@ -201,14 +202,13 @@ class Store:
         model_metadata = self.load_model_metadata(model_name)
         if model_metadata is None:
             raise ValueError(f'model_name is not registered: {model_name!r}')
-        if self._model_name == model_name and self._model is None:
-            return self._load_cached_model(model_name, gpu, True, load_func)
-        if self._model_name != model_name:
-            if self._model is not None: self.remove_cached_model()
-            model = load_func(model_metadata, gpu=gpu)
-            self._model = model
+        cached = (self._model_name, self._model_loader)
+        if self._model is None or cached != (model_name, load_func):
+            self.remove_cached_model()
+            self._model = load_func(model_metadata, gpu=gpu)
             self._model_name = model_name
-            return model
+            self._model_loader = load_func
+            return self._model
         if gpu and not model_loader.model_is_on_gpu(self._model):
             self._model = model_loader.move_model_to_gpu(self._model) 
         if not gpu and model_loader.model_is_on_gpu(self._model):
@@ -221,6 +221,7 @@ class Store:
                 model_loader.remove_model_from_gpu(self._model)
         self._model = None
         self._model_name = None
+        self._model_loader = None
 
     def make_echoframe_key(self, output_type, *, model_name=None,
         phraser_key=None, layer=None, collar=None, feature_name=None):

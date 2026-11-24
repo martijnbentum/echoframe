@@ -99,7 +99,7 @@ class TestStoreLoadModel(unittest.TestCase):
         self.assertEqual(result, 'codebook-model')
         load_codebook_model.assert_called_once()
 
-    def test_load_codebook_model_reuses_same_name_cache_ambiguity(self):
+    def test_load_codebook_model_reloads_after_base_model(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
             store.register_model('wav2vec2',
@@ -114,15 +114,16 @@ class TestStoreLoadModel(unittest.TestCase):
                 store.load_model('wav2vec2')
                 result = store.load_codebook_model('wav2vec2')
 
-        self.assertEqual(result, 'embedding-model')
+        self.assertEqual(result, 'codebook-model')
         load_model.assert_called_once()
-        load_codebook_model.assert_not_called()
+        load_codebook_model.assert_called_once()
 
     def test_remove_cached_model_clears_model_state(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = Store(tmp)
             store._model = 'model'
             store._model_name = 'wav2vec2'
+            store._model_loader = 'loader'
 
             with mock.patch('echoframe.store.model_loader.model_is_on_gpu',
                 return_value=False) as model_is_on_gpu, mock.patch(
@@ -132,6 +133,7 @@ class TestStoreLoadModel(unittest.TestCase):
 
         self.assertIsNone(store._model)
         self.assertIsNone(store._model_name)
+        self.assertIsNone(store._model_loader)
         model_is_on_gpu.assert_called_once_with('model')
         remove_from_gpu.assert_not_called()
 
